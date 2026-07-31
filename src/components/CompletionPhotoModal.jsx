@@ -142,7 +142,7 @@ export default function CompletionPhotoModal({ task, onClose }) {
                                     aria-label={`Pašalinti nuotrauką ${idx + 1}`}
                                     // Visible badge stays small so it doesn't smother the 80px thumb, but a
                                     // centred pseudo-element (±10px) gives it a ≥44px tap area (DESIGN_SYSTEM §7).
-                                    className="absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand before:absolute before:-inset-[10px] before:content-['']"
+                                    className="absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring before:absolute before:-inset-[10px] before:content-['']"
                                 >
                                     <X className="h-3.5 w-3.5" aria-hidden="true" />
                                 </button>

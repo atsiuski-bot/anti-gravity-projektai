@@ -168,7 +168,7 @@ ATASKAITOS PABAIGA
                         <div className="mb-6">
                             <button
                                 onClick={this.toggleDetails}
-                                className="w-full flex items-center justify-between p-3 bg-surface-sunken hover:bg-surface-sunken/70 rounded-card transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                className="w-full flex items-center justify-between p-3 bg-surface-sunken hover:bg-surface-sunken/70 rounded-card transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                             >
                                 <span className="text-body font-semibold text-ink">
                                     {showDetails ? 'Slėpti' : 'Rodyti'} techninę informaciją

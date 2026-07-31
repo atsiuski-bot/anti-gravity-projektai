@@ -11,7 +11,7 @@ function Pill({ active, onClick, children }) {
             aria-pressed={active}
             className={cn(
                 'inline-flex min-h-touch items-center rounded-full px-4 text-body font-medium transition',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                 active
                     ? 'bg-brand text-white'
                     : 'border border-line bg-surface-card text-ink hover:bg-surface-sunken'

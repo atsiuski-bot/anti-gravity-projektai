@@ -54,6 +54,8 @@ export default function TitleSuggestInput({
     suggestions = [],
     disabled = false,
     ariaLabel,
+    ariaInvalid = false,
+    ariaDescribedby,
     placeholder,
     id,
     className,
@@ -202,6 +204,11 @@ export default function TitleSuggestInput({
                 disabled={disabled}
                 placeholder={placeholder}
                 aria-label={ariaLabel}
+                // Wired by the caller when its own validation rejects the value, so the field is
+                // marked invalid and points at the message instead of the message living alone at
+                // the top of the form (WCAG 3.3.1).
+                aria-invalid={ariaInvalid || undefined}
+                aria-describedby={ariaDescribedby}
                 aria-expanded={showList}
                 aria-controls={showList ? listId : undefined}
                 aria-activedescendant={
@@ -211,7 +218,7 @@ export default function TitleSuggestInput({
                 }
                 aria-autocomplete="list"
                 autoComplete="off"
-                className="w-full rounded-lg border border-line px-3 py-3 text-base text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand disabled:bg-surface-sunken"
+                className="w-full rounded-lg border border-line px-3 py-3 text-base text-ink focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:bg-surface-sunken"
             />
 
             {showList && (

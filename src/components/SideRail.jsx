@@ -32,7 +32,7 @@ function readStoredCollapsed() {
 }
 
 const navItemBase =
-    'flex min-h-touch items-center rounded-control text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset';
+    'flex min-h-touch items-center rounded-control text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-inset';
 
 /**
  * SideRail — the desktop (`lg+`) app shell navigation. Replaces the mobile bottom bar AND the

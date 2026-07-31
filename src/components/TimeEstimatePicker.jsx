@@ -53,7 +53,7 @@ export default function TimeEstimatePicker({ open, value, onSelect, onClose }) {
                             type="button"
                             onClick={() => pick(t)}
                             aria-pressed={active}
-                            className={`inline-flex min-h-touch items-center gap-1 rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
+                            className={`inline-flex min-h-touch items-center gap-1 rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
                         >
                             {active && <Check className="h-4 w-4" aria-hidden="true" />}
                             {t}
@@ -75,7 +75,7 @@ export default function TimeEstimatePicker({ open, value, onSelect, onClose }) {
                         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmCustom(); } }}
                         placeholder="pvz. 6h arba 90min"
                         aria-label="Įvesti savo planuojamą laiką"
-                        className="flex-1 rounded-lg border border-line px-3 py-3 text-base focus:ring-2 focus:ring-brand"
+                        className="flex-1 rounded-lg border border-line px-3 py-3 text-base focus:ring-2 focus:ring-brand-ring"
                     />
                     <Button type="button" variant="primary" disabled={!customValid} onClick={confirmCustom}>
                         Pasirinkti

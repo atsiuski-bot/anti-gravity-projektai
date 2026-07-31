@@ -422,7 +422,7 @@ export default function TaskDetailModal({
                                        far under the binding 44px gate (DESIGN_SYSTEM §7 / WCAG 2.5.5)
                                        — and these two are the TIME-CORRECTION controls, the ones a
                                        worker reaches for with gloves, in sunlight, to recover pay. */
-                                    className="inline-flex items-center gap-1 min-h-touch rounded-control border border-line px-3 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    className="inline-flex items-center gap-1 min-h-touch rounded-control border border-line px-3 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                 >
                                     <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Koreguoti laiką
                                 </button>
@@ -431,7 +431,7 @@ export default function TaskDetailModal({
                                 <button
                                     type="button"
                                     onClick={() => setBackdateOpen(true)}
-                                    className="inline-flex items-center gap-1 min-h-touch rounded-control border border-line px-3 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    className="inline-flex items-center gap-1 min-h-touch rounded-control border border-line px-3 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                 >
                                     <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Įrašyti praėjusį laiką
                                 </button>
@@ -514,7 +514,7 @@ export default function TaskDetailModal({
                                                     onClick={() => onToggleChecklistItem(item.id)}
                                                     disabled={togglingItemId === item.id}
                                                     aria-pressed={!!item.done}
-                                                    className="flex w-full min-h-touch items-start gap-2 rounded-control py-1 text-left text-body hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-60"
+                                                    className="flex w-full min-h-touch items-start gap-2 rounded-control py-1 text-left text-body hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring disabled:opacity-60"
                                                 >
                                                     <ItemIcon className={iconCls} aria-hidden="true" />
                                                     <span className={textCls}>{item.text}</span>
@@ -600,7 +600,7 @@ export default function TaskDetailModal({
                                                         onChange={(e) => setEditText(e.target.value)}
                                                         rows={2}
                                                         aria-label="Redaguoti komentarą"
-                                                        className="w-full resize-y rounded-input border border-line px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                        className="w-full resize-y rounded-input border border-line px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                                                         autoFocus
                                                     />
                                                     <div className="mt-1 flex justify-end gap-1">
@@ -632,7 +632,7 @@ export default function TaskDetailModal({
                                 placeholder="Rašyti komentarą…"
                                 aria-label="Rašyti komentarą"
                                 rows={2}
-                                className="min-h-touch flex-1 resize-y rounded-input border border-line px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                className="min-h-touch flex-1 resize-y rounded-input border border-line px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                                 disabled={submitting}
                             />
                             <Button type="submit" variant="primary" size="md" icon={Send} loading={submitting} disabled={!newComment.trim() || submitting}>
@@ -651,12 +651,12 @@ export default function TaskDetailModal({
                                 </div>
                                 {canAddPhoto && (
                                     <div className="flex items-center gap-2">
-                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-ring">
                                             <Camera className="h-4 w-4" aria-hidden="true" />
                                             Fotografuoti
                                             <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={onPickPhotos} disabled={uploading} />
                                         </label>
-                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-ring">
                                             <ImagePlus className="h-4 w-4" aria-hidden="true" />
                                             {uploading ? 'Įkeliama…' : 'Pridėti'}
                                             <input type="file" accept="image/*" multiple className="sr-only" onChange={onPickPhotos} disabled={uploading} />
@@ -674,7 +674,7 @@ export default function TaskDetailModal({
                                             // object-contain (not -cover) so tall phone photos show whole, not just
                                             // their middle; the sunken canvas fills the letterbox bands and the
                                             // ZoomIn badge marks the thumb as an openable preview (DESIGN_SYSTEM).
-                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
                                         >
                                             <img src={photo.thumb} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
@@ -701,12 +701,12 @@ export default function TaskDetailModal({
                                 </div>
                                 {canAddCompletionPhoto && (
                                     <div className="flex items-center gap-2">
-                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-ring">
                                             <Camera className="h-4 w-4" aria-hidden="true" />
                                             Fotografuoti
                                             <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={onPickCompletionPhotos} disabled={uploadingCompletion} />
                                         </label>
-                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand-ring">
                                             <ImagePlus className="h-4 w-4" aria-hidden="true" />
                                             {uploadingCompletion ? 'Įkeliama…' : 'Pridėti'}
                                             <input type="file" accept="image/*" multiple className="sr-only" onChange={onPickCompletionPhotos} disabled={uploadingCompletion} />
@@ -721,7 +721,7 @@ export default function TaskDetailModal({
                                             key={idx}
                                             type="button"
                                             onClick={() => setCompletionLightboxIndex(idx)}
-                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti pabaigos nuotrauką ${idx + 1}`}
                                         >
                                             <img src={photo.thumb} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />

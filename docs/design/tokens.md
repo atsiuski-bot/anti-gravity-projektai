@@ -51,7 +51,21 @@ very-low) so "more urgent = louder against the canvas" holds without glare.
 | `brand.hover` | indigo-700 (`#4338CA`) | hover/pressed |
 | `brand.soft` | indigo-50 (`#EEF2FF`) | subtle brand bg (selected tab, chips) |
 | `brand.softText` | indigo-700 (`#4338CA`) | text on `brand.soft` (7.0:1 ✓) |
-| `brand.ring` | indigo-400 (`#818CF8`) | focus ring |
+| `brand.ring` | indigo-600 (`#4F46E5`) light · indigo-300 (`#A5B4FC`) dark | **the** focus ring (`ring-brand-ring`) |
+
+> **`brand.ring` is the only class any focus indicator may use.** A focus ring is a non-text UI
+> component and must clear **3:1** against whatever it sits on (WCAG 1.4.11) — which makes it a
+> FOREGROUND value, not a fill, so it splits by theme exactly like `feedback.*.text` and
+> `session.*.accent`. Measured: light indigo-600 = 6.29 / 6.02 / 5.71:1 on card / base / sunken;
+> dark indigo-300 = 8.56 / 9.48 / 7.32:1. The old indigo-400 value was **2.98:1 on the white card**
+> — it would have failed, and was never actually used: every ring reached for `brand.DEFAULT`, a
+> fill value, which measured **2.32–2.71:1 in dark**. `ring-offset-*` also needs the dark override
+> in `index.css` (Tailwind pins the offset to a literal `#fff` on every element).
+>
+> **Exception — a control filled with `brand.DEFAULT`** (the selected segment of every tab strip):
+> an indigo ring on an indigo fill is 1:1, i.e. invisible. Those states use `ring-white` (6.29:1 on
+> the brand fill, in both themes). Put the ring colour in the selected/unselected *branch*, never in
+> the shared base string, so it resolves the same under plain `clsx` as under `cn`.
 
 > Replaces the inconsistent `blue-500`-vs-`blue-600` primary and separates the accent from
 > the **call** session blue.
@@ -109,12 +123,18 @@ metallic `ring` (the border that carries the metal identity). Every badge pairs 
 text tier label **and** 1–4 pips, so color is never the sole signal (§5). `silver` is a warm gray
 and `platinum` a cool blue-slate, so the contrast-risk pair reads as two distinct hues.
 
-| Tier | `surface` | `accent` (text/icon) | `ring` | Label (LT) | accent-on-surface |
-|---|---|---|---|---|---|
-| `tier.bronze` | `#F3E4D3` | `#7A4A21` | `#C28E5A` | "Bronza" | ~6.0:1 ✓ |
-| `tier.silver` | `#E8EAED` | `#4B5563` | `#B6BCC4` | "Sidabras" | ~6.5:1 ✓ |
-| `tier.gold` | `#FBEFC6` | `#8A6500` | `#DCBB4A` | "Auksas" | ~5.0:1 ✓ |
-| `tier.platinum` | `#E6ECF2` | `#334155` | `#9FB2C6` | "Platina" | ~8.5:1 ✓ |
+| Tier | `surface` | `accent` (text/icon) | `ring` | `label` light / dark | Label (LT) | accent-on-surface |
+|---|---|---|---|---|---|---|
+| `tier.bronze` | `#F3E4D3` | `#7A4A21` | `#C28E5A` | `#7A4A21` / `#C28E5A` | "Bronza" | ~6.0:1 ✓ |
+| `tier.silver` | `#E8EAED` | `#4B5563` | `#B6BCC4` | `#4B5563` / `#B6BCC4` | "Sidabras" | ~6.5:1 ✓ |
+| `tier.gold` | `#FBEFC6` | `#8A6500` | `#DCBB4A` | `#8A6500` / `#DCBB4A` | "Auksas" | ~5.0:1 ✓ |
+| `tier.platinum` | `#E6ECF2` | `#334155` | `#9FB2C6` | `#334155` / `#9FB2C6` | "Platina" | ~8.5:1 ✓ |
+
+> **`label` is the one theme-reactive tier member** — the caption *under* the medallion, which rides
+> on the THEMED card rather than on the (theme-invariant) medallion `surface`. Reusing `accent`
+> there measured 1.65–3.20:1 in dark; `label` keeps the accent in light (5.3–10.4:1 on white) and
+> switches to the tier's metallic `ring` shade in dark (5.9–9.1:1 on the dark card), so the metal
+> identity survives. `medallion` still pairs `surface` + `accent` + `ring` and is unchanged.
 
 > Classes: `bg-tier-gold-surface`, `text-tier-gold-accent`, `ring-tier-gold-ring`. Rendered by the
 > `<Badge>` primitive (trophy tile) and as inline `StatusPill` tier tones. Achievements are
@@ -187,7 +207,17 @@ Banned for content: `text-[8px]`, `text-[9px]`, `text-[10px]`, `text-[11px]`.
 | Card padding (mobile / desktop) | `4` (16) / `5`–`6` (20–24) |
 | Section gap | `4` (16) |
 | Modal body padding | `6` (24) |
-| Bottom content clearance | `pb-navclear` (8rem) / `pb-navclear-lg` (9rem) — names the bottom-nav clearance; replaces raw `pb-32`/`pb-36` |
+| Bottom content clearance | `pb-navclear` = `calc(8rem + env(safe-area-inset-bottom))` / `pb-navclear-lg` = `calc(9rem + …)` — names the bottom-nav clearance; replaces raw `pb-32`/`pb-36` |
+
+> The clearance **must** carry the safe-area inset, because the dock it exists to clear does: the
+> bar is `bottom-0 pb-[env(safe-area-inset-bottom)]` and the floating work pill sits at
+> `calc(64px + env(…))`. Measured at 360 px the dock occupies 150 px against a 160 px reserve
+> (`navclear` + `main`'s `pb-8`) — 10 px of slack; with a constant reserve an iPhone home indicator
+> (34 px) pushed the dock to 184 px and buried ~24 px of the last card. The Modal card's cap
+> subtracts the same inset and stays an **arbitrary** `max-h-[calc(100dvh-9rem-env(…))]` value, not
+> a named token: the browser-floor gate finds dvh utilities by their `-[…dvh…]` shape, so a token
+> would slip past the check that every dvh cap has a `vh` twin in `index.css`. (Tailwind's
+> normaliser handles `env()` inside `[...]` correctly — verified in the built stylesheet.)
 
 ---
 
@@ -314,7 +344,7 @@ semantic names instead of `sm/md/lg/xl`). Examples: `bg-brand`, `text-ink-muted`
 // tailwind.config.js — theme.extend
 extend: {
   colors: {
-    brand:   { DEFAULT: '#4F46E5', hover: '#4338CA', soft: '#EEF2FF', ring: '#818CF8' },
+    brand:   { DEFAULT: '#4F46E5', hover: '#4338CA', soft: '#EEF2FF', ring: '#4F46E5' /* dark: #A5B4FC */ },
     surface: { base: '#F9FAFB', card: '#FFFFFF', sunken: '#F3F4F6' },
     ink:     { strong: '#111827', DEFAULT: '#374151', muted: '#6B7280' }, // text-ink, -strong, -muted
     line:    '#E5E7EB',                                                   // border-line
@@ -325,10 +355,11 @@ extend: {
       task:      { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D', soft: '#BBF7D0' },
     },
     tier: { // achievement badges — surface + AA accent text + metallic ring; never a session shell
-      bronze:   { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A' },
-      silver:   { surface: '#E8EAED', accent: '#4B5563', ring: '#B6BCC4' },
-      gold:     { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A' },
-      platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6' },
+      // `label` is variable-backed (theme-reactive); the other three are literal, theme-invariant.
+      bronze:   { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A', label: 'var(--tier-bronze-label)' },
+      silver:   { surface: '#E8EAED', accent: '#4B5563', ring: '#B6BCC4', label: 'var(--tier-silver-label)' },
+      gold:     { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A', label: 'var(--tier-gold-label)' },
+      platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6', label: 'var(--tier-platinum-label)' },
     },
     feedback: { success: '#16A34A', warning: '#F59E0B', danger: '#DC2626', info: '#4F46E5', offline: '#1E293B', scrim: 'rgb(0 0 0 / 0.5)' },
   },
@@ -341,5 +372,6 @@ extend: {
   zIndex: { header: '20', nav: '30', backdrop: '40', modal: '50', toast: '60', top: '70' },
   transitionDuration: { fast: '150', base: '200', slow: '300' },
   minHeight: { touch: '44px' }, minWidth: { touch: '44px' },
+  spacing: { navclear: 'calc(8rem + env(safe-area-inset-bottom))', 'navclear-lg': 'calc(9rem + env(…))' },
 }
 ```

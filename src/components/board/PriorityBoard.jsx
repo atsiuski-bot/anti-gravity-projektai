@@ -31,6 +31,7 @@ import {
 } from '../../utils/boardOrder';
 import { logError } from '../../utils/errorLog';
 import useFullBleed from '../../hooks/useFullBleed';
+import { dndAnnouncements, dndScreenReaderInstructions } from '../../utils/dndA11y';
 
 /**
  * PriorityBoard — the desktop-only, four-column priority view of the team task list (founder
@@ -60,7 +61,7 @@ const COLUMN_HINTS = {
 };
 
 function SortableTaskCard({ task, onEdit }) {
-    const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+    const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: task.id, data: { a11yName: task.title } });
     const style = {
         transform: CSS.Translate.toString(transform),
         transition,
@@ -74,7 +75,7 @@ function SortableTaskCard({ task, onEdit }) {
         <button
             type="button"
             ref={setActivatorNodeRef}
-            className="-my-3 -ml-3 flex w-8 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-l-card text-ink-muted/40 transition-colors hover:bg-surface-sunken hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand active:cursor-grabbing"
+            className="-my-3 -ml-3 flex w-8 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-l-card text-ink-muted/40 transition-colors hover:bg-surface-sunken hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring active:cursor-grabbing"
             aria-label={`Tempti „${task.title}“ — keisti prioritetą ar tvarką`}
             {...attributes}
             {...listeners}
@@ -302,6 +303,7 @@ export default function PriorityBoard({ tasks, onEditTask }) {
                 </p>
             )}
             <DndContext
+                accessibility={{ announcements: dndAnnouncements, screenReaderInstructions: dndScreenReaderInstructions }}
                 sensors={sensors}
                 collisionDetection={closestCorners}
                 onDragStart={handleDragStart}

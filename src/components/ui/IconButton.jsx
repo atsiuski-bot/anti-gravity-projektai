@@ -41,7 +41,7 @@ const IconButton = React.forwardRef(function IconButton(
                 'inline-flex items-center justify-center min-h-touch min-w-touch rounded-control',
                 // `transition` (curated, GPU-safe set) so the press scale eases alongside color.
                 'transition duration-base active:scale-95',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                 'disabled:opacity-50 disabled:pointer-events-none',
                 VARIANTS[variant] || VARIANTS.default,
                 className

@@ -52,7 +52,7 @@ function ColorSwatch({ user, onEdit }) {
             onClick={() => onEdit(user)}
             aria-label={`Keisti ${name} spalvą`}
             title="Keisti spalvą"
-            className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border-2 border-line shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+            className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border-2 border-line shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
             style={{ backgroundColor: swatchColor }}
         >
             <Sliders className="h-4 w-4" style={{ color: iconColor }} aria-hidden="true" />
@@ -120,7 +120,7 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
                                 type="button"
                                 aria-pressed={selected}
                                 onClick={() => onToggle(c.id)}
-                                className="inline-flex min-h-touch items-center gap-1.5 py-1 pl-2 pr-2.5 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                className="inline-flex min-h-touch items-center gap-1.5 py-1 pl-2 pr-2.5 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                             >
                                 {selected && <Check className="h-3.5 w-3.5 shrink-0 text-brand" aria-hidden="true" />}
                                 {/* Standard person rendering: avatar + name (UserChip), rendered `bare`
@@ -135,7 +135,7 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
                                     aria-label={primary ? `${cName} — pagrindinis koordinatorius` : `Padaryti ${cName} pagrindiniu koordinatoriumi`}
                                     title={primary ? 'Pagrindinis koordinatorius' : 'Padaryti pagrindiniu'}
                                     onClick={() => onSetPrimary(c.id)}
-                                    className="inline-flex min-h-touch min-w-touch items-center justify-center border-l border-brand/30 px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                    className="inline-flex min-h-touch min-w-touch items-center justify-center border-l border-brand/30 px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                                 >
                                     <Star className={cn('h-4 w-4', primary ? 'fill-current text-brand' : 'text-ink-muted')} aria-hidden="true" />
                                 </button>
@@ -220,7 +220,7 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
                         onClick={() => onToggleScoped(user)}
                         title={scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
                         className={cn(
-                            'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                            'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                             scoped ? 'border-brand bg-brand/10 text-ink' : 'border-line bg-surface-card text-ink-muted'
                         )}
                     >
@@ -405,7 +405,7 @@ function ExpectedHoursInput({ user, onCommit, hideLabel = false }) {
             placeholder="—"
             aria-label={`${name} savaitės tikslas valandomis`}
             className={cn(
-                'min-h-touch rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                'min-h-touch rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                 hideLabel ? 'w-20 text-center' : 'block w-full'
             )}
         />
@@ -434,7 +434,7 @@ function BackdateToggle({ user, onToggle }) {
             onClick={() => onToggle(user)}
             className={cn(
                 'flex w-full items-center justify-between gap-3 rounded-control border p-3 text-left min-h-touch',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1',
                 on ? 'border-brand bg-brand/5' : 'border-line bg-surface-card hover:bg-surface-sunken/60'
             )}
         >
@@ -477,7 +477,7 @@ function StartTimeCorrectionToggle({ user, onToggle }) {
             onClick={() => onToggle(user)}
             className={cn(
                 'flex w-full items-center justify-between gap-3 rounded-control border p-3 text-left min-h-touch',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1',
                 on ? 'border-brand bg-brand/5' : 'border-line bg-surface-card hover:bg-surface-sunken/60'
             )}
         >
@@ -610,6 +610,10 @@ function PayRateButton({ user, onEdit, fullWidth, iconOnly }) {
     );
 }
 
+// `labelClass` is the themed ink token, NOT the channel's own hue: raw `text-red-600` /
+// `text-blue-600` are tuned as fills and measured 3.30-3.53:1 as text on the dark card. The
+// channel is already named in words and re-stated by the coloured track below it, so colour was
+// never the only signal (§5) — dropping it costs nothing and clears AA in both themes.
 function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
     return (
         <div>
@@ -617,24 +621,33 @@ function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
                 <span className={cn('font-medium', labelClass)}>{label}</span>
                 <span className="font-mono text-ink-muted">{value}</span>
             </div>
-            <input
-                type="range"
-                min="0"
-                max="255"
-                value={value}
-                onChange={(e) => onChange(parseInt(e.target.value, 10))}
-                aria-label={label}
-                className={cn(
-                    // `wz-range` supplies the thumb: `appearance-none` strips the native handle in
-                    // every engine, and `accent-color` is inert once it's gone — so without an
-                    // explicit ::-webkit-slider-thumb / ::-moz-range-thumb (see index.css) the
-                    // handle is invisible in Chrome, Safari AND Firefox.
-                    'wz-range h-2 w-full cursor-pointer appearance-none rounded-full',
-                    track,
-                    accent,
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2'
-                )}
-            />
+            {/* The visible track stays 8px, but the INPUT is the touch target and an 8px-tall
+                target is unusable on a phone (DESIGN_SYSTEM §7 requires 44px). So the track is
+                drawn as its own centred layer and the input is stretched to a 44px transparent
+                box over it — the thumb still centres in the input, so nothing moves visually. */}
+            <div className="relative flex min-h-touch items-center">
+                <div
+                    aria-hidden="true"
+                    className={cn('pointer-events-none absolute inset-x-0 h-2 rounded-full', track)}
+                />
+                <input
+                    type="range"
+                    min="0"
+                    max="255"
+                    value={value}
+                    onChange={(e) => onChange(parseInt(e.target.value, 10))}
+                    aria-label={label}
+                    className={cn(
+                        // `wz-range` supplies the thumb: `appearance-none` strips the native handle in
+                        // every engine, and `accent-color` is inert once it's gone — so without an
+                        // explicit ::-webkit-slider-thumb / ::-moz-range-thumb (see index.css) the
+                        // handle is invisible in Chrome, Safari AND Firefox.
+                        'wz-range relative min-h-touch w-full cursor-pointer appearance-none bg-transparent',
+                        accent,
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2'
+                    )}
+                />
+            </div>
         </div>
     );
 }
@@ -1153,14 +1166,14 @@ export default function UserManagement() {
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Ieškoti pagal vardą ar el. paštą…"
                         aria-label="Ieškoti vartotojų"
-                        className="min-h-touch w-full rounded-input border border-line bg-surface-card py-2.5 pl-9 pr-10 text-body-lg text-ink placeholder:text-ink-muted focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        className="min-h-touch w-full rounded-input border border-line bg-surface-card py-2.5 pl-9 pr-10 text-body-lg text-ink placeholder:text-ink-muted focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                     />
                     {search && (
                         <button
                             type="button"
                             onClick={() => setSearch('')}
                             aria-label="Išvalyti paiešką"
-                            className="absolute right-1.5 top-1/2 inline-flex min-h-touch min-w-touch -translate-y-1/2 items-center justify-center rounded-full text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            className="absolute right-1.5 top-1/2 inline-flex min-h-touch min-w-touch -translate-y-1/2 items-center justify-center rounded-full text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                         >
                             <X className="h-4 w-4" aria-hidden="true" />
                         </button>
@@ -1176,7 +1189,7 @@ export default function UserManagement() {
                                 aria-pressed={active}
                                 onClick={() => setRoleFilter(f.id)}
                                 className={cn(
-                                    'inline-flex min-h-touch items-center gap-1.5 rounded-full border px-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                    'inline-flex min-h-touch items-center gap-1.5 rounded-full border px-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                     active ? 'border-brand bg-brand text-white' : 'border-line bg-surface-card text-ink hover:bg-surface-sunken/60'
                                 )}
                             >
@@ -1256,7 +1269,7 @@ export default function UserManagement() {
                             onClick={() => toggleExpanded(user.id)}
                             aria-expanded={expanded}
                             aria-controls={`user-edit-${user.id}`}
-                            className="mt-3 inline-flex min-h-touch w-full items-center justify-center gap-2 rounded-control border border-line bg-surface-card px-3 text-body font-medium text-ink transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="mt-3 inline-flex min-h-touch w-full items-center justify-center gap-2 rounded-control border border-line bg-surface-card px-3 text-body font-medium text-ink transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
                             {expanded ? 'Suskleisti' : 'Tvarkyti'}
@@ -1414,7 +1427,7 @@ export default function UserManagement() {
                                                     onClick={() => toggleExpanded(user.id)}
                                                     aria-expanded={expanded}
                                                     aria-label={expanded ? 'Suskleisti' : 'Tvarkyti koordinatorius'}
-                                                    className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-line text-ink-muted transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                    className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-line text-ink-muted transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                                 >
                                                     <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
                                                 </button>
@@ -1460,7 +1473,7 @@ export default function UserManagement() {
                 <div className="space-y-4">
                     <ColorSlider
                         label="Raudona (R)"
-                        labelClass="text-red-600"
+                        labelClass="text-ink"
                         value={tempColor.r}
                         onChange={(v) => setTempColor({ ...tempColor, r: v })}
                         track="bg-red-100"
@@ -1468,7 +1481,7 @@ export default function UserManagement() {
                     />
                     <ColorSlider
                         label="Žalia (G)"
-                        labelClass="text-green-600"
+                        labelClass="text-ink"
                         value={tempColor.g}
                         onChange={(v) => setTempColor({ ...tempColor, g: v })}
                         track="bg-green-100"
@@ -1476,7 +1489,7 @@ export default function UserManagement() {
                     />
                     <ColorSlider
                         label="Mėlyna (B)"
-                        labelClass="text-blue-600"
+                        labelClass="text-ink"
                         value={tempColor.b}
                         onChange={(v) => setTempColor({ ...tempColor, b: v })}
                         track="bg-blue-100"

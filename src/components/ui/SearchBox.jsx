@@ -173,7 +173,7 @@ export default function SearchBox({
                 className={cn(
                     'w-full min-h-touch rounded-input border border-line bg-surface-card pl-10 text-body-lg text-ink',
                     hasText ? 'pr-11' : 'pr-4',
-                    'py-2 focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2'
+                    'py-2 focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2'
                 )}
             />
             {hasText && (
@@ -185,7 +185,7 @@ export default function SearchBox({
                        clear control sits inside a search field a worker uses one-handed outdoors.
                        The input is already min-h-touch and reserves pr-11, so a 44px button pinned
                        to right-0 fits exactly without ever overlapping the typed text. */
-                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-input text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-input text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                 >
                     <X className="h-4 w-4" aria-hidden="true" />
                 </button>

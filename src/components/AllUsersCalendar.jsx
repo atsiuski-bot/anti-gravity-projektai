@@ -222,8 +222,10 @@ export default function AllUsersCalendar() {
         return null;
     };
 
+    // dvh, not vh, on the card height: on mobile `vh` measures the URL-bar-hidden viewport, so a
+    // vh-sized card is taller than the visible area and pushes its own footer off screen.
     return (
-        <div className="w-full bg-surface-card rounded-card shadow-lg border border-line overflow-hidden flex flex-col h-[70vh] min-h-[480px] max-h-[850px]">
+        <div className="w-full bg-surface-card rounded-card shadow-lg border border-line overflow-hidden flex flex-col h-[70dvh] min-h-[480px] max-h-[850px]">
             {/* Toolbar — single row on every viewport: the day stepper sits centered while the
                 "Šiandien" reset is pinned to the left edge, vertically aligned with the day name
                 (no longer a separate top row). Proportions are tuned down (smaller title/date,
@@ -367,7 +369,7 @@ export default function AllUsersCalendar() {
                                                 key={event.id}
                                                 type="button"
                                                 onClick={() => setReportUser(user)}
-                                                className={cn(baseBar, "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 before:absolute before:inset-x-0 before:-inset-y-[10px] before:content-['']")}
+                                                className={cn(baseBar, "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1 before:absolute before:inset-x-0 before:-inset-y-[10px] before:content-['']")}
                                                 style={barStyle}
                                                 title={`${event.title} (${timeRange}) — peržiūrėti dienos ataskaitą`}
                                                 aria-label={`${labelBase}. Atidaryti dienos ataskaitą.`}
@@ -486,7 +488,7 @@ export default function AllUsersCalendar() {
                                             <button
                                                 type="button"
                                                 onClick={() => setReportUser(user)}
-                                                className="w-full text-left px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                                                className="w-full text-left px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-inset"
                                                 aria-label={`${user.displayName}, ${eventTimeLabel(event.start, event.end)}. Atidaryti dienos ataskaitą.`}
                                             >
                                                 {cardBody}

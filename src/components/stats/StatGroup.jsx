@@ -20,7 +20,7 @@ export default function StatGroup({ title, open, onToggle, children }) {
                 aria-controls={panelId}
                 className={clsx(
                     'flex w-full items-center justify-between gap-3 px-4 py-3 text-left min-h-touch',
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring',
                     open ? 'bg-surface-sunken' : 'hover:bg-surface-sunken'
                 )}
             >

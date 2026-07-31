@@ -36,6 +36,20 @@ function loginErrorMessage(err) {
             return 'Prisijungimas nutrauktas. Bandykite dar kartą.';
         case 'auth/network-request-failed':
             return 'Nepavyko prisijungti dėl tinklo ryšio. Patikrinkite ryšį ir bandykite dar kartą.';
+        // Safari with "Block All Cookies" (or strict tracking prevention), and private browsing:
+        // Firebase cannot persist the session, so sign-in can never complete. Without this case the
+        // user got the generic "Nepavyko prisijungti" and no idea that a browser SETTING — not the
+        // app, not their account — was the blocker. The copy names the setting and where it lives.
+        case 'auth/web-storage-unsupported':
+            return 'Naršyklė blokuoja slapukus, todėl prisijungti nepavyks. Safari: Nustatymai → Safari → išjunkite „Blokuoti visus slapukus“. Taip pat išjunkite privatų (inkognito) režimą.';
+        // Environments where the Google popup handshake cannot complete at all — notably an
+        // installed iOS home-screen PWA, where window.open lands in a separate Safari view that
+        // cannot post back to the standalone context. Sending the user to a real browser tab is the
+        // only advice that works there.
+        case 'auth/operation-not-supported-in-this-environment':
+            return 'Šioje naršyklėje prisijungimo langas neveikia. Atidarykite programą naršyklėje (Safari arba Chrome) ir prisijunkite ten.';
+        case 'auth/unauthorized-domain':
+            return 'Prisijungimas iš šio adreso neleidžiamas. Praneškite administratoriui.';
         default:
             return 'Nepavyko prisijungti. Bandykite dar kartą.';
     }
@@ -146,7 +160,7 @@ export default function Login() {
                             autoComplete="username"
                             value={devEmail}
                             onChange={(e) => setDevEmail(e.target.value)}
-                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body-lg text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
+                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body-lg text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-ring"
                         />
                         <label htmlFor="dev-password" className="mb-1 block text-caption text-ink-muted">Slaptažodis</label>
                         <input
@@ -155,7 +169,7 @@ export default function Login() {
                             autoComplete="current-password"
                             value={devPassword}
                             onChange={(e) => setDevPassword(e.target.value)}
-                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body-lg text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
+                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body-lg text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-ring"
                         />
                         {devError && (
                             <p role="alert" className="mb-3 text-caption text-feedback-danger">{devError}</p>

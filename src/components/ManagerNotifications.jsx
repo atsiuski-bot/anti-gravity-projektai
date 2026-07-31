@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { canSeeWholeTeam, isOverseenBy } from '../utils/teamScope';
 import { useNavigation } from '../context/NavigationContext';
+import { useNotifications } from '../context/NotificationsContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Bell, Plus, Ban, UserPlus, Hand, Hourglass, ZoomIn } from 'lucide-react';
@@ -18,6 +19,7 @@ import TaskActionRow from './task/TaskActionRow';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { applyRequestedSessionEnd } from '../utils/sessionEditActions';
@@ -161,12 +163,19 @@ export default function ManagerNotifications({ onClose }) {
     const { currentUser, userRole, userData } = useAuth();
     const { usersMap } = useUsers();
     const { setActiveTab } = useNavigation();
+    const { pushIntent, clearPushIntent } = useNotifications();
     const isManager = isManagerRole(userRole);
     const runUndoable = useUndoableAction();
     const [view, setView] = useState('active'); // 'active' (live feed) | 'history' (read/past notices)
+    // Arrow-key + single-Tab-stop behaviour for the Aktyvūs/Istorija `role="tablist"` (APG).
+    const viewTabs = useRovingFocus();
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
+    // Whether the live task-notification listener has delivered its FIRST snapshot. An empty array
+    // alone cannot tell "still loading" from "nothing to show", and a push intent has to know the
+    // difference: acting on a not-yet-loaded feed would silently do nothing.
+    const [taskNotifsLoaded, setTaskNotifsLoaded] = useState(false);
     const [historyNotifications, setHistoryNotifications] = useState([]); // read request_notifications, lazy-loaded
     const [calendarHistory, setCalendarHistory] = useState([]); // dismissed calendar_notifications, lazy-loaded
     const [calendarRequestHistory, setCalendarRequestHistory] = useState([]); // resolved calendar_requests, lazy-loaded
@@ -231,8 +240,12 @@ export default function ManagerNotifications({ onClose }) {
             // (NotificationsContext → SoundManager.playNotificationCue), so it fires for every type and
             // regardless of whether this panel is open — no per-panel playBeep needed here.
             setTaskNotifications(notifs);
+            setTaskNotifsLoaded(true);
         }, (error) => {
             console.error("ManagerNotifications: Task Notifications Listener Error:", error);
+            // A failed listener still "settles" the feed: leaving it forever-loading would hang a
+            // pending push intent in silence instead of telling the user it could not be applied.
+            setTaskNotifsLoaded(true);
         });
 
         return () => unsubscribe();
@@ -760,6 +773,22 @@ export default function ManagerNotifications({ onClose }) {
         }).finally(() => setBulkConfirming(false));
     };
 
+    // Single-item confirm for the push "Priimti" button (ADR 0024). It is NOT a second
+    // implementation: it composes the exact three primitives the bulk handler above already
+    // uses — the audited confirmTask write + dismiss, the deferred worker ping, and the
+    // compensating unconfirm — so a completion accepted from a lockscreen commits, pings and
+    // undoes identically to one accepted in the panel. (The card's own Priimti button stays with
+    // TaskCard, which owns the card-level write; this path exists because a push intent has no
+    // card to press.)
+    const handleConfirmOneCompletion = (notif) => runUndoable({
+        run: () => confirmCompletionWrite(notif),
+        deferredEffect: () => notifyCompletionConfirmed(notif),
+        undo: () => undoConfirmCompletion(notif),
+        message: 'Užduotis priimta.',
+        undoneMessage: 'Atšaukta — grąžinta priėmimui.',
+        errorMessage: 'Nepavyko priimti užduoties. Bandykite dar kartą.',
+    });
+
     // Post-action hooks handed to the completion card's TaskCard. TaskCard performs the actual
     // task write (confirm via status:'confirmed', revert via reopenTask, delete via deleteTask);
     // these run AFTER that write succeeds and only do the feed-side bookkeeping the task list has
@@ -832,6 +861,56 @@ export default function ManagerNotifications({ onClose }) {
             setDecidingAccount(null);
         }
     };
+
+    // --- Push-notification decision buttons (ADR 0024) ---
+    // A button on an OS notification never decides anything itself. The service worker hands the app
+    // an intent and it is executed HERE, through the very same handler the in-app card's button
+    // calls — so the "already decided by another manager" re-read, the deleted-task self-heal, the
+    // undo window and the Lithuanian error banner all apply identically whether the manager tapped a
+    // lockscreen or the card. That equivalence is the entire reason the worker is kept write-less.
+    //
+    // The intent is checked against the notification's TYPE before it runs: a stale bundle or a
+    // hand-edited URL can name any pair it likes, and the wrong handler on the wrong notification is
+    // exactly the kind of thing that must fail into "show the card and let a human decide".
+    const handledIntentRef = useRef(0);
+    useEffect(() => {
+        if (!pushIntent?.action) return;
+        // React StrictMode double-invokes effects in development; re-running a committed decision
+        // because of that would be a genuine double write, so every intent carries a monotonic seq
+        // and is executed at most once.
+        if (handledIntentRef.current === pushIntent.seq) return;
+        // The decision card lives in the live feed. An intent arriving while the user reads Istorija
+        // switches the panel back rather than quietly doing nothing.
+        if (view !== 'active') { setView('active'); return; }
+        // Wait for the first snapshot — acting on a feed that has not loaded would find nothing and
+        // wrongly report the request as already resolved.
+        if (!taskNotifsLoaded) return;
+
+        handledIntentRef.current = pushIntent.seq;
+        clearPushIntent();
+
+        // 'Atidaryti' asks for nothing but the card, and the panel is already open by now.
+        if (pushIntent.action === 'open') return;
+
+        const notif = taskNotifications.find((n) => n.id === pushIntent.notifId);
+        if (!notif) {
+            // Someone else got there first (or the request was cleared on another device). Say so —
+            // a button that appears to do nothing reads as a bug.
+            setActionNotice('Šis prašymas jau išspręstas — daryti nieko nebereikia.');
+            return;
+        }
+
+        const runners = {
+            approve: { type: 'task_approval', run: (n) => handleApproveTask(n) },
+            confirm: { type: 'task_completion', run: (n) => handleConfirmOneCompletion(n) },
+            extend30: { type: 'time_extension_request', run: (n) => handleGrantExtension(n, '30min') },
+        };
+        const runner = runners[pushIntent.action];
+        // Unknown action, or one aimed at the wrong type → leave the card on screen untouched.
+        if (!runner || runner.type !== notif.type) return;
+        runner.run(notif);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on a NEW intent (or once the feed settles); the handlers are re-created every render and would re-fire this.
+    }, [pushIntent, taskNotifsLoaded, taskNotifications, view, clearPushIntent]);
 
     // Audit R-08: the calendar listener reads the whole company for the week (no subtree field exists
     // on the doc to query by), so a scoped/senior manager must NOT be shown — nor allowed to dismiss —
@@ -922,8 +1001,16 @@ export default function ManagerNotifications({ onClose }) {
             {/* The tab bar is the panel's header — pinned to the top of the scroll area (sticky) so it
                 stays put while the feed below scrolls, on both the phone top-sheet and the desktop
                 popover. The solid background + top padding keep scrolling cards from showing through. */}
-            <div role="tablist" aria-label="Pranešimų rodinys" className="sticky -top-3 z-10 -mt-3 bg-surface-card pt-3 pb-1">
-                <div className="flex w-full overflow-hidden rounded-control border border-line bg-surface-sunken">
+            <div className="sticky -top-3 z-10 -mt-3 bg-surface-card pt-3 pb-1">
+                {/* role on the strip, not the sticky wrapper: ARIA requires the tabs to be the
+                    tablist's own children. */}
+                <div
+                    role="tablist"
+                    aria-label="Pranešimų rodinys"
+                    ref={viewTabs.ref}
+                    onKeyDown={viewTabs.onKeyDown}
+                    className="flex w-full overflow-hidden rounded-control border border-line bg-surface-sunken"
+                >
                     <button
                         type="button"
                         role="tab"
@@ -931,8 +1018,8 @@ export default function ManagerNotifications({ onClose }) {
                         onClick={() => setView('active')}
                         className={cn(
                             'flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
-                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                            view === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                            view === 'active' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                         )}
                     >
                         Aktyvūs
@@ -957,8 +1044,8 @@ export default function ManagerNotifications({ onClose }) {
                         onClick={() => setView('history')}
                         className={cn(
                             'flex-1 inline-flex items-center justify-center px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
-                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                            view === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                            view === 'history' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                         )}
                     >
                         Istorija
@@ -1539,7 +1626,7 @@ export default function ManagerNotifications({ onClose }) {
                                                     rel="noopener noreferrer"
                                                     // object-contain + sunken canvas so a tall photo isn't cropped to
                                                     // its middle; ZoomIn badge signals it opens full-size in a new tab.
-                                                    className="relative block h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                    className="relative block h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                                 >
                                                     <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                     <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">

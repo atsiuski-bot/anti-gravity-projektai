@@ -198,6 +198,9 @@ export default function Select({
         }
     };
 
+    // dvh, not vh, on the sheet cap: on mobile `vh` measures the URL-bar-HIDDEN viewport, so a
+    // vh-sized sheet can be taller than what is actually on screen and the last options end up
+    // below the fold with the list already at its maximum height.
     const listbox = (
         <ul
             ref={listRef}
@@ -207,7 +210,7 @@ export default function Select({
             aria-label={label || ariaLabel}
             aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
             onKeyDown={onListKeyDown}
-            className={cn('overflow-y-auto py-1 focus:outline-none', useSheet ? 'max-h-[60vh]' : 'max-h-72')}
+            className={cn('overflow-y-auto py-1 focus:outline-none', useSheet ? 'max-h-[60dvh]' : 'max-h-72')}
         >
             {options.map((opt, i) => {
                 if (opt.isGroup) {
@@ -279,7 +282,7 @@ export default function Select({
                     aria-label={ariaLabel || label}
                     className={cn(
                         'flex min-h-touch w-full items-center gap-2 rounded-input border border-line bg-surface-card px-3 py-2 text-left text-body text-ink',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                         'disabled:opacity-50 disabled:pointer-events-none',
                         open && 'border-brand ring-2 ring-brand',
                         buttonClassName

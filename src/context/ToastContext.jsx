@@ -59,7 +59,7 @@ function ToastCard({ toast, onAction, onDismiss }) {
                 <button
                     type="button"
                     onClick={() => { toast.onClick?.(); onDismiss(); }}
-                    className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                 >
                     {toast.title && <p className="text-body font-semibold text-ink-strong">{toast.title}</p>}
                     <p className="text-body text-ink break-words">{toast.message}</p>
@@ -74,7 +74,7 @@ function ToastCard({ toast, onAction, onDismiss }) {
                 <button
                     type="button"
                     onClick={onAction}
-                    className="inline-flex min-h-touch flex-shrink-0 items-center gap-1.5 self-center rounded-full bg-brand-soft px-3 font-semibold text-brand transition duration-base hover:bg-brand-soft/70 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    className="inline-flex min-h-touch flex-shrink-0 items-center gap-1.5 self-center rounded-full bg-brand-soft px-3 font-semibold text-brand transition duration-base hover:bg-brand-soft/70 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                 >
                     <RotateCcw className="h-4 w-4" aria-hidden="true" />
                     <span className="text-body">{toast.action.label}</span>

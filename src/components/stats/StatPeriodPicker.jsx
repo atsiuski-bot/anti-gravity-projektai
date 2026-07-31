@@ -41,7 +41,7 @@ export default function StatPeriodPicker({ value, onChange }) {
                         aria-pressed={value?.key === p.key}
                         className={clsx(
                             'rounded-control px-3 py-1.5 text-caption font-semibold min-h-touch transition-colors',
-                            'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                            'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                             value?.key === p.key
                                 ? 'bg-brand text-white'
                                 : 'border border-line bg-surface-sunken text-ink hover:bg-surface-card'

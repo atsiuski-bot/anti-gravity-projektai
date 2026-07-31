@@ -39,7 +39,7 @@ export default function TaskRow({
     return (
         <tr
             className={onOpen
-                ? `${rowClassName || ''} cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand`
+                ? `${rowClassName || ''} cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring`
                 : rowClassName}
             onClick={onOpen ? () => onOpen(task) : undefined}
             // Keyboard parity (WCAG 2.1.1): the whole row is an "open the task" control, so it must be

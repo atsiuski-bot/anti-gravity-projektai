@@ -183,6 +183,22 @@ const CATEGORY_BY_TYPE = {
     task_overdue: 'info',
 };
 
+// MIRROR of the registry's per-type `actions` — the OS-level decision buttons drawn on a BACKGROUND
+// push (ADR 0024). Same reasoning as CATEGORY_BY_TYPE: the service worker cannot import the client
+// registry, so the buttons travel in the push DATA payload and this map is the server side of that
+// mirror. src/__tests__/firebaseConsistency.test.js locks it against notificationActions() — key set,
+// order, ids and Lithuanian titles — so a button can never be renamed on one side only.
+//
+// A button carries NO authority: tapping it opens the app with the intent, and the app runs the same
+// guarded handler the in-app card's button runs. Nothing here writes. Types absent from this map get
+// a plain tap-to-open push, exactly as before. Kept OUTSIDE the copyForRequestNotification slice the
+// copy-lockstep test extracts, so it never disturbs that test.
+const PUSH_ACTIONS_BY_TYPE = {
+    task_approval: [{ action: 'approve', title: 'Patvirtinti' }, { action: 'open', title: 'Atidaryti' }],
+    task_completion: [{ action: 'confirm', title: 'Priimti' }, { action: 'open', title: 'Atidaryti' }],
+    time_extension_request: [{ action: 'extend30', title: 'Pratęsti +30 min' }, { action: 'open', title: 'Atidaryti' }],
+};
+
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'Gildija';
     switch (n.type) {
@@ -326,6 +342,10 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     const link = n.type === 'calendar_decision' ? '/?tab=calendar'
         : n.type === 'achievement' ? '/?tab=profile'
         : '/?tab=tasks';
+    // OS-level decision buttons for this type, if it has any. FCM data values must be strings, so
+    // they ride as JSON; the key is omitted entirely for the (majority) tap-only types, keeping the
+    // common payload small — the whole data map shares one 4KB budget.
+    const pushActions = PUSH_ACTIONS_BY_TYPE[n.type];
     try {
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
@@ -335,6 +355,7 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
             category: CATEGORY_BY_TYPE[n.type] || 'info',
             // Per-event id → unique notification tag (so distinct alerts don't collapse).
             notifId: String(event.params.id),
+            ...(pushActions ? { actions: JSON.stringify(pushActions) } : {}),
             link
         });
     } catch (err) {

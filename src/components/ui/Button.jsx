@@ -53,7 +53,7 @@ const Button = forwardRef(function Button(
                 // `transition` (not `transition-colors`) so the press scale eases too. The
                 // utility's property set is GPU-safe (transform/opacity/color), never layout.
                 'transition duration-base active:scale-[0.98]',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                 'disabled:opacity-50 disabled:pointer-events-none',
                 VARIANTS[variant] || VARIANTS.primary,
                 SIZES[size] || SIZES.md,

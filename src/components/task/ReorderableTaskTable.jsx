@@ -5,6 +5,7 @@ import { GripVertical } from 'lucide-react';
 import clsx from 'clsx';
 import TaskTable from '../TaskTable';
 import useReorderableTasks from '../../hooks/useReorderableTasks';
+import { dndAnnouncements, dndScreenReaderInstructions } from '../../utils/dndA11y';
 
 /**
  * ReorderableTaskTable — wraps the desktop team TaskTable with drag-to-reorder WITHOUT making
@@ -32,7 +33,7 @@ function SortableTaskRow({ task, draggable, rowClassName, onRowClick, children }
         transform,
         transition,
         isDragging,
-    } = useSortable({ id: task.id, disabled: !draggable });
+    } = useSortable({ id: task.id, data: { a11yName: task.title }, disabled: !draggable });
 
     const style = {
         transform: CSS.Translate.toString(transform),
@@ -54,7 +55,7 @@ function SortableTaskRow({ task, draggable, rowClassName, onRowClick, children }
                         {...attributes}
                         {...listeners}
                         aria-label={`Tempti „${task.title}“ — keisti tvarką ar prioritetą`}
-                        className="flex h-8 w-6 cursor-grab touch-none items-center justify-center rounded text-ink-muted/50 transition-colors hover:bg-surface-sunken hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand active:cursor-grabbing"
+                        className="flex h-8 w-6 cursor-grab touch-none items-center justify-center rounded text-ink-muted/50 transition-colors hover:bg-surface-sunken hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring active:cursor-grabbing"
                     >
                         <GripVertical className="h-4 w-4" aria-hidden="true" />
                     </button>
@@ -95,6 +96,7 @@ export default function ReorderableTaskTable({ dragEnabled = true, ...tableProps
                 </p>
             )}
             <DndContext
+                accessibility={{ announcements: dndAnnouncements, screenReaderInstructions: dndScreenReaderInstructions }}
                 sensors={reorder.sensors}
                 collisionDetection={reorder.collisionDetection}
                 onDragStart={reorder.onDragStart}

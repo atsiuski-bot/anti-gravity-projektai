@@ -49,7 +49,7 @@ export function PeriodPicker({ presets, activeId, onChoose, open, onToggle, labe
     // that legibility and target size are never traded for visual density — the breathing room comes
     // from the card's own px-2 py-1 frame, not from undersizing the control.
     const chipClass = (id) =>
-        `shrink-0 inline-flex items-center justify-center min-h-touch px-3 rounded-control text-body font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+        `shrink-0 inline-flex items-center justify-center min-h-touch px-3 rounded-control text-body font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring ${
             activeId === id
                 // text-white: `text-on-brand` was a no-op — no `on-brand` colour is configured, so the
                 // selected chip silently inherited the card's dark ink and rendered at 2.82:1 on the
@@ -90,7 +90,7 @@ export function PeriodPicker({ presets, activeId, onChoose, open, onToggle, labe
                     aria-expanded={open}
                     aria-label={open ? 'Suskleisti laikotarpio parinktis' : 'Daugiau laikotarpio parinkčių'}
                     /* min-h-touch, not h-10: a 40px control misses the binding 44px gate. */
-                    className="shrink-0 inline-flex items-center gap-1 min-h-touch px-3 rounded-control text-body font-semibold border border-line bg-surface-card text-ink-strong transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    className="shrink-0 inline-flex items-center gap-1 min-h-touch px-3 rounded-control text-body font-semibold border border-line bg-surface-card text-ink-strong transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                 >
                     <span>{open ? 'Mažiau' : 'Daugiau'}</span>
                     {!open && hiddenCount > 0 && (

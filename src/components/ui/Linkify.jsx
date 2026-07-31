@@ -32,7 +32,7 @@ export default function Linkify({ text, className }) {
                             className ??
                             'break-all font-medium text-brand underline decoration-brand/40 underline-offset-2 ' +
                                 'hover:decoration-brand focus-visible:outline-none focus-visible:ring-2 ' +
-                                'focus-visible:ring-brand focus-visible:ring-offset-1 rounded-sm'
+                                'focus-visible:ring-brand-ring focus-visible:ring-offset-1 rounded-sm'
                         }
                     >
                         {part.value}

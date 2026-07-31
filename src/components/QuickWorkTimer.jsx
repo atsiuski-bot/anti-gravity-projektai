@@ -34,6 +34,7 @@ import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
 import PersonSelect from './ui/PersonSelect';
 import SessionToggleButton from './ui/SessionToggleButton';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 
 const idFor = (prefix) => {
     const random = globalThis.crypto?.randomUUID?.()
@@ -65,6 +66,9 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
     // turns into an optional comment. null = free-write mode (textarea IS the title). `helpUserId`
     // is only meaningful for the 'help' template (Pagalba: <member>).
     const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+    // Arrow-key + single-Tab-stop behaviour for the radio group(s) below (WAI-ARIA APG).
+    const templateRadios = useRovingFocus({ itemRole: 'radio', orientation: 'both' });
+    const managerRadios = useRovingFocus({ itemRole: 'radio', orientation: 'both' });
     const [helpUserId, setHelpUserId] = useState('');
     // Track only WHETHER the textarea has text (cheap), so "Patvirtinti" can enable/disable without
     // making the field controlled — which would fight the dictation hook that writes el.value
@@ -131,7 +135,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                     <span id="quickWorkTemplateLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
                         Greito darbo šablonas
                     </span>
-                    <div role="radiogroup" aria-labelledby="quickWorkTemplateLabel" className="grid grid-cols-2 gap-2">
+                    <div role="radiogroup" aria-labelledby="quickWorkTemplateLabel" ref={templateRadios.ref} onKeyDown={templateRadios.onKeyDown} className="grid grid-cols-2 gap-2">
                         {templateOptions.map((opt) => {
                             const selected = opt.id === selectedTemplateId;
                             return (
@@ -143,7 +147,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                                     onClick={() => setSelectedTemplateId(selected ? null : opt.id)}
                                     className={clsx(
                                         'flex min-h-touch flex-col items-start justify-center gap-0.5 rounded-card border px-3 py-2 text-left transition-colors',
-                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                         selected
                                             ? 'border-brand bg-brand-soft text-ink-strong'
                                             : 'border-line bg-surface-card text-ink hover:bg-surface-sunken'
@@ -231,7 +235,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                         <span id="quickWorkManagerLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
                             Kuriam koordinatoriui pateikti?
                         </span>
-                        <div role="radiogroup" aria-labelledby="quickWorkManagerLabel" className="flex flex-wrap gap-2">
+                        <div role="radiogroup" aria-labelledby="quickWorkManagerLabel" ref={managerRadios.ref} onKeyDown={managerRadios.onKeyDown} className="flex flex-wrap gap-2">
                             {managers.map((m) => {
                                 const selected = m.id === selectedManagerId;
                                 return (
@@ -243,7 +247,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                                         onClick={() => setSelectedManagerId(m.id)}
                                         className={clsx(
                                             'inline-flex min-h-touch items-center gap-2 rounded-full border px-4 text-body font-medium transition-colors',
-                                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                             selected
                                                 ? 'border-brand bg-brand/10 text-ink-strong'
                                                 : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
@@ -753,7 +757,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                 aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? blockedReason : "Pradėti greitą veiklą")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition shadow-sm active:scale-95 border min-w-[140px]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isQuickWorking
                             ? 'bg-session-quickWork-surface border-session-quickWork-soft text-session-quickWork-accent ring-1 ring-session-quickWork-soft'

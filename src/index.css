@@ -1,5 +1,42 @@
 @tailwind base;
 @tailwind components;
+
+/* Dynamic-viewport (`dvh`) fallback for engines below Safari/iOS 15.4, Chrome 108 and Opera 94 —
+   all of them inside this app's declared support floor (package.json browserslist: iOS 14). Those
+   engines cannot parse `100dvh`, so they drop the WHOLE declaration: a modal's height cap simply
+   ceases to exist and a long dialog runs off the bottom of the screen with no internal scroll —
+   the exact failure dvh was introduced to prevent, just inverted. A `vh` twin restores a cap there.
+   `vh` measures the LARGEST viewport (URL bar hidden), so the fallback is slightly generous, which
+   is the right direction to be wrong: a cap that is a little too tall still scrolls; no cap does not.
+
+   THE POSITION IS THE MECHANISM. These sit between `@tailwind components` and `@tailwind utilities`
+   so they are emitted BEFORE the dvh utilities they back up. Both selectors carry the same
+   specificity (0,1,0), so on a modern phone the later dvh rule still wins and nothing changes; only
+   where dvh is unparseable — and the utility therefore contributes nothing — does the `vh` twin
+   apply. Moved below `@tailwind utilities` (where the rest of this file lives) they would override
+   dvh on EVERY browser and silently undo it. `@layer base` looks like the tidier home and is not:
+   Tailwind drops the nested `@media` blocks, which silently deletes the two responsive fallbacks.
+
+   The selectors mirror the arbitrary values used in the components;
+   src/__tests__/browserFloorFallbacks.test.js fails the gate if a component adds a dvh utility that
+   has no twin here. */
+.max-h-\[60dvh\] { max-height: 60vh; }
+.max-h-\[80dvh\] { max-height: 80vh; }
+.h-\[70dvh\] { height: 70vh; }
+/* The modal cap now also subtracts the bottom safe-area inset (the dock it clears grows by exactly
+   that on a home-indicator device), so the twin has to carry the same `env()` term — otherwise the
+   fallback would reserve too little on precisely the phones that need the most. `env()` itself is
+   fine at the floor: it has shipped since iOS 11.2, unlike `dvh`. */
+.max-h-\[calc\(100dvh-9rem-env\(safe-area-inset-bottom\)\)\] { max-height: calc(100vh - 9rem - env(safe-area-inset-bottom)); }
+
+@media (min-width: 640px) {
+  .sm\:max-h-\[calc\(100dvh-10rem-env\(safe-area-inset-bottom\)\)\] { max-height: calc(100vh - 10rem - env(safe-area-inset-bottom)); }
+}
+
+@media (min-width: 1024px) {
+  .lg\:max-h-\[90dvh\] { max-height: 90vh; }
+}
+
 @tailwind utilities;
 
 /* iOS Safari force-zooms the viewport whenever a focused form control's text is < 16px, leaving
@@ -18,11 +55,50 @@
   }
 }
 
+/* `:has()` fallback. The focus ring on the notification-preference rows (UserProfileModal) is drawn
+   with `has-[:focus-visible]:ring-*`, and `:has()` needs Safari 15.4 / Firefox 121 — below that the
+   rule is dropped and a keyboard user gets NO visible focus indicator, which DESIGN_SYSTEM §a11y
+   treats as mandatory, not decorative. `:focus-within` is supported everywhere in the floor and is
+   the closest equivalent; it also fires on pointer focus, so it is applied ONLY where `:has()` is
+   missing and modern engines keep the tighter focus-visible behaviour untouched. */
+@supports not selector(:has(*)) {
+  .has-\[\:focus-visible\]\:ring-2:focus-within {
+    --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+    --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+    box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+  }
+  /* Tracks the utility the component actually uses. Focus rings moved from `--brand` (a FILL value
+     that measured 2.32-2.71:1 on the dark surfaces) to `--brand-ring`; leaving this twin on the old
+     name would have made the pre-15.4 fallback point at a colour nothing else uses any more. */
+  .has-\[\:focus-visible\]\:ring-brand-ring:focus-within {
+    --tw-ring-opacity: 1;
+    --tw-ring-color: rgb(var(--brand-ring) / var(--tw-ring-opacity, 1));
+  }
+}
+
 /* Range-slider thumb (UserManagement ColorSlider). `appearance-none` removes the native handle in
    EVERY engine, so a thumb must be redrawn explicitly per-engine or it's invisible — WebKit reads
    ::-webkit-slider-thumb, Gecko reads ::-moz-range-thumb (neither inherits from the other, and
    autoprefixer does NOT synthesise the pair). A white disc with a neutral ring reads on any track
    tint (red/green/blue-100). Keep both blocks in sync. */
+/* The input itself is stretched to a 44px touch target (an 8px-tall slider is unusable on a phone —
+   DESIGN_SYSTEM §7), while the coloured 8px track is drawn as a separate centred layer behind it.
+   So the NATIVE track must be transparent and pinned to 8px: WebKit vertically centres a
+   fixed-height runnable track inside the input box, which is what keeps the visual unchanged, and
+   the thumb then needs the usual negative margin to sit on that track's centre line rather than its
+   top edge. Gecko centres its thumb on the track by itself, so only the track height is set there. */
+.wz-range::-webkit-slider-runnable-track {
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: transparent;
+  border: 0;
+}
+.wz-range::-moz-range-track {
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: transparent;
+  border: 0;
+}
 .wz-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -33,6 +109,7 @@
   border: 2px solid rgb(var(--ink-muted));
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
   cursor: pointer;
+  margin-top: -0.375rem; /* (0.5rem track - 1.25rem thumb) / 2 */
 }
 .wz-range::-moz-range-thumb {
   height: 1.25rem;
@@ -61,7 +138,14 @@
   --brand: 79 70 229;          /* indigo-600 #4F46E5 */
   --brand-hover: 67 56 202;    /* indigo-700 #4338CA */
   --brand-soft: 238 242 255;   /* indigo-50  #EEF2FF */
-  --brand-ring: 129 140 248;   /* indigo-400 #818CF8 */
+  /* THE focus-ring colour (`ring-brand-ring`) — a focus indicator is a non-text UI component and
+     must clear 3:1 against whatever it sits on (WCAG 1.4.11). indigo-400 (the previous value) is
+     only 2.98:1 on the white card, so the documented ring token would itself have failed; it was
+     never actually used — every ring reached for `--brand` instead, which is a FILL value and
+     measured 2.32-2.71:1 on the dark card/sunken surfaces. So: light takes the fill-safe indigo-600
+     (6.29:1 on card, 5.71:1 on sunken) and dark lightens to indigo-300 (8.56:1 / 7.25:1). Same
+     fill-vs-foreground split as `feedback` and `session`. Fills keep `--brand`; rings use this. */
+  --brand-ring: 79 70 229;     /* indigo-600 #4F46E5 */
 
   /* Neutrals — the calm canvas */
   --surface-base: 249 250 251; /* gray-50  #F9FAFB */
@@ -145,6 +229,16 @@
   --session-task-surface: 220 252 231;      /* green-100 #DCFCE7 */
   --session-task-accent: 21 128 61;         /* green-700 #15803D */
   --session-task-soft: 187 247 208;         /* green-200 #BBF7D0 */
+
+  /* Tier LABEL — the caption under a Badge medallion. The tier `accent` values are tuned against
+     their own (theme-invariant, light) medallion `surface` and are AA there; used as text on the
+     THEMED card they measured 1.65-3.20:1 in dark. Light keeps the accent (5.9-10.9:1 on white);
+     dark switches to the tier's metallic `ring` shade, which preserves the metal identity and
+     clears 5.98-9.17:1 on the dark card. The medallion pairing is untouched. */
+  --tier-bronze-label: 122 74 33;      /* #7A4A21 (accent) */
+  --tier-silver-label: 75 85 99;       /* #4B5563 (accent) */
+  --tier-gold-label: 138 101 0;        /* #8A6500 (accent) */
+  --tier-platinum-label: 51 65 85;     /* #334155 (accent) */
 
   color-scheme: light;
 }
@@ -232,7 +326,26 @@
   --session-task-accent: 21 128 61;         /* green-700 — fill-safe, unchanged */
   --session-task-soft: 27 77 51;            /* deep green border #1B4D33 */
 
+  /* Tier label — the metallic `ring` shade of each tier (see the light block for the rationale).
+     Measured on the dark card #171C26: bronze 5.98:1, silver 8.92:1, gold 9.17:1, platinum 7.86:1. */
+  --tier-bronze-label: 194 142 90;     /* #C28E5A (bronze ring) */
+  --tier-silver-label: 182 188 196;    /* #B6BCC4 (silver ring) */
+  --tier-gold-label: 220 187 74;       /* #DCBB4A (gold ring) */
+  --tier-platinum-label: 159 178 198;  /* #9FB2C6 (platinum ring) */
+
   color-scheme: dark;
+}
+
+/* Tailwind pins `--tw-ring-offset-color` to a literal #fff on EVERY element (its preflight `*`
+   rule), so a `ring-offset-*` focus ring drew a white gap around the control on the dark canvas —
+   the opposite of the intent, and it made the offset, not the ring, the visible indicator. Mirror
+   what light already gets: the offset should be the surface the control sits on, which for
+   virtually every focusable control here is the card. Scoped to `*` (0,1,0 beats preflight's
+   0,0,0) because the var is applied per-element, not inherited from :root. */
+[data-theme="dark"] *,
+[data-theme="dark"] ::before,
+[data-theme="dark"] ::after {
+  --tw-ring-offset-color: rgb(var(--surface-card));
 }
 
 /* On-shell text (ADR 0008): text/icons that ride DIRECTLY on the theme-invariant session shell
@@ -268,6 +381,15 @@
 [data-theme="dark"] .text-session-task-accent { color: rgb(74 222 128); }       /* green-400 */
 
 @layer base {
+  /* The app header is `sticky top-0` (h-12) and team screens add a sticky sub-tab strip under it.
+     Without this, `scrollIntoView` — which is what the browser runs when Tab moves focus to an
+     element just above the fold — parks that element at y=0, i.e. underneath the sticky chrome,
+     leaving a keyboard user focused on something they cannot see. Reserving the chrome's height on
+     the scroll root fixes every such scroll at once (no per-element scroll-margin needed). */
+  html {
+    scroll-padding-top: 7rem;
+  }
+
   /* Native input/textarea placeholder: route through the muted-ink token so it themes with
      light/dark and clears AA. The browser default (~gray-400) is only 2.54:1 on the light card
      (a fail); --ink-muted is 4.83:1 on white (light) and 6.71:1 on the dark card. Kept in

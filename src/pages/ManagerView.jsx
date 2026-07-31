@@ -40,6 +40,7 @@ import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
 import useFullBleed from '../hooks/useFullBleed';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 import { scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
 import { lazyWithRecovery } from '../utils/appUpdate';
@@ -80,6 +81,10 @@ export default function ManagerView() {
     // Kom. ataskaitos to sit beside the calendar it describes), and Veiklos ataskaita (the
     // work-hours report, also lifted out of the retired Kom. ataskaitos tab).
     const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
+
+    // Arrow-key + single-Tab-stop behaviour for the two `role="tablist"` strips below (APG).
+    const teamTasksTabs = useRovingFocus();
+    const teamCalendarTabs = useRovingFocus();
 
     // Use custom hooks
     const { tasks, ownTasks, ownTasksLoaded, users, allUsers, error } = useManagerData(currentUser);
@@ -309,12 +314,22 @@ export default function ManagerView() {
                 {/* The single-line quick-add bar was removed; its AI draft-fill now lives in the
                     "Nauja veikla" modal (TaskModal), beside the title. */}
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-                    <div role="tablist" aria-label="Komandos veiklų rodinys">
+                    <div>
                         {/* Mobile: a horizontally scrollable strip (no-scrollbar) so all four
                             sub-tabs keep their natural width and full labels instead of being
                             squeezed equal with flex-1 — the row swipes sideways when it overflows
-                            the viewport, without growing taller. md+ keeps the fitted inline pill. */}
-                        <div className="flex w-full overflow-x-auto no-scrollbar snap-x snap-mandatory sm:inline-flex sm:w-auto sm:overflow-hidden rounded-control border border-line bg-surface-sunken">
+                            the viewport, without growing taller. md+ keeps the fitted inline pill.
+                            `role="tablist"` sits on the STRIP, not on the wrapper: ARIA requires the
+                            tabs to be the tablist's own children, and this scroll container sat
+                            between them and broke that ownership. (The wrapper stays — it is the
+                            flex item the md+ toolbar row lays out against.) */}
+                        <div
+                            role="tablist"
+                            aria-label="Komandos veiklų rodinys"
+                            ref={teamTasksTabs.ref}
+                            onKeyDown={teamTasksTabs.onKeyDown}
+                            className="flex w-full overflow-x-auto no-scrollbar snap-x snap-mandatory sm:inline-flex sm:w-auto sm:overflow-hidden rounded-control border border-line bg-surface-sunken"
+                        >
                             <button
                                 type="button"
                                 role="tab"
@@ -324,8 +339,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamTasksSubTab('active')}
                                 className={cn(
                                     'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'active' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -342,8 +357,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamTasksSubTab('list')}
                                 className={cn(
                                     'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'list' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -360,8 +375,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamTasksSubTab('approvals')}
                                 className={cn(
                                     'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'approvals' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'approvals' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <BadgeCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -392,8 +407,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamTasksSubTab('signoff')}
                                 className={cn(
                                     'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'signoff' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'signoff' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <ClipboardCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -409,8 +424,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamTasksSubTab('signoffHistory')}
                                 className={cn(
                                     'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'signoffHistory' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'signoffHistory' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <History className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -426,8 +441,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamTasksSubTab('recurring')}
                                 className={cn(
                                     'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'recurring' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'recurring' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <Repeat className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -735,8 +750,15 @@ export default function ManagerView() {
                     {/* Two sub-tabs, same segmented control as the Kom. ataskaitos switcher:
                         Kalendorius (the live calendar) and Kalendoriaus istorija (the calendar-change
                         log, moved here from Kom. ataskaitos to sit beside the calendar it describes). */}
-                    <div role="tablist" aria-label="Komandos kalendoriaus rodinys">
-                        <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                    <div>
+                        {/* role on the strip itself, so the tabs are the tablist's own children. */}
+                        <div
+                            role="tablist"
+                            aria-label="Komandos kalendoriaus rodinys"
+                            ref={teamCalendarTabs.ref}
+                            onKeyDown={teamCalendarTabs.onKeyDown}
+                            className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken"
+                        >
                             <button
                                 type="button"
                                 role="tab"
@@ -744,8 +766,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamCalendarSubTab('calendar')}
                                 className={cn(
                                     'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamCalendarSubTab === 'calendar' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamCalendarSubTab === 'calendar' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 Kalendorius
@@ -758,8 +780,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamCalendarSubTab('history')}
                                 className={cn(
                                     'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamCalendarSubTab === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamCalendarSubTab === 'history' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 Kalendoriaus istorija
@@ -772,8 +794,8 @@ export default function ManagerView() {
                                 onClick={() => setTeamCalendarSubTab('report')}
                                 className={cn(
                                     'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamCalendarSubTab === 'report' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamCalendarSubTab === 'report' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                                 )}
                             >
                                 <BarChart3 className="h-4 w-4 shrink-0" aria-hidden="true" />

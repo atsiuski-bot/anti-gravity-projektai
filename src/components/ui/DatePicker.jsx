@@ -219,7 +219,7 @@ export default function DatePicker({
                     'flex w-full items-center justify-between gap-2 min-h-touch',
                     'rounded-input border border-line bg-surface-card py-2 pl-3 text-body-lg text-left',
                     showClear ? 'pr-12' : 'pr-3',
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                     'disabled:opacity-50 disabled:pointer-events-none',
                     !selectedDate && 'text-ink-muted',
                     className
@@ -243,7 +243,7 @@ export default function DatePicker({
                     className={cn(
                         'absolute right-1 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center',
                         'rounded-input text-ink-muted hover:bg-surface-sunken hover:text-ink',
-                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand'
+                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring'
                     )}
                 >
                     <X className="w-4 h-4" aria-hidden="true" />
@@ -333,7 +333,7 @@ export default function DatePicker({
                                     className={cn(
                                         'flex h-11 w-full items-center justify-center rounded-input text-body tabular-nums',
                                         'transition duration-fast',
-                                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                                         'disabled:opacity-30 disabled:pointer-events-none',
                                         !inMonth && 'text-ink-muted/60',
                                         inMonth && !isSelected && 'text-ink hover:bg-surface-sunken',

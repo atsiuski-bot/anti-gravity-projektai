@@ -78,7 +78,7 @@ const cardsFromPayRate = (payRate) => {
 };
 
 const INPUT_CLS =
-    'block w-full rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+    'block w-full rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring';
 
 export default function PayRateModal({ open, user, onClose, onSave }) {
     const [cards, setCards] = useState(cardsFromPayRate(null));

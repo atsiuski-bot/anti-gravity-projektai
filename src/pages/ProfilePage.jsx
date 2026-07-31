@@ -10,6 +10,7 @@ import { useAchievements } from '../hooks/useAchievements';
 import { useWorkerStats } from '../hooks/useWorkerStats';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { useNotificationPermission } from '../hooks/useNotificationPermission';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
@@ -158,6 +159,10 @@ export default function ProfilePage() {
     const [savingNotif, setSavingNotif] = useState(false);
     const [notifError, setNotifError] = useState('');
     const [savingTheme, setSavingTheme] = useState(false);
+    // Arrow-key + single-Tab-stop behaviour for the two `role="radiogroup"` segmented pickers
+    // below. `both` because these are grids — Up/Down should move as well as Left/Right (APG).
+    const themeRadios = useRovingFocus({ itemRole: 'radio', orientation: 'both' });
+    const workLocationRadios = useRovingFocus({ itemRole: 'radio', orientation: 'both' });
     const [themeError, setThemeError] = useState('');
     const [savingWorkLoc, setSavingWorkLoc] = useState(false);
     const [workLocError, setWorkLocError] = useState('');
@@ -410,7 +415,7 @@ export default function ProfilePage() {
                     onClick={handlePickPhoto}
                     disabled={uploading}
                     aria-label="Keisti nuotrauką"
-                    className="relative mx-auto mb-3 block h-20 w-20 rounded-full transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-60"
+                    className="relative mx-auto mb-3 block h-20 w-20 rounded-full transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2 disabled:opacity-60"
                 >
                     <Avatar src={photoURL} name={fullName} email={email} size="lg" />
                     <span
@@ -464,7 +469,7 @@ export default function ProfilePage() {
                             type="button"
                             onClick={() => setSelectedBadge(b)}
                             aria-label={`${b.name} — peržiūrėti, už ką skiriamas`}
-                            className="flex min-h-touch flex-col items-stretch rounded-control p-1 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            className="flex min-h-touch flex-col items-stretch rounded-control p-1 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                         >
                             <Badge
                                 className="w-full"
@@ -567,7 +572,7 @@ export default function ProfilePage() {
                             maxLength={MAX_TEMPLATE_LABEL}
                             placeholder="pvz. Sandėlio tvarkymas"
                             aria-label="Naujas greito darbo šablonas"
-                            className="min-h-touch flex-1 rounded-control border-2 border-line bg-surface-card px-3 text-body text-ink-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            className="min-h-touch flex-1 rounded-control border-2 border-line bg-surface-card px-3 text-body text-ink-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                             style={{ fontSize: '16px' }}
                         />
                         <Button type="submit" variant="secondary" icon={Plus} disabled={!newTemplate.trim() || savingTemplates}>
@@ -603,6 +608,8 @@ export default function ProfilePage() {
                     <div
                         role="radiogroup"
                         aria-label="Programėlės tema"
+                        ref={themeRadios.ref}
+                        onKeyDown={themeRadios.onKeyDown}
                         className="mt-3 grid grid-cols-3 gap-2"
                     >
                         {THEME_OPTIONS.map((opt) => {
@@ -617,7 +624,7 @@ export default function ProfilePage() {
                                     disabled={savingTheme}
                                     className={cn(
                                         'flex min-h-touch flex-col items-center justify-center gap-1 rounded-control border px-2 py-2.5 text-caption font-medium transition-colors duration-base',
-                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                         'disabled:opacity-50',
                                         selected
                                             ? 'border-brand bg-brand-soft text-brand'
@@ -650,6 +657,8 @@ export default function ProfilePage() {
                     <div
                         role="radiogroup"
                         aria-label="Numatytoji veiklos vieta"
+                        ref={workLocationRadios.ref}
+                        onKeyDown={workLocationRadios.onKeyDown}
                         className="mt-3 grid grid-cols-2 gap-2"
                     >
                         {WORK_LOCATION_OPTIONS.map((opt) => {
@@ -664,7 +673,7 @@ export default function ProfilePage() {
                                     disabled={savingWorkLoc}
                                     className={cn(
                                         'flex min-h-touch flex-col items-center justify-center gap-1 rounded-control border px-2 py-2.5 text-caption font-medium transition-colors duration-base',
-                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                         'disabled:opacity-50',
                                         selected
                                             ? 'border-brand bg-brand-soft text-brand'
@@ -699,7 +708,7 @@ export default function ProfilePage() {
                         aria-label="Pranešimai"
                         onClick={toggleNotifications}
                         disabled={savingNotif}
-                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 disabled:opacity-50"
+                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2 disabled:opacity-50"
                     >
                         <span
                             className={cn(
@@ -752,7 +761,7 @@ export default function ProfilePage() {
                 <button
                     type="button"
                     onClick={() => setShowNotifHelp(true)}
-                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                 >
                     <BatteryWarning className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
@@ -773,7 +782,7 @@ export default function ProfilePage() {
                     type="button"
                     onClick={handleForceUpdate}
                     disabled={updatingApp}
-                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:opacity-60"
+                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring disabled:opacity-60"
                 >
                     {updatingApp ? (
                         <Loader2 className="h-5 w-5 shrink-0 animate-spin text-brand" aria-hidden="true" />
@@ -798,7 +807,7 @@ export default function ProfilePage() {
                     <button
                         type="button"
                         onClick={handleInstall}
-                        className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                        className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                     >
                         <Download className="h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
                         <div className="min-w-0 flex-1">
@@ -814,7 +823,7 @@ export default function ProfilePage() {
                 <button
                     type="button"
                     onClick={() => setConfirmLogout(true)}
-                    className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                    className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                 >
                     <LogOut className="h-5 w-5 shrink-0 text-feedback-danger-text" aria-hidden="true" />
                     <span className="flex-1 text-body font-medium text-feedback-danger-text">Atsijungti</span>

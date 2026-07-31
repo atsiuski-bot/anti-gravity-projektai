@@ -81,11 +81,15 @@ export default {
                 // Achievement tiers (closed set) — calm surface + AA-passing accent text + a
                 // metallic ring. Self-contained medallions; theme-invariant literal hex (a light
                 // medallion reads fine on a dark card). See tokens.md §1.
+                // `label` is the ONE theme-reactive member: the caption under a medallion rides on
+                // the THEMED card, not on the (theme-invariant) medallion surface, so a fill-tuned
+                // accent used as text there measured 1.65-3.20:1 in dark. Channel values live in
+                // src/index.css — same fill-vs-foreground split as `feedback`/`session`.
                 tier: {
-                    bronze: { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A' },
-                    silver: { surface: '#E8EAED', accent: '#4B5563', ring: '#B6BCC4' },
-                    gold: { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A' },
-                    platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6' },
+                    bronze: { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A', label: withAlpha('--tier-bronze-label') },
+                    silver: { surface: '#E8EAED', accent: '#4B5563', ring: '#B6BCC4', label: withAlpha('--tier-silver-label') },
+                    gold: { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A', label: withAlpha('--tier-gold-label') },
+                    platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6', label: withAlpha('--tier-platinum-label') },
                 },
                 // Feedback (messages & validation — never decorative). Each color carries a tint
                 // TRIAD because the app consumes colored states as soft bg + border + accent text:
@@ -145,7 +149,16 @@ export default {
             borderRadius: { input: '6px', control: '8px', card: '12px', modal: '16px' },
             zIndex: { header: '20', nav: '30', backdrop: '40', modal: '50', toast: '60', top: '70' },
             transitionDuration: { fast: '150', base: '200', slow: '300' },
-            spacing: { navclear: '8rem', 'navclear-lg': '9rem' },
+            // The bottom-nav clearance MUST carry the safe-area inset, because the dock it exists to
+            // clear does: the bar is `bottom-0` + `pb-[env(safe-area-inset-bottom)]` and the floating
+            // work pill sits at `calc(64px + env(...))`, so the dock's occupied height grows with the
+            // inset while a constant reserve does not. Measured at 360px: dock 150px vs a 160px
+            // reserve (8rem here + main's pb-8) = 10px of slack; with an iPhone home indicator (34px)
+            // the dock becomes 184px and ~24px of the last card ends up underneath the pill.
+            spacing: {
+                navclear: 'calc(8rem + env(safe-area-inset-bottom))',
+                'navclear-lg': 'calc(9rem + env(safe-area-inset-bottom))',
+            },
             minHeight: { touch: '44px' },
             minWidth: { touch: '44px' },
         },

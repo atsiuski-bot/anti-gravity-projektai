@@ -17,7 +17,7 @@
  * locks against this file: any divergence fails the test gate before a ship, exactly like the other
  * client↔functions mirrors (priority enum, estimate scale, recurrence).
  *
- * Each entry declares the FOUR delivery dimensions of the notification:
+ * Each entry declares the FIVE delivery dimensions of the notification:
  *   - category : 'action' (a decision is owed → floats to the top of the bell) | 'info' (FYI row)
  *   - copy(n)  : the Lithuanian { title, body } shown in the toast AND the OS push (one definition)
  *   - sound    : the in-app Web-Audio cue played on the always-on foreground plane —
@@ -29,6 +29,7 @@
  *                in-app-only type opt out without touching the server switch.
  *   - link     : the in-app tab the notification deep-links to when tapped (the server MIRRORs this
  *                rule: calendar decisions → the calendar, everything else → tasks).
+ *   - actions  : the OS-level decision buttons on the BACKGROUND push (see ACTION_* below).
  *
  * To add a new notification type, add ONE entry here, mirror its copy in the Cloud Function, and
  * (if it is server-fired) add the trigger. See docs/guides/adding-a-notification.md.
@@ -43,6 +44,37 @@ const TAB_TASKS = '/?tab=tasks';
 const TAB_CALENDAR = '/?tab=calendar';
 const TAB_PROFILE = '/?tab=profile';
 
+/**
+ * PUSH ACTION BUTTONS — the OS-level decision buttons on a background notification (ADR 0024).
+ *
+ * Each entry is the Notification API's own `{ action, title }` shape, so the service worker hands it
+ * straight to showNotification() and reads `event.action` back on the click.
+ *
+ * A button NEVER performs the decision itself. Tapping it OPENS the app carrying the intent, and the
+ * app runs the SAME handler the in-app card's button runs. That is the whole safety argument: the
+ * service worker has no Firestore or auth context, and none of the card's guards — the "already
+ * decided by another manager" re-read, the deleted-task self-heal, the undo window, the localized
+ * error banner — so a write issued from there would be a second, unguarded implementation of every
+ * decision, racing the first.
+ *
+ * Only types with a genuine ONE-TAP decision get buttons, and only non-destructive ones:
+ *   - "mark as read" is deliberately absent: under the open-the-app model it would cost MORE than
+ *     simply swiping the notification away.
+ *   - destructive or privilege-granting decisions (Ištrinti, Grąžinti, Užblokuoti, and approving a
+ *     new account) stay in-app only, where the confirm dialog and the surrounding context exist.
+ *   - ACTION_OPEN performs no write at all — it just brings the decision card on screen, so
+ *     "let me look first" is one tap instead of a hunt through the feed.
+ *
+ * Two buttons maximum: Chrome's Notification.maxActions is 2, and a third would be silently dropped.
+ * iOS ignores `actions` entirely (a tap on the body is the only interaction Apple's web push
+ * offers), so on iPhone these degrade to exactly today's behaviour — nothing breaks, nothing is
+ * hidden. The service worker clamps and re-validates defensively regardless.
+ */
+const ACTION_OPEN = { action: 'open', title: 'Atidaryti' };
+const ACTION_APPROVE = { action: 'approve', title: 'Patvirtinti' };
+const ACTION_CONFIRM = { action: 'confirm', title: 'Priimti' };
+const ACTION_EXTEND_30 = { action: 'extend30', title: 'Pratęsti +30 min' };
+
 export const NOTIFICATIONS = {
     // ── Worker → manager (a decision is owed) ────────────────────────────────────────────────────
     task_approval: {
@@ -50,6 +82,9 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
+        // Patvirtinti = the card's own approve (immediate + undoable). Redaguoti/Ištrinti stay
+        // in-app: one edits, the other is irreversible — neither belongs on a lockscreen.
+        actions: [ACTION_APPROVE, ACTION_OPEN],
         copy: (n) => ({ title: 'Nauja užduotis tvirtinimui', body: n.taskTitle || 'Gildija' }),
     },
     task_completion: {
@@ -57,6 +92,9 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
+        // Priimti = sign off the finished work (undoable). Grąžinti is omitted on purpose: it
+        // reopens the task AND the editor, so it is never a one-tap decision.
+        actions: [ACTION_CONFIRM, ACTION_OPEN],
         copy: (n) => ({ title: 'Užduotis atlikta', body: n.taskTitle || 'Gildija' }),
     },
     time_extension_request: {
@@ -64,6 +102,10 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
+        // The +30 min grant only — the card's other one-tap answers are "+1 val." (a second grant
+        // button would crowd out Atidaryti) and "Nepratęsti", which is a refusal the worker is
+        // waiting on and deserves the feed's context rather than a lockscreen reflex.
+        actions: [ACTION_EXTEND_30, ACTION_OPEN],
         copy: (n) => ({ title: 'Laiko pratęsimo prašymas', body: n.taskTitle || 'Gildija' }),
     },
     session_correction_request: {
@@ -387,6 +429,18 @@ export const notificationSound = (type) => NOTIFICATIONS[type]?.sound || null;
 
 /** The deep-link tab a type opens when tapped. */
 export const notificationLink = (type) => NOTIFICATIONS[type]?.link || TAB_TASKS;
+
+/**
+ * The OS-level push buttons for a type — always an array (empty when the type has none), so callers
+ * never branch on undefined. The Cloud Function mirrors this map; the mirror is test-locked.
+ */
+export const notificationActions = (type) => NOTIFICATIONS[type]?.actions || [];
+
+/** Every action id the app knows how to execute. The service worker sends nothing else. */
+export const PUSH_ACTION_IDS = [ACTION_OPEN, ACTION_APPROVE, ACTION_CONFIRM, ACTION_EXTEND_30].map((a) => a.action);
+
+/** Chrome's Notification.maxActions. Declared here so the registry and the SW clamp to one number. */
+export const MAX_PUSH_ACTIONS = 2;
 
 /**
  * The Lithuanian { title, body } for a notification document. One definition feeds the in-app toast

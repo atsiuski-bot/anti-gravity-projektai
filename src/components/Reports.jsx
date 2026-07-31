@@ -32,6 +32,7 @@ import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange, shiftRange } from './reports/periodPresets';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 
 
 export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'] }) {
@@ -47,6 +48,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     // internal switcher is suppressed (views.length === 1) and the parent tab strip is the only
     // tab affordance. Defaults to all three for any caller that still wants the full surface.
     const [activeTab, setActiveTab] = useState(views[0]);
+    // Arrow-key + single-Tab-stop behaviour for the `role="tablist"` switcher below (APG).
+    const reportTabs = useRovingFocus();
     const [loading, setLoading] = useState(false);
 
     // --- HOURS REPORT STATE ---
@@ -543,11 +546,18 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                 or a manager viewing their OWN data via viewRole="worker") there is just one view, so
                 the whole switcher is dropped. */}
             {isManagerRole(userRole) && views.length > 1 && (
-                <div role="tablist" aria-label="Ataskaitų skiltys">
+                <div>
                     {/* Segmented switcher — same control as the Komandos veiklos sub-tabs
                         (ManagerView). Labels wrap to multiple lines on a narrow screen
-                        instead of forcing a horizontal scroll. */}
-                    <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                        instead of forcing a horizontal scroll. `role="tablist"` sits on the strip
+                        so the tabs are its own children (ARIA ownership). */}
+                    <div
+                        role="tablist"
+                        aria-label="Ataskaitų skiltys"
+                        ref={reportTabs.ref}
+                        onKeyDown={reportTabs.onKeyDown}
+                        className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken"
+                    >
                         <button
                             type="button"
                             role="tab"
@@ -555,8 +565,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             onClick={() => setActiveTab('report')}
                             className={cn(
                                 'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                activeTab === 'report' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                activeTab === 'report' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                             )}
                         >
                             Veiklos ataskaita
@@ -569,8 +579,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             onClick={() => setActiveTab('approval')}
                             className={cn(
                                 'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                activeTab === 'approval' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                activeTab === 'approval' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                             )}
                         >
                             Pridavimas
@@ -583,8 +593,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             onClick={() => setActiveTab('history')}
                             className={cn(
                                 'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                activeTab === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                activeTab === 'history' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                             )}
                         >
                             Istorija
@@ -605,7 +615,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                         type="button"
                         onClick={() => setError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                     >
                         Uždaryti
                     </button>
@@ -1253,7 +1263,7 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
                                 <button
                                     type="button"
                                     onClick={() => onDrillWorker?.(w.userId, w.name)}
-                                    className="flex min-h-touch items-center gap-1.5 rounded-control border border-feedback-warning-border bg-feedback-warning-soft px-3 py-1.5 text-caption font-semibold text-feedback-warning-text transition-colors hover:bg-feedback-warning-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    className="flex min-h-touch items-center gap-1.5 rounded-control border border-feedback-warning-border bg-feedback-warning-soft px-3 py-1.5 text-caption font-semibold text-feedback-warning-text transition-colors hover:bg-feedback-warning-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                 >
                                     <span className="break-words">{w.name}</span>
                                     <span className="rounded-full bg-feedback-warning-border/40 px-1.5 font-mono tabular-nums">{w.count}</span>
