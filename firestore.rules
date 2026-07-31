@@ -518,6 +518,14 @@ service cloud.firestore {
                             ) && durationInRange(request.resource.data)
                             // Audit P2 #10: the credited interval may not END in the server's future.
                             && endTimeNotInServerFuture(request.resource.data)
+                            // Audit R-05 (create half of the teamManagerIds pin): the update branch
+                            // already pins the field immutable, but the CREATE was unguarded. The
+                            // stamp trigger is create-only and skips closure-less owners, so a forged
+                            // array written at create would persist forever — granting a colleague
+                            // read via inCallerTeam, or opting the row out of scoped oversight. No
+                            // client create-site writes the field, so requiring it absent/empty
+                            // costs no real path.
+                            && request.resource.data.get('teamManagerIds', []) == []
                             // Audit R-04 (provenance pin): createdByAdmin is the manager correction
                             // stamp (createWorkSession, the sole cross-user authoring tool). A NON-manager
                             // self-logging their own time — gap-claim, backdate, and the legacy call/
@@ -718,7 +726,11 @@ service cloud.firestore {
                             // Audit P2 #10: a break cannot END in the server's future either. Break
                             // time is not payable, but it IS the day's allowance — and an unbounded
                             // clock here would leave one half of the session ledger unguarded.
-                            && endTimeNotInServerFuture(request.resource.data);
+                            && endTimeNotInServerFuture(request.resource.data)
+                            // Audit R-05 (create half), mirroring work_sessions: the stamp trigger is
+                            // create-only and skips closure-less owners, so a teamManagerIds value
+                            // forged at create is never repaired. No client create-site writes it.
+                            && request.resource.data.get('teamManagerIds', []) == [];
       // Update carries THREE guards (composed with &&): the duration guard (main), the userId pin
       // (full-sweep F5 — no re-pointing the record to a colleague), and the teamManagerIds pin
       // (audit R-05). break_sessions is stamped by a CREATE-ONLY Cloud Function too, so a forged

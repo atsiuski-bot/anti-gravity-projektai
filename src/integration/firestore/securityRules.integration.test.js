@@ -9,7 +9,10 @@ import { readFile } from 'node:fs/promises';
 
 // Exploit-regression oracles for the authorization fixes from the 2026-07-10 full sweep:
 //   R-01 — a fresh user may create ONLY a safe, disabled-worker profile (no self-minted admin).
-//   R-05 — a worker may not forge the CREATE-ONLY team-visibility stamp on their own session.
+//   R-05 — a worker may not forge the CREATE-ONLY team-visibility stamp on their own session,
+//          nor on a task / archived task UPDATE (the stamp trigger skips owner-unchanged stamped
+//          edits, so a forged stamp would persist), nor pre-stamp a session at CREATE (the
+//          create-only stamp trigger skips closure-less owners, so that forgery would persist too).
 //   R-06 — a worker may not re-point their own task to a colleague (horizontal ownership bypass).
 //   R-07 — a worker may not self-classify as a test account and vanish from reports.
 //   R-08 — a scoped manager may force-end/idle a session ONLY inside their overseer subtree (P1).
@@ -232,6 +235,111 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                 durationMinutes: 120, // the partial → final growth every quick-work/call close does
             })
         );
+    });
+
+    // ---- R-05 (task half): the stamp is immutable on task / archived-task updates, and ----
+    // ---- (create half) unforgeable at session create. The stamp is CF-owned everywhere: ----
+    // stampTeamOnTaskWrite/stampTeamOnArchivedTaskWrite skip an owner-unchanged edit that already
+    // has a stamp, and stampTeamOn*SessionCreate skips a closure-less owner — so each of these
+    // forgeries would PERSIST without the rule pin, re-scoping who may see/act on the row.
+    describe('R-05: the team-visibility stamp is CF-owned on tasks and at session create', () => {
+        beforeEach(async () => {
+            if (!emulatorAvailable) return;
+            await seed({
+                [`users/${WHOLE_TEAM_ADMIN}`]: {
+                    id: WHOLE_TEAM_ADMIN, role: 'admin', isDisabled: false,
+                },
+                // An archived task the worker owns, stamped for one overseer.
+                'archived_tasks/arch-a': {
+                    id: 'arch-a',
+                    title: 'Archived task',
+                    assignedUserId: WORKER_ID,
+                    status: 'completed',
+                    archivedAt: '2026-07-01T00:00:00.000Z',
+                    teamManagerIds: ['mgr-legit'],
+                },
+            });
+        }, 30_000);
+
+        it('a worker cannot strip the stamp from their own task (oversight evasion)', async () => {
+            await assertFails(
+                updateDoc(doc(workerDb(), 'tasks', 'task-a'), { teamManagerIds: [] })
+            );
+        });
+
+        it('a worker cannot graft an unrelated manager onto their own task stamp', async () => {
+            await assertFails(
+                updateDoc(doc(workerDb(), 'tasks', 'task-a'), {
+                    teamManagerIds: ['mgr-legit', 'mgr-attacker'],
+                })
+            );
+        });
+
+        it('even an admin cannot hand-edit a task stamp (CF-owned by design)', async () => {
+            await assertFails(
+                updateDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'tasks', 'task-a'), {
+                    teamManagerIds: ['mgr-attacker'],
+                })
+            );
+        });
+
+        it('a worker cannot forge the stamp on their own archived task', async () => {
+            await assertFails(
+                updateDoc(doc(workerDb(), 'archived_tasks', 'arch-a'), { teamManagerIds: [] })
+            );
+        });
+
+        it('a worker may still edit their own archived task when the stamp is untouched', async () => {
+            await assertSucceeds(
+                updateDoc(doc(workerDb(), 'archived_tasks', 'arch-a'), { title: 'Renamed' })
+            );
+        });
+
+        it('a worker cannot pre-stamp teamManagerIds when creating a work_session', async () => {
+            await assertFails(
+                setDoc(doc(workerDb(), 'work_sessions', 'ws-forged'), {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    durationMinutes: 60,
+                    date: '2026-07-11',
+                    teamManagerIds: ['mgr-attacker'],
+                })
+            );
+        });
+
+        it('a worker cannot pre-stamp teamManagerIds when creating a break_session', async () => {
+            await assertFails(
+                setDoc(doc(workerDb(), 'break_sessions', 'bs-forged'), {
+                    userId: WORKER_ID,
+                    durationMinutes: 30,
+                    date: '2026-07-11',
+                    teamManagerIds: ['mgr-attacker'],
+                })
+            );
+        });
+
+        it('an un-stamped self-logged work_session create still succeeds', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'ws-legit'), {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    durationMinutes: 60,
+                    date: '2026-07-11',
+                })
+            );
+        });
+
+        it('an un-stamped self-logged break_session create still succeeds', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'break_sessions', 'bs-legit'), {
+                    userId: WORKER_ID,
+                    durationMinutes: 30,
+                    date: '2026-07-11',
+                })
+            );
+        });
     });
 
     // ---- R-04: a non-manager may not forge admin provenance on a self-logged session ----
