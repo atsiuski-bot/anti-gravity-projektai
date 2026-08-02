@@ -119,6 +119,22 @@ export const NOTIFICATIONS = {
         }),
     },
 
+    // Worker (via recovery) → ALL of their team's managers: a stretch of work the timer could not
+    // record, that the system REFUSED to auto-credit (over MAX_UNTRACKED_GAP_MINUTES, or spanning two
+    // work days). The refusal is correct — such an interval is as likely a forgotten timer as real
+    // work — but until ADR 0025 it went nowhere: the only offer to claim it lived in ONE device's
+    // localStorage, shown once, to the worker alone, so real worked time was forfeited in silence and
+    // was undiagnosable afterwards (Povilas, 2026-07-29: 3h51m). This makes the refusal a DECISION
+    // somebody owes: 'action', so the bell floats it, and pushed, so it reaches a locked screen.
+    // The manager settles it in one tap — see ManagerNotifications + creditRefusedGap.
+    time_gap_claim: {
+        category: 'action',
+        sound: 'alert',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Neužfiksuotas darbo laikas', body: n.taskTitle || 'Gildija' }),
+    },
+
     // ── Worker → manager (an attention flag was raised on a task) ────────────────────────────────
     // The vykdytojas tagged a task. needsManager is an action (a decision/attention is owed → floats
     // up + alert cue); waiting is an FYI (the worker is blocked). The actor rides as createdBy, so
@@ -257,6 +273,20 @@ export const NOTIFICATIONS = {
         push: true,
         link: TAB_TASKS,
         copy: (n) => ({ title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' }),
+    },
+    // Manager → worker: the answer to a time_gap_claim. Both outcomes are reported, because the point
+    // of ADR 0025 is that a refusal stops being an ABSENCE: "neužskaityta" is information the worker
+    // needs (they can still raise a correction request), while silence is what made the old loss
+    // invisible. One type with a branch rather than two, mirroring task_approved/calendar_decision.
+    time_gap_settled: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({
+            title: n.gapCredited ? 'Neužfiksuotas laikas užskaitytas' : 'Neužfiksuotas laikas neužskaitytas',
+            body: n.taskTitle || 'Gildija',
+        }),
     },
     // System → worker: a forgotten break/call/quick-work timer the worker never stopped was
     // auto-closed server-side and the (clamped) time credited — surfaced so recovered time is never

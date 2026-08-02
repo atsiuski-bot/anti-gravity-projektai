@@ -5,6 +5,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // file (same as the hook's own imports), which is what vi.mock resolves against.
 vi.mock('../utils/sessionEditActions', () => ({ claimRecoveredGap: vi.fn() }));
 vi.mock('../utils/recoveryNotice', () => ({ addRecoveryNotice: vi.fn() }));
+// The ADR-0024 escalation has its own suite (utils/gapClaim.test.js). Here it is mocked so this file
+// stays about the auto-credit-vs-fall-back orchestration — and so its own "reached nobody" trace
+// cannot be mistaken for one of the traces these tests assert on.
+vi.mock('../utils/gapClaim', () => ({ raiseRefusedGapClaim: vi.fn(() => Promise.resolve({ ok: true })) }));
 // pauseTask is mocked so the pause→gap orchestration can be driven with a controlled result — the
 // whole point is to prove the gap is credited only when OUR pause ran (non-null) and skipped when it
 // was pre-empted/deduped (null). creditAndResumeTask is stubbed only because the hook imports it.
@@ -30,6 +34,7 @@ import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { pauseTask, creditAndResumeTask, startTask, clearLiveSessionAfterFailedResume } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
+import { raiseRefusedGapClaim } from '../utils/gapClaim';
 import { getDocFromServer } from 'firebase/firestore';
 
 // The credit-instant POLICY for a pre-boot running task, isolated from React so the arithmetic
@@ -213,6 +218,57 @@ describe('resolveUntrackedGap — what happens to the untracked gap after a paus
             taskId: 't1', gapMinutes: 20, cause: 'auto-credit-write-failed',
             fromIso: new Date(1000).toISOString(), toIso: new Date(1000 + 20 * 60000).toISOString(),
         });
+    });
+
+    // ADR 0025. The localStorage offer above is per-device, shown once, and only to the worker — so on
+    // its own it lets real worked time be forfeited in silence (Povilas, 2026-07-29: 3h51m). Every
+    // fallback must ALSO hand the interval to the people who can settle it.
+    it('ESCALATES the refused interval to the overseers, carrying the exact gap', async () => {
+        const decision = {
+            gapFrom: Date.parse('2026-07-26T19:18:43.000Z'),
+            gapTo: Date.parse('2026-07-27T05:41:56.000Z'),
+        };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(raiseRefusedGapClaim).toHaveBeenCalledTimes(1);
+        expect(raiseRefusedGapClaim.mock.calls[0][0]).toMatchObject({
+            worker,
+            gapMinutes: 623,
+            cause: 'gap-not-one-work-stretch',
+            // The engine tag is what lets the two recovery paths be told apart in triage; legacy and
+            // canonical must both raise, so neither may go unlabelled.
+            engine: 'legacy',
+            fromIso: '2026-07-26T19:18:43.000Z',
+            toIso: '2026-07-27T05:41:56.000Z',
+        });
+    });
+
+    it('escalates a FAILED auto-credit too — the time is un-credited either way', async () => {
+        claimRecoveredGap.mockResolvedValue({ ok: false, error: 'write' });
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(raiseRefusedGapClaim).toHaveBeenCalledTimes(1);
+        expect(raiseRefusedGapClaim.mock.calls[0][0].cause).toBe('auto-credit-write-failed');
+    });
+
+    it('does NOT escalate somebody else\'s task — a claim is authored as its subject', async () => {
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, { uid: 'someone-else' }, decision);
+
+        expect(raiseRefusedGapClaim).not.toHaveBeenCalled();
+    });
+
+    it('a successfully AUTO-credited gap raises nothing — there is no decision owed', async () => {
+        claimRecoveredGap.mockResolvedValue({ ok: true, id: 'sess_gap_t1_0' });
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(raiseRefusedGapClaim).not.toHaveBeenCalled();
     });
 
     it('leaves a server trace (logError) when the gap is not the signed-in worker\'s own task', async () => {

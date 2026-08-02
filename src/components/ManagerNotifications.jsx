@@ -22,7 +22,7 @@ import { useUndoableAction } from '../hooks/useUndoableAction';
 import { useRovingFocus } from '../hooks/useRovingFocus';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId } from '../utils/timeUtils';
-import { applyRequestedSessionEnd } from '../utils/sessionEditActions';
+import { applyRequestedSessionEnd, creditRefusedGap } from '../utils/sessionEditActions';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -191,6 +191,7 @@ export default function ManagerNotifications({ onClose }) {
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
     const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
     const [applyingTime, setApplyingTime] = useState(null); // notif.id of an in-flight one-tap time correction
+    const [settlingGap, setSettlingGap] = useState(null); // notif.id of an in-flight refused-gap decision
 
 
     // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
@@ -705,6 +706,62 @@ export default function ManagerNotifications({ onClose }) {
         } else {
             setActionError('Nepavyko pritaikyti laiko. Pataisykite veiklos ataskaitoje.');
         }
+    };
+
+    // ADR 0025 — settle a refused work gap. Recovery could not auto-credit the interval (too long, or
+    // it crossed a work day), and until now that refusal only ever reached the worker's own device,
+    // once, so real worked time was forfeited in silence. Both outcomes are terminal and both tell the
+    // worker: a rejection is information they can act on (they can still raise a correction request),
+    // whereas silence is precisely what made the old loss invisible.
+    const handleSettleGapClaim = async (notif, credit) => {
+        if (!notif?.taskId || !notif?.gapFromIso || !notif?.gapToIso || settlingGap) return;
+        setSettlingGap(notif.id);
+        clearActionFeedback();
+
+        if (credit) {
+            const result = await creditRefusedGap({
+                taskId: notif.taskId,
+                taskTitle: notif.taskTitle,
+                // The claim is authored by the worker it is about, so the task's assignee must agree
+                // before a manager's authority writes payable time against it.
+                expectedUserId: notif.userId,
+                workerName: notif.userName,
+                startTime: notif.gapFromIso,
+                endTime: notif.gapToIso,
+                editor: currentUser,
+            });
+            setSettlingGap(null);
+            if (!result.ok) {
+                if (result.error === 'gone') {
+                    setActionNotice('Šios veiklos nebėra — prašymas išvalytas.');
+                    await handleDismissTask(notif.id);
+                } else if (result.error === 'owner') {
+                    setActionError('Prašymas nurodo ne šio meistro veiklą — patikrinkite veiklos ataskaitoje.');
+                } else {
+                    setActionError('Nepavyko užskaityti laiko. Bandykite vėl.');
+                }
+                return;
+            }
+            // The row landed. A stale task counter is NOT a failure of the credit — the report is
+            // already right — but the manager should know the card total may lag.
+            if (result.reconciled === false) {
+                setActionNotice('Laikas užskaitytas, bet veiklos suvestinė gali būti pasenusi.');
+            }
+        } else {
+            setSettlingGap(null);
+        }
+
+        await notify({
+            recipientId: notif.userId,
+            type: 'time_gap_settled',
+            taskId: notif.taskId,
+            taskTitle: notif.taskTitle,
+            gapCredited: credit,
+            gapMinutes: notif.gapMinutes ?? null,
+            actorUid: currentUser.uid,
+            actorName: currentUser.displayName || currentUser.email,
+        });
+        await handleDismissTask(notif.id);
     };
 
     // --- Task Completion Handlers ---
@@ -1574,6 +1631,65 @@ export default function ManagerNotifications({ onClose }) {
                                                     : []),
                                                 { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: canApplyRequest ? 'secondary' : 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
                                             ]}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // ADR 0025 — Worker (via recovery) → manager ACTION: a stretch the timer could not
+                    // record and the system refused to auto-credit. Unlike a correction request this
+                    // needs no editor round-trip: the interval is fully specified, so both answers are
+                    // one tap. The card states the interval in words as well as the encoded summary,
+                    // because "užskaityti" here means writing payable time.
+                    if (notif.type === 'time_gap_claim') {
+                        const canSettleGap = !!(notif.taskId && notif.gapFromIso && notif.gapToIso);
+                        return (
+                            <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex items-start gap-3">
+                                        <Clock className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
+                                        <div className="min-w-0 text-sm text-feedback-warning-text">
+                                            <p>
+                                                <UserChip userId={notif.userId} name={notif.userName} /> turi neužfiksuoto darbo laiko
+                                                {notif.taskTitle ? <> veikloje &quot;{notif.taskTitle}&quot;</> : null}.
+                                            </p>
+                                            {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">{notif.commentText}</p>}
+                                            <p className="mt-2 text-xs">
+                                                {canSettleGap
+                                                    ? 'Užskaitytas laikas bus įrašytas kaip apmokamas darbo laikas. Jei nesate tikri — atmeskite ir pasitikslinkite su meistru.'
+                                                    : 'Šis prašymas nenurodo tikslios atkarpos — pataisykite rankiniu būdu: „Kom. kalendorius“ → „Veiklos ataskaita“.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {!readOnly && (
+                                        <TaskActionRow
+                                            className="mt-1"
+                                            actions={canSettleGap
+                                                ? [
+                                                    {
+                                                        key: 'credit',
+                                                        label: 'Užskaityti',
+                                                        icon: Check,
+                                                        variant: 'primary',
+                                                        loading: settlingGap === notif.id,
+                                                        disabled: !!settlingGap,
+                                                        onClick: () => handleSettleGapClaim(notif, true),
+                                                    },
+                                                    {
+                                                        key: 'reject',
+                                                        label: 'Atmesti',
+                                                        icon: Ban,
+                                                        variant: 'secondary',
+                                                        disabled: !!settlingGap,
+                                                        onClick: () => handleSettleGapClaim(notif, false),
+                                                    },
+                                                ]
+                                                : [
+                                                    { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
+                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
+                                                ]}
                                         />
                                     )}
                                 </div>

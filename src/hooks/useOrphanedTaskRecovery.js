@@ -3,6 +3,7 @@ import { doc, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, creditAndResumeTask, startTask, clearLiveSessionAfterFailedResume } from '../utils/taskActions';
 import { claimRecoveredGap } from '../utils/sessionEditActions';
+import { raiseRefusedGapClaim } from '../utils/gapClaim';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES, isCreditableUntrackedGap } from '../utils/timeUtils';
@@ -85,6 +86,19 @@ export async function resolveUntrackedGap(task, currentUser, decision, silent = 
             kind: 'task-gap', taskId: task.id, taskTitle: task.title || '',
             gapMinutes, fromIso, toIso,
         });
+        // ADR 0025: the localStorage offer above is per-device, shown once, and only to the worker —
+        // so on its own it lets real worked time be forfeited in silence. Escalate the same interval
+        // to everyone who oversees them, as a decision they can settle in one tap. Fire-and-forget:
+        // the pause/credit has already landed and must not be held up or undone by this, and the
+        // helper records its own failures. Only for the worker's OWN task — a claim is authored as
+        // the subject, so we cannot raise one on somebody else's behalf.
+        if (currentUser?.uid && currentUser.uid === task.assignedUserId) {
+            raiseRefusedGapClaim({
+                task: { id: task.id, title: task.title },
+                worker: currentUser,
+                fromIso, toIso, gapMinutes, cause, engine: 'legacy',
+            }).catch(() => { /* helper is best-effort and logs its own failures */ });
+        }
     };
 
     const isOwnTask = currentUser?.uid && currentUser.uid === task.assignedUserId;

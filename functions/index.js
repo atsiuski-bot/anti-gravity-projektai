@@ -153,6 +153,8 @@ const CATEGORY_BY_TYPE = {
     task_completion: 'action',
     time_extension_request: 'action',
     session_correction_request: 'action',
+    time_gap_claim: 'action',
+    time_gap_settled: 'info',
     task_needs_manager: 'action',
     task_waiting: 'info',
     task_reverted: 'action',
@@ -322,6 +324,17 @@ function copyForRequestNotification(n) {
                 body: n.commentText
                     ? `${n.day || 'Veiklos laikas'}: ${String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)}`
                     : (n.day || 'Veiklos laikas'),
+            };
+        case 'time_gap_claim':
+            // Worker (via recovery) → every overseer: a stretch the timer could not record that the
+            // system refused to auto-credit (ADR 0025). A decision is owed, so this is 'action'.
+            return { title: 'Neužfiksuotas darbo laikas', body: title };
+        case 'time_gap_settled':
+            // Manager → worker: the answer to the above. BOTH outcomes are reported — a refusal that
+            // says nothing is exactly the silent loss ADR 0025 exists to end.
+            return {
+                title: n.gapCredited ? 'Neužfiksuotas laikas užskaitytas' : 'Neužfiksuotas laikas neužskaitytas',
+                body: title,
             };
         case 'task_priority_escalated':
             // System → worker: a task's deadline closed in, so its priority was auto-raised. The new

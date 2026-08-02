@@ -857,6 +857,92 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
 };
 
 /**
+ * ADR 0025 — a MANAGER settles a refused gap by crediting it (the one-tap "Užskaityti" on the
+ * time_gap_claim card).
+ *
+ * Same resulting row as the worker's own claim, on the SAME deterministic id, so the two routes are
+ * idempotent with respect to each other: whoever acts first writes it, and the second lands a
+ * value-identical merge instead of a duplicate. That is what lets the worker's localStorage offer stay
+ * in place alongside the escalation without any risk of double credit.
+ *
+ * Two things differ from claimRecoveredGap, and both matter:
+ *
+ *  • PROVENANCE. `createdBy` is the manager, and the reason names the decision — this row was granted,
+ *    not self-asserted, and the audit must say so.
+ *  • THE COUNTER ACTUALLY MOVES. reconcileTaskTimerFromSessions re-derives the task total from a broad
+ *    by-taskId query, which the rules deny to a plain worker — so on the worker's route it always falls
+ *    to the owner-scoped fallback and, when the "is this row new" probe cannot run (offline: a write
+ *    can be queued, a read cannot), refuses to write anything and leaves the card stale. That is
+ *    literally how Povilas's task showed 1h56m against a 4h08m ledger. A manager's broad read IS
+ *    permitted, so this route takes the wholesale-sum path — idempotent, and correct even on a second
+ *    tap.
+ *
+ * OWNERSHIP IS VERIFIED, not assumed: `expectedUserId` arrives from a worker-authored notification, and
+ * the write below carries the MANAGER's authority. Without the check a claim could name a colleague's
+ * task and have a manager unwittingly credit time against it (the same confused-deputy guard
+ * applyRequestedSessionEnd applies, for the same reason).
+ *
+ * @param {Object} args - { taskId, taskTitle, expectedUserId, workerName, startTime, endTime, editor }
+ * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ *   error 'gone'  — the task no longer exists (deleted/archived beyond reach).
+ *   error 'owner' — the task is not assigned to the worker the claim is from: refuse, never guess.
+ */
+export const creditRefusedGap = async ({
+    taskId, taskTitle, expectedUserId, workerName, startTime, endTime, editor,
+} = {}) => {
+    if (!taskId || !expectedUserId || !startTime || !endTime) return { ok: false, error: 'missing' };
+
+    const derived = deriveSessionFields(startTime, endTime);
+    if (!derived.ok) return { ok: false, error: derived.error };
+
+    // Re-read the task rather than trusting the notification: the claim may be days old, and the
+    // assignee is the fact being verified.
+    let task;
+    try {
+        const snap = await getDoc(doc(db, 'tasks', taskId));
+        if (!snap.exists()) return { ok: false, error: 'gone' };
+        task = snap.data();
+    } catch (err) {
+        logError(err, { source: 'readFail:creditRefusedGap', taskId });
+        return { ok: false, error: 'write' };
+    }
+    if (task.assignedUserId !== expectedUserId) return { ok: false, error: 'owner' };
+
+    const nowIso = new Date().toISOString();
+    const editorName = editor?.displayName || editor?.email || 'Koordinatorius';
+    const payload = {
+        taskId,
+        taskTitle: (taskTitle || task.title || '').trim() || 'Užduotis',
+        userId: expectedUserId,
+        userName: workerName || task.assignedUserName || null,
+        startTime,
+        endTime,
+        durationMinutes: derived.durationMinutes,
+        date: derived.date,
+        createdAt: nowIso,
+        isManualSession: true,
+        isRecoveredGap: true,
+        createdBy: editor?.uid || 'unknown',
+        createdByName: editorName,
+        editReason: 'Koordinatorius užskaitė neužfiksuotą darbo laiką (ADR 0025)',
+    };
+
+    try {
+        const ref = doc(db, 'work_sessions', `sess_gap_${taskId}_${new Date(startTime).getTime()}`);
+        await setDoc(ref, payload, { merge: true });
+        // No delta is passed on purpose: the manager's broad read succeeds, so the wholesale re-derive
+        // runs and is naturally idempotent — a second tap recomputes the same total instead of
+        // incrementing past the ledger.
+        const rec = await reconcileTaskTimerFromSessions(taskId, expectedUserId);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:creditRefusedGap', taskId });
+        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
+    } catch (err) {
+        logError(err, { source: 'writeFail:creditRefusedGap', taskId });
+        return { ok: false, error: 'write' };
+    }
+};
+
+/**
  * Undo an auto-credited recovered gap — the "Nedirbau" opt-out on the recovery banner. Recovery now
  * AUTO-credits a plausible offline gap (the worker was almost certainly working with the phone
  * pocketed); this hard-deletes that one recovered-gap session if the worker says they were not. A

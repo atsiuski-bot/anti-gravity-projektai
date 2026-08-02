@@ -62,6 +62,26 @@ export const isOverseenBy = (targetUser, viewerUid) => {
     return direct.includes(viewerUid);
 };
 
+// Everyone who oversees `targetUser` — the recipient set for a person-level event that the whole
+// chain above them is entitled to settle (e.g. the ADR-0024 refused-gap claim). Same precedence as
+// isOverseenBy, and deliberately so: notifying anyone the rules would NOT let read the row behind
+// the notification produces a card they cannot act on. `defaultManager` is the last resort for a
+// legacy user doc that predates both the closure and the membership arrays.
+//
+// Returns a de-duplicated array, never null. Empty means the worker has nobody above them — the
+// caller must treat that as "cannot escalate" rather than as a silent success.
+export const overseerRecipients = (targetUser) => {
+    if (!targetUser) return [];
+    const closure = targetUser.overseerIds;
+    const ids = (Array.isArray(closure) && closure.length)
+        ? closure
+        : []
+            .concat(Array.isArray(targetUser.teamManagerIds) ? targetUser.teamManagerIds : [])
+            .concat(Array.isArray(targetUser.seniorManagerIds) ? targetUser.seniorManagerIds : [])
+            .concat(targetUser.defaultManager ? [targetUser.defaultManager] : []);
+    return [...new Set(ids.filter(Boolean))];
+};
+
 // Query constraints that limit a private collection to the rows the viewer may READ, so a query
 // never requests a document the rules would deny (which fails the whole query). `effectiveRole`
 // is the viewer's resolved role for this surface ('worker' forces an own-only personal view,

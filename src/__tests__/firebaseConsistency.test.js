@@ -590,6 +590,14 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     task_completion: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],
+    // ADR 0025 refused-gap escalation, and its answer. The settled type branches on gapCredited, so
+    // both outcomes are compared — a mirror that agreed on only one of them would be worse than none.
+    time_gap_claim: [{ taskTitle: 'Šiaudų pynimas' }, {}],
+    time_gap_settled: [
+      { taskTitle: 'Šiaudų pynimas', gapCredited: true },
+      { taskTitle: 'Šiaudų pynimas', gapCredited: false },
+      {},
+    ],
     // Worker → admin FYI that credited time was self-reduced. Same shape as backdated_time_logged
     // (name clamped, day fallback), so the samples exercise the same three branches.
     time_self_reduced: [{ userName: '  Simona   Petraitienė ', day: '2026-07-28' }, { day: '2026-07-28' }, {}],
@@ -1595,6 +1603,18 @@ describe('untracked-gap admission lockstep (legacy recovery ↔ canonical plan)'
     expect(ORPHAN_SRC).toContain('gap-not-one-work-stretch');
     expect(read('src/hooks/useRevisionedTaskRecovery.js'))
       .toContain('refusedGap');
+  });
+
+  it('a refused gap is ESCALATED to the overseers on BOTH paths (ADR 0025)', () => {
+    // The worker-facing offer above is per-device and shown once, so on its own it lets real worked
+    // time be forfeited in silence. Both engines credit the same physical event, so a refusal must
+    // reach the same people on both — a raise wired into only one engine would reintroduce the loss
+    // for everyone on the other.
+    expect(ORPHAN_SRC).toContain('raiseRefusedGapClaim');
+    expect(read('src/hooks/useRevisionedTaskRecovery.js')).toContain('raiseRefusedGapClaim');
+    // …and the type it raises must be the one the manager card and the push mirror both know.
+    expect(read('src/utils/gapClaim.js')).toContain("type: 'time_gap_claim'");
+    expect(read('src/components/ManagerNotifications.jsx')).toContain("notif.type === 'time_gap_claim'");
   });
 
   it('the gap bound is well under the session ceiling (they answer different questions)', () => {

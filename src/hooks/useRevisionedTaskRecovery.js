@@ -9,6 +9,7 @@ import {
 import { issueTimerCommand } from '../utils/timerCommandEngine';
 import { serverNowISO } from '../utils/serverClock';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
+import { raiseRefusedGapClaim } from '../utils/gapClaim';
 import { logError } from '../utils/errorLog';
 import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
 
@@ -142,6 +143,19 @@ export function useRevisionedTaskRecovery(
                         fromIso: plan.refusedGap.fromIso,
                         toIso: plan.refusedGap.toIso,
                     });
+                    // ADR 0025 — mirror legacy's escalation exactly (see offerManualClaim). The two
+                    // engines credit the same physical event, so a refusal must reach the same people
+                    // on both; the atomic batch fixed counter drift, not this. Fire-and-forget: the
+                    // recover command has already settled and must not be held up by a notification.
+                    raiseRefusedGapClaim({
+                        task: { id: task.id, title: task.title },
+                        worker: currentUser,
+                        fromIso: plan.refusedGap.fromIso,
+                        toIso: plan.refusedGap.toIso,
+                        gapMinutes,
+                        cause: 'gap-not-one-work-stretch',
+                        engine: 'canonical',
+                    }).catch(() => { /* helper is best-effort and logs its own failures */ });
                 }
             });
         }).catch((error) => {

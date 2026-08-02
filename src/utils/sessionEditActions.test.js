@@ -55,6 +55,7 @@ import {
     validateOwnStartCorrection,
     correctOwnSessionStart,
     applyRequestedSessionEnd,
+    creditRefusedGap,
     MIN_SELF_REDUCED_MINUTES,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
@@ -68,6 +69,108 @@ describe('MAX_EDIT_SESSION_MINUTES', () => {
         expect(MAX_EDIT_SESSION_MINUTES).toBe(MAX_SESSION_MINUTES);
         expect(MAX_EDIT_SESSION_MINUTES).toBe(16 * 60);
         expect(MAX_EDIT_SESSION_MINUTES).toBe(960);
+    });
+});
+
+// ADR 0025 — the manager's side of a refused gap. The interesting properties are not "does it write
+// a row" but: does it verify the claim names the right person, does it land on the SAME deterministic
+// id the worker's own route uses (so the two can never double-credit), and does it re-derive the task
+// counter wholesale instead of taking the delta path that fails closed offline.
+describe('creditRefusedGap (a manager settles a refused work gap)', () => {
+    const editor = { uid: 'mgr1', displayName: 'Audrius' };
+    const args = {
+        taskId: 't1',
+        taskTitle: 'Šiaudų pynimas',
+        expectedUserId: 'w1',
+        workerName: 'Povilas Bielskis',
+        startTime: '2026-07-29T12:43:00.000Z',
+        endTime: '2026-07-29T16:34:00.000Z', // 3h51m — the production incident
+        editor,
+    };
+    // The task doc the ownership check reads. getDocs stays empty so reconciliation is a no-op here
+    // unless a case drives it.
+    const taskAssignedTo = (uid) => getDoc.mockResolvedValue({
+        exists: () => true,
+        data: () => ({ assignedUserId: uid, title: 'Šiaudų pynimas', timerMinutes: 116.4 }),
+    });
+
+    it('writes the gap with MANAGER provenance and the granted-decision reason', async () => {
+        taskAssignedTo('w1');
+        const res = await creditRefusedGap(args);
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(231);
+        const [, payload, options] = setDoc.mock.calls[0];
+        expect(payload).toMatchObject({
+            taskId: 't1',
+            userId: 'w1',              // the time belongs to the WORKER…
+            createdBy: 'mgr1',         // …but the manager granted it, and the audit says so
+            createdByName: 'Audrius',
+            isRecoveredGap: true,
+            isManualSession: true,
+        });
+        expect(payload.editReason).toContain('Koordinatorius');
+        expect(options).toEqual({ merge: true });
+    });
+
+    it('lands on the SAME deterministic id as the worker-authored claim', async () => {
+        // This is what makes the escalation and the worker's own banner safe to keep side by side:
+        // whoever taps first writes the row, and the second lands a value-identical merge rather
+        // than a duplicate that would double-count in the reports.
+        taskAssignedTo('w1');
+        await creditRefusedGap(args);
+        const startMs = new Date(args.startTime).getTime();
+        expect(setDoc.mock.calls[0][0]._path).toBe(`work_sessions/sess_gap_t1_${startMs}`);
+    });
+
+    it('REFUSES when the task is not assigned to the worker the claim is from', async () => {
+        // Confused deputy: the claim is authored by the beneficiary, and the write below carries the
+        // manager's authority — so an unverified credit could pay time against a colleague's task.
+        taskAssignedTo('someone-else');
+        const res = await creditRefusedGap(args);
+        expect(res).toMatchObject({ ok: false, error: 'owner' });
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('reports "gone" when the task no longer exists', async () => {
+        getDoc.mockResolvedValue({ exists: () => false });
+        const res = await creditRefusedGap(args);
+        expect(res).toMatchObject({ ok: false, error: 'gone' });
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('re-derives the task counter WHOLESALE, never as an increment', async () => {
+        // The delta path exists for callers whose sessions read is denied. A manager's is not, so this
+        // route must take the absolute re-derive — which is idempotent on a second tap, where an
+        // increment would push the task past its own ledger.
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ assignedUserId: 'w1', title: 'Šiaudų pynimas', timerMinutes: 116.4 }),
+        });
+        getDocs.mockResolvedValue({
+            forEach: (fn) => {
+                [{ durationMinutes: 116.4 }, { durationMinutes: 231 }].forEach((s) => fn({ data: () => s }));
+            },
+        });
+        const res = await creditRefusedGap(args);
+        expect(res.ok).toBe(true);
+        const counterWrite = updateDoc.mock.calls.find(([ref]) => ref._path === 'tasks/t1');
+        expect(counterWrite[1].timerMinutes).toBeCloseTo(347.4, 5);
+        expect(counterWrite[1].timerMinutes).not.toHaveProperty('_increment');
+    });
+
+    it('refuses an interval beyond the 16h ceiling without writing anything', async () => {
+        const res = await creditRefusedGap({
+            ...args,
+            endTime: '2026-07-30T12:00:00.000Z', // ~23h
+        });
+        expect(res.ok).toBe(false);
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('refuses an incomplete claim without reading the task', async () => {
+        const res = await creditRefusedGap({ ...args, expectedUserId: null });
+        expect(res).toMatchObject({ ok: false, error: 'missing' });
+        expect(getDoc).not.toHaveBeenCalled();
     });
 });
 
