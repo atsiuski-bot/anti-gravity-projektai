@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import {
-    addDoc,
     collection,
     disableNetwork,
     doc,
@@ -86,6 +85,25 @@ afterAll(async () => {
     await testEnv?.cleanup();
 });
 
+// Plan a shift the way the worker would, but with an IDEMPOTENT write.
+//
+// This deliberately does not use addDoc. addDoc carries a create precondition ("this id must not
+// exist"), and both cases below write while the network is down and then bring it back up — which
+// tears down and re-establishes the write stream. If the server commits the mutation but its ack is
+// lost exactly at that boundary, the SDK re-sends the same mutation, the precondition now fails
+// against the document the first delivery wrote, and the write rejects with ALREADY_EXISTS. The id
+// is generated client-side, so this is never a collision between two different writes — it is one
+// write delivered twice. It made the suite fail intermittently (observed 2026-08-02) with a failure
+// that says nothing about what these cases actually assert.
+//
+// doc(collection(...)) mints the same client-side auto id without contacting anyone, and setDoc has
+// no precondition, so a re-delivery simply rewrites identical bytes. The offline-local-apply
+// behaviour these cases pin is unchanged: the write still lands in the cache immediately and still
+// flushes on reconnect.
+function planShift(db, data) {
+    return setDoc(doc(collection(db, 'work_hours')), data);
+}
+
 // Collects every snapshot the planner's listener would receive, in order.
 function watchWorkHours(db, onEach) {
     const q = query(collection(db, 'work_hours'), where('userId', '==', WORKER_ID));
@@ -122,7 +140,7 @@ describeEmulator('work_hours pending-write visibility', () => {
         // Deliberately NOT awaited: offline, the SDK applies the write locally and leaves this
         // promise pending indefinitely. Awaiting it is what used to freeze the form — the entry was
         // already on screen while the code waiting to confirm it never resumed.
-        const write = addDoc(collection(db, 'work_hours'), {
+        const write = planShift(db, {
             userId: WORKER_ID,
             start: '2026-07-21T07:30:00.000Z',
             end: '2026-07-21T11:00:00.000Z',
@@ -164,7 +182,7 @@ describeEmulator('work_hours pending-write visibility', () => {
         await waitFor(() => seen.length > 0, 'the initial (empty) snapshot');
 
         await disableNetwork(db);
-        const write = addDoc(collection(db, 'work_hours'), {
+        const write = planShift(db, {
             userId: WORKER_ID,
             start: '2026-07-22T07:30:00.000Z',
             end: '2026-07-22T11:00:00.000Z',
