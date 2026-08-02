@@ -1,6 +1,14 @@
 [build]
   command = "npm run build"
   publish = "dist"
+  # Skip the production build when a push changes only non-shippable files (docs, ADRs,
+  # .claude/.agent runbooks, Firestore/Storage rules, functions/ — none of which Vite reads).
+  # Netlify runs this command and CANCELS the build when it exits 0: git diff --quiet exits 0
+  # when the listed paths are identical between the last built commit and this one, i.e. nothing
+  # build-relevant changed. Any change under those paths — or a missing CACHED_COMMIT_REF on the
+  # very first build — makes git exit non-zero and the build proceeds. Fail-open by design: the
+  # ambiguous case builds.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- src public index.html package.json package-lock.json vite.config.js tailwind.config.js postcss.config.js netlify.toml"
 
 [[redirects]]
   from = "/*"
