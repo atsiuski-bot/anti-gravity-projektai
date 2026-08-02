@@ -15,7 +15,7 @@
     "//test:functions": "The functions/ suites run on bare node (no runner, no emulator, ~1s), so there is no reason for the release gate to skip them — they lock the integrity-scan and decision-log classifiers the nightly nets depend on.",
     "test:functions": "node functions/integrityScans.test.cjs && node functions/decisionLog.test.cjs",
     "//test:firestore": "The rules + stateful-timer suites. `npm test` INCLUDES these files but they self-skip without FIRESTORE_EMULATOR_HOST, so a plain run reports them as 'skipped' and a rules regression passes the gate silently. This is the run that actually exercises them.",
-    "test:firestore": "firebase emulators:exec --project demo-workz-timer --only firestore \"vitest run src/integration/firestore --maxWorkers=1 --no-file-parallelism\"",
+    "test:firestore": "node scripts/check-emulator-port.mjs && firebase emulators:exec --project demo-workz-timer --only firestore \"vitest run src/integration/firestore --maxWorkers=1 --no-file-parallelism\"",
     "//test:all": "Everything the release gate must see: unit + functions + emulator. Used by /ship.",
     "test:all": "npm run test && npm run test:functions && npm run test:firestore",
     "test:watch": "vitest"
