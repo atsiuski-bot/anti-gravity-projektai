@@ -210,9 +210,27 @@ forfeits real work. Durability without accountability moves the failure, it does
    number). The client is unchanged: it stays correct when online and merely stops being the *only*
    route. **Requires a `functions` deploy to take effect** — until then the hole is open exactly as
    described above.
+
+   **The retro-scan (follow-up 2) re-framed the defect, and the fix holds under the wider reading.**
+   All 18 recorded `reconcile:claimRecoveredGap → partial` events carry `online: true`, so offline
+   was never the whole story: *online*, the novelty probe succeeds and answers "not new" — the row
+   already exists — so no delta is passed and the counter still does not move. The real class is
+   **the first fold failing, after which every later claim of the same gap can add nothing**: a
+   one-way ratchet into staleness. Folding at row CREATION removes the inherited state that ratchet
+   depends on. Rows created *before* the deploy keep their drift; repairing those is a separate data
+   operation.
 2. **Retro-scan** `error_logs` for `orphanRecovery:gapNotAutoCredited` and
    `reconcile:*` `partial` outcomes, to size how much historical time and how many stale counters
    are affected across all workers.
+   **— DONE 2026-08-04 (read-only, via the Firebase MCP).** `orphanRecovery:gapNotAutoCredited`:
+   **exactly one event ever** (2026-07-29, user `ZcfeXc4Q…` — notably *not* Povilas), so a >4 h
+   refusal is genuinely rare and the 4 h bound is not over-firing. `reconcile:claimRecoveredGap →
+   partial`: **18 events across 4 distinct users, all on 2026-07-28/29, every one `online: true`** —
+   the finding that re-framed follow-up 1 above. The nightly `counterDrift` scan had *not* warned
+   about any of them, so it is not a reliable second witness for this class. Remaining question,
+   deliberately not answered here: how many of those 18 tasks are still drifted today, and whether
+   the repair should be a one-off backfill or `dailyIntegrityScan` graduating from reporting drift
+   to healing it.
 3. **Decide whether the same escalation should cover session (quick-work/call) gaps**, which today
    have their own recovery path.
 4. **The 3-day stale-claim sweep** (a scheduled function, mirroring `notifyStaleRunningTimers`) was
