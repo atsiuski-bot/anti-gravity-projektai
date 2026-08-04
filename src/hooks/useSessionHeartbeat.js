@@ -6,6 +6,7 @@ import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_INTERVAL_MS } from '../utils/timeUtils';
 import { getSecondarySession } from './useOrphanedSessionRecovery';
 import { APP_INSTANCE_ID, isOwnedByThisInstance } from '../utils/appInstance';
+import { serverNowISO, toServerFrame } from '../utils/serverClock';
 
 // Captured once when this JS context boots — the legacy fallback anchor (see isBeatableSession).
 const APP_LOAD_TIME = Date.now();
@@ -18,7 +19,7 @@ const APP_LOAD_TIME = Date.now();
 // Ownership is the same rule the task heartbeat uses; sessions started before ownership existed
 // carry no ownerInstance and fall back to the boot-time proxy, which is conservative in the safe
 // direction (a pre-boot session is left to the recovery hook to judge). Pure + exported for tests.
-export function isBeatableSession(session, appLoadTime = APP_LOAD_TIME, instanceId = APP_INSTANCE_ID) {
+export function isBeatableSession(session, appLoadTime = toServerFrame(APP_LOAD_TIME), instanceId = APP_INSTANCE_ID) {
     if (!session?.startTime) return false;
     if (session.ownerInstance) return isOwnedByThisInstance(session.ownerInstance, instanceId);
     const startMs = new Date(session.startTime).getTime();
@@ -44,6 +45,9 @@ export function isBeatableSession(session, appLoadTime = APP_LOAD_TIME, instance
  * - Does NOT go through the per-user session lock: it touches no field the lock protects
  *   (activeSession / the per-type flags), so last-write-wins on this one field is safe.
  * - Offline-safe (client-stamped ISO, queues + replays), same as the task heartbeat.
+ * - Stamped in the SERVER's frame (serverNowISO), for the same reason the task beat is: recovery
+ *   only trusts a beat that falls between the run's server-anchored start and now, so a beat
+ *   written in the device's own frame is unusable on a machine whose clock is off.
  * - Effect depends only on the stable session start instant, so the beat it writes does not
  *   re-arm the interval.
  *
@@ -65,7 +69,7 @@ export function useSessionHeartbeat(currentUser) {
         const beat = () => {
             if (cancelled) return;
             updateDoc(doc(db, 'users', uid), {
-                activeSessionLastHeartbeat: new Date().toISOString(),
+                activeSessionLastHeartbeat: serverNowISO(),
             }).catch((e) => logError(e, { source: 'sessionHeartbeat', userId: uid }));
         };
 

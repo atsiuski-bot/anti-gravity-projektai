@@ -70,6 +70,20 @@ export const serverNow = () => new Date(serverNowMs());
 export const serverNowISO = () => serverNow().toISOString();
 
 /**
+ * Re-express a DEVICE-clock instant (a raw `Date.now()`) in the server's frame.
+ *
+ * Needed because one class of instant cannot be server-anchored at the moment it is taken: the
+ * app's boot time, captured at module evaluation, before any probe could possibly have landed.
+ * Recovery compares that boot instant against values that ARE server-anchored — a run's start, its
+ * heartbeat — to answer "did this run begin before I booted" and "how long has it been unproven".
+ * Mixing the two frames makes those answers wrong by exactly the device's error: on a machine a few
+ * minutes fast, a beat written seconds ago reads as being in the future, so a perfectly healthy run
+ * reads as having no proof of life at all and every boot stops it. Converting the boot instant is
+ * the cheap direction — it is one number, and it is the only one in the comparison that is stale.
+ */
+export const toServerFrame = (deviceMs) => deviceMs + offsetMs;
+
+/**
  * A URL that has NEVER been requested before.
  *
  * The whole measurement hinges on the `Date` header coming from the network right now. A response
@@ -142,6 +156,35 @@ export function syncServerClock() {
         .then((candidate) => (candidate === null ? offsetMs : applySample(candidate)))
         .finally(() => { inFlight = null; });
     return inFlight;
+}
+
+// How long a boot-time caller may wait for the very first probe before giving up and stamping with
+// the device clock anyway. Generous next to a same-origin HEAD (tens of ms in practice) yet far
+// below any interval a human would notice as the app "hanging" on open. Timing out is not a
+// failure mode: it lands us exactly where this module's callers were before it existed.
+const ANCHOR_WAIT_MS = 4000;
+
+/**
+ * Resolve once the anchor is known — or once waiting for it stops being worth it.
+ *
+ * WHY BOOT CODE MUST AWAIT THIS. `installServerClockSync` is fire-and-forget by design, so for the
+ * first moments of a session `serverNowISO()` silently returns the DEVICE clock. Nothing a human
+ * does lands in that window — a tap is seconds away — but orphan recovery runs *at boot*, and it is
+ * the one path that stamps a session's endTime without anyone asking it to. On a machine whose
+ * clock runs fast, that stamp lands past the rules' 2-minute future bound, the whole atomic
+ * transition is denied, and the run stays canonically active: the worker's timer neither stops nor
+ * can be restarted, on that device, until someone fixes the clock. Awaiting the anchor first costs
+ * one already-in-flight round trip and removes the entire class.
+ *
+ * Concurrent callers share the boot probe (`syncServerClock` dedupes), so this issues no extra
+ * request. Resolves with the offset in force, for logging.
+ */
+export function awaitServerClock(timeoutMs = ANCHOR_WAIT_MS) {
+    if (lastSyncedAt > 0) return Promise.resolve(offsetMs);
+    return Promise.race([
+        syncServerClock(),
+        new Promise((resolve) => { setTimeout(() => resolve(offsetMs), timeoutMs); }),
+    ]);
 }
 
 /**

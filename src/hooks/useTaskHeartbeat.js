@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_INTERVAL_MS } from '../utils/timeUtils';
 import { APP_INSTANCE_ID, isOwnedByThisInstance } from '../utils/appInstance';
+import { serverNowISO, toServerFrame } from '../utils/serverClock';
 
 // Captured once when this JS context boots (same convention as the recovery hooks). A running task
 // whose timerStartedAt predates this moment is a PRE-BOOT run this device merely OBSERVES — it is
@@ -23,7 +24,7 @@ const APP_LOAD_TIME = Date.now();
 // it still refuses to bless a pre-boot orphan at boot. It remains wrong for a bystander tab, but
 // only until that legacy run is next anchored — after which the owner check governs.
 // Pure + exported for tests.
-export function isBeatableRun(task, uid, appLoadTime = APP_LOAD_TIME, instanceId = APP_INSTANCE_ID) {
+export function isBeatableRun(task, uid, appLoadTime = toServerFrame(APP_LOAD_TIME), instanceId = APP_INSTANCE_ID) {
     if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return false;
     if (!uid || task.assignedUserId !== uid) return false;
     if (task.timerOwnerInstance) return isOwnedByThisInstance(task.timerOwnerInstance, instanceId);
@@ -45,6 +46,12 @@ export function isBeatableRun(task, uid, appLoadTime = APP_LOAD_TIME, instanceId
  * - Offline-safe: Firestore queues the write in the local cache stamped with the CLIENT clock
  *   (an ISO string, not a serverTimestamp), so a no-signal-but-app-alive stretch is preserved
  *   and replays in order on reconnect.
+ * - Stamped in the SERVER's frame (serverNowISO), like the run's start and end. The beat is not a
+ *   free-standing timestamp: every consumer compares it to those two — recovery asks whether the
+ *   beat sits inside [start, now] and how long the tail since it is. Stamping it with the raw
+ *   device clock while the boundaries were server-anchored put the three in different frames, so on
+ *   a machine whose clock is off, a perfectly healthy run reads as having no usable heartbeat (beat
+ *   before its own start, or after "now") and recovery judges a live worker abandoned.
  * - The effect depends ONLY on the stable running-task id (not the `tasks` array reference), so
  *   the beat it writes — which produces a new snapshot every minute — does not re-arm the
  *   interval or fire an extra immediate beat. Without this it would be a write loop.
@@ -69,7 +76,7 @@ export function useTaskHeartbeat(tasks, currentUser) {
         const beat = () => {
             if (cancelled) return;
             updateDoc(doc(db, 'tasks', runningId), {
-                timerLastHeartbeat: new Date().toISOString(),
+                timerLastHeartbeat: serverNowISO(),
             }).catch((e) => logError(e, { source: 'taskHeartbeat', taskId: runningId }));
         };
 

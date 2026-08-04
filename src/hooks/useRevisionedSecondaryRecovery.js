@@ -6,11 +6,11 @@ import {
     planSecondaryEnd,
 } from '../utils/timerTransitionPlan';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
-import { serverNowISO } from '../utils/serverClock';
+import { awaitServerClock, serverNowISO } from '../utils/serverClock';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { isAbandonedSession, resolvePreBootBeat } from './useOrphanedSessionRecovery';
-import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
+import { appLoadTimeServer } from './useOrphanedTaskRecovery';
 
 const SECONDARY_TYPES = ['break', 'call', 'quickWork'];
 
@@ -53,7 +53,7 @@ export function useRevisionedSecondaryRecovery(currentUser, userData, enabled) {
         if (base.status !== 'active' || !SECONDARY_TYPES.includes(base.run?.type)) return;
 
         const startedAt = new Date(base.run.startedAt).getTime();
-        if (!Number.isFinite(startedAt) || startedAt >= APP_LOAD_TIME) return;
+        if (!Number.isFinite(startedAt) || startedAt >= appLoadTimeServer()) return;
         if (handledRuns.current.has(base.run.runId)) return;
         if (!isAbandonedSession(base.run.startedAt)) return;
 
@@ -62,11 +62,21 @@ export function useRevisionedSecondaryRecovery(currentUser, userData, enabled) {
         // Credit only to the last proof of life recorded BEFORE this boot; no usable beat falls back
         // to now, which the 16h clamp still bounds.
         const beatMs = resolvePreBootBeat(
-            startedAt, APP_LOAD_TIME, userData?.activeSessionLastHeartbeat
+            startedAt, appLoadTimeServer(), userData?.activeSessionLastHeartbeat
         );
+        const type = base.run.type;
+
+        // An effect callback cannot be async, and the clock anchor below must be awaited before any
+        // instant is stamped — so the rest of the recovery runs as its own async scope.
+        (async () => {
+        // Anchor the clock BEFORE stamping. See the identical note in useRevisionedTaskRecovery: at
+        // boot the probe from main.jsx may not have landed, so serverNowISO is still the raw device
+        // clock, and on a fast machine the resulting endTime is refused by the rules' 2-minute
+        // future bound — which leaves the abandoned session stuck ACTIVE instead of closed.
+        await awaitServerClock();
+
         const issuedAt = serverNowISO();
         const creditUntil = beatMs != null ? new Date(beatMs).toISOString() : issuedAt;
-        const type = base.run.type;
 
         let plan;
         try {
@@ -131,6 +141,7 @@ export function useRevisionedSecondaryRecovery(currentUser, userData, enabled) {
                 runId: base.run.runId,
             });
         });
+        })();
     }, [
         currentUser,
         enabled,

@@ -36,6 +36,15 @@ import { pauseTask, creditAndResumeTask, startTask, clearLiveSessionAfterFailedR
 import { logError } from '../utils/errorLog';
 import { raiseRefusedGapClaim } from '../utils/gapClaim';
 import { getDocFromServer } from 'firebase/firestore';
+// NOT mocked: the real composed owner is what the device gate parses, so these cases exercise the
+// actual `{device}::{boot}` split rather than a stand-in for it.
+import { APP_INSTANCE_ID } from '../utils/appInstance';
+
+// Every recoverable fixture must look like a run THIS DEVICE anchored — recovery now refuses any
+// other, because a pre-boot run belonging to the worker's phone is their LIVE timer, not an orphan.
+const OURS = APP_INSTANCE_ID;
+// A run anchored by the same worker on a different device (their phone), still beating there.
+const THEIRS = 'dev_other_device::inst_whatever';
 
 // The credit-instant POLICY for a pre-boot running task, isolated from React so the arithmetic
 // that decides how much worked time survives a crash/reload is provable directly. The bug this
@@ -456,10 +465,35 @@ describe('confirmTaskOrphanOnServer — no recovery without server proof', () =>
     it('returns the FRESH doc when the same run is still running on the server', async () => {
         getDocFromServer.mockResolvedValue(serverDoc({
             timerStatus: 'running', timerStartedAt: START, timerMinutes: 42,
+            timerOwnerInstance: OURS,
         }));
         const fresh = await confirmTaskOrphanOnServer(suspect);
         // The fresh copy (true timerMinutes base, true beat) is what recovery must act on.
         expect(fresh).toMatchObject({ id: 't1', timerMinutes: 42 });
+    });
+
+    // The reported incident: a worker's phone runs a task; they sit down at a PC and sign in; the
+    // PC stops the phone's timer, and it will not restart. The run is pre-boot from the PC's view
+    // (it always is), and the phone's heartbeat is foreground-only so a pocketed phone always looks
+    // dead — which left "started before I booted" indistinguishable from "abandoned". Ownership by
+    // DEVICE is the distinction; without it these two cases are the same case.
+    it('leaves a run anchored by the worker\'s OTHER device alone — it is live, not orphaned', async () => {
+        getDocFromServer.mockResolvedValue(serverDoc({
+            timerStatus: 'running', timerStartedAt: START, timerMinutes: 42,
+            // Stale by this device's reckoning — the phone is in a pocket, screen off, still working.
+            timerLastHeartbeat: iso(LOAD - 45 * 60 * 1000),
+            timerOwnerInstance: THEIRS,
+        }));
+        expect(await confirmTaskOrphanOnServer(suspect)).toBeNull();
+    });
+
+    it('leaves an UNSTAMPED run alone — unprovable ownership must not cost someone a live timer', async () => {
+        // Runs anchored before this scheme carry no owner. Guessing "probably mine" is the guess
+        // that stops a working timer; the server's forgotten-timer net closes these instead.
+        getDocFromServer.mockResolvedValue(serverDoc({
+            timerStatus: 'running', timerStartedAt: START, timerMinutes: 42,
+        }));
+        expect(await confirmTaskOrphanOnServer(suspect)).toBeNull();
     });
 
     it('returns null when the server says the run was already finalized (auto-stop / other device)', async () => {
@@ -511,6 +545,7 @@ describe('recoverConfirmedOrphan — confirm → re-decide on the fresh doc → 
         const fresh = {
             timerStatus: 'running', timerStartedAt: START, timerLastHeartbeat: iso(beat),
             timerMinutes: 55, assignedUserId: 'worker-1', title: 'X',
+            timerOwnerInstance: OURS,
         };
         getDocFromServer.mockResolvedValue(serverDoc(fresh));
         pauseTask.mockResolvedValue({ creditedMinutes: 30, rawMinutes: 30, wasCapped: false });
@@ -531,7 +566,7 @@ describe('recoverConfirmedOrphan — confirm → re-decide on the fresh doc → 
         const fresh = {
             timerStatus: 'running', timerStartedAt: START,
             timerLastHeartbeat: iso(LOAD - 60 * 1000), // 1-min tail → resume
-            assignedUserId: 'worker-1',
+            assignedUserId: 'worker-1', timerOwnerInstance: OURS,
         };
         getDocFromServer.mockResolvedValue(serverDoc(fresh));
         const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, assignedUserId: 'worker-1' };

@@ -7,11 +7,12 @@ import {
     planTaskRecover,
 } from '../utils/timerTransitionPlan';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
-import { serverNowISO } from '../utils/serverClock';
+import { awaitServerClock, serverNowISO } from '../utils/serverClock';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { raiseRefusedGapClaim } from '../utils/gapClaim';
 import { logError } from '../utils/errorLog';
-import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
+import { appLoadTimeServer } from './useOrphanedTaskRecovery';
+import { isOwnedByThisDevice } from '../utils/appInstance';
 
 const idFor = (prefix) => {
     const random = globalThis.crypto?.randomUUID?.()
@@ -38,7 +39,7 @@ export function useRevisionedTaskRecovery(
         if (base.status !== 'active' || base.run?.type !== 'task') return;
 
         const startedAt = new Date(base.run.startedAt).getTime();
-        if (!Number.isFinite(startedAt) || startedAt >= APP_LOAD_TIME) return;
+        if (!Number.isFinite(startedAt) || startedAt >= appLoadTimeServer()) return;
         if (handledRuns.current.has(base.run.runId)) return;
 
         const task = tasks.find((candidate) => candidate.id === base.run.taskId);
@@ -49,6 +50,15 @@ export function useRevisionedTaskRecovery(
         // An effect callback cannot be async, and the server confirmation below must be awaited
         // before any plan is built — so the rest of the recovery runs as its own async scope.
         (async () => {
+        // Anchor the clock BEFORE anything is stamped. This runs at boot, which is precisely the
+        // window in which the fire-and-forget probe from main.jsx has not landed yet, so serverNowISO
+        // would still be the raw device clock. On a machine that runs fast, the recoveryEnd below
+        // would then exceed the rules' 2-minute future bound and the whole atomic transition is
+        // denied — leaving the run canonically active, unstoppable and unrestartable on that device.
+        // Unlike a human-triggered action, nothing here waits seconds for a tap, so this is the one
+        // path that must ask. It joins the in-flight boot probe rather than issuing its own.
+        await awaitServerClock();
+
         // Confirm against the SERVER before crediting anything — the guard the legacy path has had
         // since the first double-credit incident (confirmTaskOrphanOnServer), and which this path
         // never had. Two things make it mandatory here:
@@ -84,6 +94,12 @@ export function useRevisionedTaskRecovery(
         if (!fresh || fresh.timerStatus !== 'running' || !fresh.timerStartedAt) return;
         // …and it must still be THE SAME run, not a newer one started meanwhile.
         if (fresh.timerRunId && fresh.timerRunId !== base.run.runId) return;
+        // …and it must be a run THIS DEVICE anchored. A run belonging to the worker's other device
+        // is not an orphan just because it predates this boot — it is very likely the timer they are
+        // running right now, on a phone whose foreground-only heartbeat went quiet in a pocket.
+        // Recovering it is what stopped their timer every time they signed in here. Leave it alone;
+        // a genuinely dead run is closed by the server's forgotten-timer net, not by a bystander.
+        if (!isOwnedByThisDevice(fresh.timerOwnerInstance)) return;
 
         const recoveredAt = serverNowISO();
         let plan;

@@ -7,6 +7,8 @@ import { raiseRefusedGapClaim } from '../utils/gapClaim';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES, isCreditableUntrackedGap } from '../utils/timeUtils';
+import { awaitServerClock, serverNowMs, toServerFrame } from '../utils/serverClock';
+import { isOwnedByThisDevice } from '../utils/appInstance';
 
 // Captured once when this module is first evaluated — i.e. when the app/tab boots.
 // A task whose timerStartedAt predates this moment was left timerStatus:'running'
@@ -18,6 +20,19 @@ import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES, isCreditableUntracked
 // canonical instant and yield to this hook instead of racing it — see
 // isPreBootOrphanTask in useTaskTimeMonitor.js.
 export const APP_LOAD_TIME = Date.now();
+
+// The same boot instant, expressed in the SERVER's frame.
+//
+// APP_LOAD_TIME is unavoidably a raw device reading: it is taken when this module is evaluated,
+// long before the clock probe could have landed. Everything it gets compared against — a run's
+// timerStartedAt, its timerLastHeartbeat — is server-anchored. On a device whose clock is off, that
+// mismatch is not a rounding detail: it shifts every "is this run pre-boot" and "how stale is this
+// beat" answer by the device's full error, so a machine a few minutes fast reads its own live,
+// beating timer as an unproven orphan and stops it on every boot. Call this (never APP_LOAD_TIME)
+// wherever the boot instant meets a server-stamped one. It is a function, not a constant, because
+// the anchor lands asynchronously — reading it early yields the uncorrected value, which is exactly
+// the pre-anchor behaviour and no worse.
+export const appLoadTimeServer = () => toServerFrame(APP_LOAD_TIME);
 
 // Decide what a pre-boot running task's crash-recovery should do — pure + exported so the
 // credit-instant policy is unit-testable without a React renderer (mirrors isAbandonedSession in
@@ -149,6 +164,12 @@ export async function confirmTaskOrphanOnServer(task) {
     const fresh = { id: snap.id, ...snap.data() };
     if (fresh.timerStatus !== 'running' || !fresh.timerStartedAt) return null;
     if (fresh.timerStartedAt !== task.timerStartedAt) return null;
+    // Only THIS DEVICE's own run is recoverable. A pre-boot run is not evidence of a crash when the
+    // worker simply has another device: their phone's timer is always pre-boot from a PC signing in
+    // later, and its foreground-only heartbeat goes quiet the moment the phone is pocketed — so this
+    // check is the whole difference between "recover my crashed run" and "stop the timer they are
+    // using". Runs abandoned on a device that never returns are the server net's job.
+    if (!isOwnedByThisDevice(fresh.timerOwnerInstance)) return null;
     return fresh;
 }
 
@@ -164,7 +185,7 @@ export async function confirmTaskOrphanOnServer(task) {
 //     cover the app-open stretch worked in between, or that stretch would be silently dropped.
 // A confirm failure propagates to the caller (unlatch + retry); a failed WRITE after a successful
 // confirm is logged and stays latched, exactly as before.
-export async function recoverConfirmedOrphan(task, currentUser, nowMs = Date.now(), appLoadTime = APP_LOAD_TIME) {
+export async function recoverConfirmedOrphan(task, currentUser, nowMs = serverNowMs(), appLoadTime = appLoadTimeServer()) {
     const fresh = await confirmTaskOrphanOnServer(task);
     if (!fresh) return null; // another closer already finalized this run — nothing left to recover
     const decision = decideOrphanTaskRecovery(fresh, nowMs);
@@ -300,11 +321,15 @@ export function useOrphanedTaskRecovery(tasks, currentUser, enabled = true) {
             // Cheap pre-filter on the (possibly cached) snapshot: only a pre-boot run is even a
             // candidate. The REAL decision is re-made inside recoverConfirmedOrphan on the
             // server-confirmed doc — never on this unconfirmed copy.
-            if (decideOrphanTaskRecovery(task, APP_LOAD_TIME).mode === 'skip') return;
+            if (decideOrphanTaskRecovery(task, appLoadTimeServer()).mode === 'skip') return;
 
             handledRef.current.add(task.id);
 
-            recoverConfirmedOrphan(task, currentUser).catch((e) => {
+            // Anchor the clock before the recovery reads "now" or stamps anything. This runs at
+            // boot, the one window where the fire-and-forget probe from main.jsx may not have landed
+            // — see awaitServerClock for why an unanchored recovery write is refused outright by the
+            // rules and leaves the run stuck active.
+            awaitServerClock().then(() => recoverConfirmedOrphan(task, currentUser)).catch((e) => {
                 // The server re-read failed (offline boot, transient network): the orphan is
                 // UNPROVEN and nothing was written. Unlatch so a later snapshot — e.g. the one
                 // that fires on reconnect — retries; deciding from the unconfirmed cache is the

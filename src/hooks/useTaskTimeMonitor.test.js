@@ -28,7 +28,9 @@ vi.mock('../utils/timerTransitionPlan', () => ({
 vi.mock('../utils/errorLog', () => ({ logError: vi.fn() }));
 vi.mock('../utils/notify', () => ({ notify: vi.fn() }));
 // Fixed at 0 so the "uses the module default" case below is unambiguous against any positive ms.
-vi.mock('./useOrphanedTaskRecovery', () => ({ APP_LOAD_TIME: 0 }));
+// The monitor takes the boot instant in the SERVER's frame (appLoadTimeServer), because the
+// timerStartedAt it compares against is server-anchored — see toServerFrame in serverClock.
+vi.mock('./useOrphanedTaskRecovery', () => ({ appLoadTimeServer: () => 0 }));
 
 import { SoundManager } from '../utils/soundUtils';
 import {
@@ -74,7 +76,7 @@ describe('isPreBootOrphanTask — which running tasks the time-limit monitor mus
         expect(isPreBootOrphanTask({}, LOAD)).toBe(false);
     });
 
-    it('defaults appLoadTime to the shared APP_LOAD_TIME constant when omitted', () => {
+    it('defaults appLoadTime to the shared server-framed boot instant when omitted', () => {
         expect(isPreBootOrphanTask({ timerStartedAt: iso(1000) })).toBe(false);
     });
 });

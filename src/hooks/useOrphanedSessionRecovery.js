@@ -6,8 +6,12 @@ import { endSession } from '../utils/sessionActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { getLithuanianDateString, MAX_SESSION_MINUTES } from '../utils/timeUtils';
+import { awaitServerClock } from '../utils/serverClock';
+import { appLoadTimeServer } from './useOrphanedTaskRecovery';
 
-// Captured once when the app/tab boots. A secondary session (break / call / quick-work) whose
+// The boot instant this hook compares against is appLoadTimeServer() — the app's load time expressed
+// in the SERVER's frame, since every startTime/heartbeat it meets is server-anchored. A secondary
+// session (break / call / quick-work) whose
 // startTime predates this moment survived an app restart, reload, or crash (the OS discarded the
 // backgrounded PWA and the worker reopened it). That alone does NOT make it an orphan: the time is
 // server-anchored (elapsed = now − persisted startTime), so a same-day, sub-16h session is a
@@ -15,9 +19,8 @@ import { getLithuanianDateString, MAX_SESSION_MINUTES } from '../utils/timeUtils
 // off) and keeps working. We therefore RESUME those (leave activeSession untouched; the live timer
 // recomputes elapsed from the persisted startTime). Only a genuinely ABANDONED pre-boot session —
 // one that crossed a Vilnius calendar day or already exceeds the 16h single-session ceiling — is
-// finalized here. (A session started during THIS app session has startTime >= APP_LOAD_TIME and is
-// always left running.) The "never reopens" case is bounded server-side by autoCloseForgottenSessions.
-const APP_LOAD_TIME = Date.now();
+// finalized here. (A session started during THIS app session has a later startTime and is always
+// left running.) The "never reopens" case is bounded server-side by autoCloseForgottenSessions.
 
 // Decide whether a pre-boot secondary session is ABANDONED (finalize it) vs. still legitimately
 // running (resume it). Pure + exported so the policy is unit-testable without a React renderer.
@@ -140,7 +143,7 @@ export function useOrphanedSessionRecovery(currentUser, enabled = true) {
         // (Not latched: a this-session timer can never become a pre-boot orphan, and a pre-boot
         // session, if any, is already in the first snapshot — we only latch once we actually
         // make the pre-boot decision below.)
-        if (startedAt >= APP_LOAD_TIME) return;
+        if (startedAt >= appLoadTimeServer()) return;
 
         // This is the ONE pre-boot decision this boot-recovery hook makes. Latch it BEFORE the
         // resume/finalize split so a later snapshot cannot RE-decide: the effect re-runs on every
@@ -158,6 +161,11 @@ export function useOrphanedSessionRecovery(currentUser, enabled = true) {
         const uid = currentUser.uid;
         const cachedBeatIso = userData.activeSessionLastHeartbeat;
         (async () => {
+            // Anchor the clock before reading "now" or stamping a close — at boot the probe from
+            // main.jsx may not have landed yet, and an endTime stamped by a fast device clock is
+            // refused outright by the rules (see awaitServerClock).
+            await awaitServerClock();
+
             // Confirm against the SERVER before touching anything: the userData above may be a
             // stale cache emission, and the session may already be closed — or replaced by a LIVE
             // one — on the server. Finalizing from the cache is how a long-closed device could
@@ -182,7 +190,7 @@ export function useOrphanedSessionRecovery(currentUser, enabled = true) {
             // behaviour. endSession receives the SERVER-fresh user doc, so its caller-supplied-
             // snapshot fast path no longer bypasses the staleness defense.
             const beatMs = resolvePreBootBeat(
-                startedAt, APP_LOAD_TIME, cachedBeatIso, freshData.activeSessionLastHeartbeat
+                startedAt, appLoadTimeServer(), cachedBeatIso, freshData.activeSessionLastHeartbeat
             );
             const overrides = beatMs != null ? { endAt: beatMs } : {};
             try {

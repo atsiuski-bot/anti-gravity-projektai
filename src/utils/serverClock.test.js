@@ -7,6 +7,8 @@ import {
     serverNowISO,
     serverNowMs,
     syncServerClock,
+    awaitServerClock,
+    toServerFrame,
 } from './serverClock';
 
 // These cases exist because the failure they prevent is invisible until it costs someone their pay:
@@ -152,5 +154,73 @@ describe('serverClock', () => {
         expect(first).not.toBe(second);
         // And it must bypass the HTTP cache as well as the service worker's URL matching.
         expect(fetchMock.mock.calls[0][1]).toMatchObject({ cache: 'no-store' });
+    });
+});
+
+// Boot-time code — orphan recovery — stamps without any human waiting on it, so it is the one path
+// that can run inside the window where the fire-and-forget probe has not landed. Unanchored, its
+// endTime is refused by the rules and the run is left stuck ACTIVE: neither stoppable nor
+// restartable on that device. These cases pin the two pieces that close that window.
+describe('awaitServerClock — the boot-time gate before anything is stamped', () => {
+    it('waits for the first probe, so a boot-time stamp lands in the server frame', async () => {
+        globalThis.fetch = serverAt(CLIENT_NOW - 10 * MIN);
+
+        await awaitServerClock();
+
+        expect(isServerClockSynced()).toBe(true);
+        expect(serverNowMs()).toBe(CLIENT_NOW - 10 * MIN + MIDPOINT);
+    });
+
+    it('joins the in-flight boot probe instead of issuing a second one', async () => {
+        const fetchMock = serverAt(CLIENT_NOW);
+        globalThis.fetch = fetchMock;
+
+        await Promise.all([syncServerClock(), awaitServerClock(), awaitServerClock()]);
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns immediately once anchored — no probe, no wait', async () => {
+        const fetchMock = serverAt(CLIENT_NOW - 10 * MIN);
+        globalThis.fetch = fetchMock;
+        await syncServerClock();
+
+        await awaitServerClock();
+
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives up rather than hanging the app when no probe can land', async () => {
+        // Offline: the probe never resolves. Recovery must still proceed — timing out lands exactly
+        // where callers were before this gate existed, which is strictly better than never running.
+        globalThis.fetch = vi.fn(() => new Promise(() => {}));
+
+        const settled = awaitServerClock(4000);
+        await vi.advanceTimersByTimeAsync(4000);
+
+        await expect(settled).resolves.toBe(0);
+        expect(isServerClockSynced()).toBe(false);
+    });
+});
+
+// The app's boot instant is the one value that CANNOT be server-anchored when it is taken (module
+// evaluation predates any probe), yet recovery compares it against server-anchored starts and
+// heartbeats. Left unconverted on a device a few minutes fast, a beat written seconds ago reads as
+// being in the future — so a live, beating run reads as having no proof of life and every boot
+// stops it. That is the reported "the timer stops when I sign in on the PC".
+describe('toServerFrame — re-expressing the boot instant', () => {
+    it('is a no-op while the device is trusted', () => {
+        expect(toServerFrame(CLIENT_NOW)).toBe(CLIENT_NOW);
+    });
+
+    it('shifts a FAST device\'s boot instant back, so its own fresh beat is not read as future', async () => {
+        globalThis.fetch = serverAt(CLIENT_NOW - 10 * MIN);
+        await syncServerClock();
+
+        // A beat this device stamps NOW carries serverNowMs(). Recovery asks "is the beat before
+        // now?" — true only because the boot instant moved into the same frame.
+        const bootInServerFrame = toServerFrame(CLIENT_NOW - 60 * MIN);
+        expect(bootInServerFrame).toBe(CLIENT_NOW - 70 * MIN + MIDPOINT);
+        expect(serverNowMs()).toBeGreaterThan(bootInServerFrame);
     });
 });

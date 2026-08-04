@@ -10,7 +10,7 @@ import { serverNowISO } from '../utils/serverClock';
 import { pauseTask, requestTimeExtension, completeTaskAtLimit } from '../utils/taskActions';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
-import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
+import { appLoadTimeServer } from './useOrphanedTaskRecovery';
 import { useRevisionedTimerSession } from './useRevisionedTimerSession';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
 import { canonicalSessionState, planTaskEnd, planTaskPause } from '../utils/timerTransitionPlan';
@@ -42,7 +42,7 @@ export function latestTaskForLimitAction(tasks, popupTask) {
 // leaves it to recovery's better-informed pause (or resume). Once recovery acts, the task is either
 // no longer running or carries a fresh post-boot timerStartedAt, and this function returns false —
 // so a task that is STILL over its limit after that is a genuinely live overrun, handled normally.
-export function isPreBootOrphanTask(task, appLoadTime = APP_LOAD_TIME) {
+export function isPreBootOrphanTask(task, appLoadTime = appLoadTimeServer()) {
     const startedAtMs = new Date(task?.timerStartedAt).getTime();
     return Number.isFinite(startedAtMs) && startedAtMs < appLoadTime;
 }
