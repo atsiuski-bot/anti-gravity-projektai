@@ -1845,15 +1845,20 @@ export function planTaskEnd({
     if (!task?.id) throw new Error('Task end requires a task');
 
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
-    if (
-        base.status === 'active'
-        && (
-            base.run?.type !== 'task'
-            || base.run?.taskId !== task.id
-        )
-    ) {
-        throw Object.assign(new Error('Another run is active'), { code: 'timer/conflict' });
-    }
+    // Does the canonical live run belong to THIS task? Only then is finishing a session transition:
+    // it closes the run, files its ledger row and hands the worker back to idle.
+    //
+    // Finishing any OTHER task is pure bookkeeping — the work was done and paused earlier, and the
+    // job is only now being handed in. That must NOT disturb whatever is running now (another task's
+    // timer, or a break/call/quick-work). This used to throw timer/conflict outright, so a worker with
+    // one timer ticking could not hand in a single job they had finished earlier: they had to stop the
+    // live timer first — losing time or re-ordering their day around the app (reported 2026-08-04).
+    const endsTheLiveRun = base.status === 'active'
+        && base.run?.type === 'task'
+        && base.run?.taskId === task.id;
+    // Something else is live and stays live: leave the canonical record (and its revision) untouched,
+    // so this batch can never be read as "the worker stopped working".
+    const otherRunStaysLive = base.status === 'active' && !endsTheLiveRun;
 
     const command = baseCommand({
         kind: 'end-task',
@@ -1862,12 +1867,12 @@ export function planTaskEnd({
         commandId,
         issuedAt,
     });
-    const revision = base.revision + 1;
+    const revision = otherRunStaysLive ? base.revision : base.revision + 1;
     let finalTimerMinutes = Number(task.timerMinutes || 0);
     let closedSessionId = null;
     const writes = [];
 
-    if (base.status === 'active') {
+    if (endsTheLiveRun) {
         const closed = closeTaskWrites({
             task,
             run: base.run,
@@ -1915,24 +1920,30 @@ export function planTaskEnd({
                 timerProjectionVersion: TIMER_ENGINE_VERSION,
             },
         },
-        {
-            type: 'set',
-            path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
-            data: activeRecord({ command, revision, status: 'idle', run: null }),
-        },
-        {
-            type: 'update',
-            path: `users/${userId}`,
-            data: {
-                activeSession: null,
-                workStatus: {
-                    isWorking: false,
-                    status: 'idle',
-                    activeTaskId: null,
-                    lastUpdated: issuedAt,
+        // Idle projections belong ONLY to the finish that actually ends the live run. When another
+        // activity keeps running, writing them would stop that activity's clock in the projections
+        // while the canonical record still says active — the exact split-brain the engine exists to
+        // prevent. The command marker is still written, so the batch stays replay-idempotent.
+        ...(otherRunStaysLive ? [] : [
+            {
+                type: 'set',
+                path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
+                data: activeRecord({ command, revision, status: 'idle', run: null }),
+            },
+            {
+                type: 'update',
+                path: `users/${userId}`,
+                data: {
+                    activeSession: null,
+                    workStatus: {
+                        isWorking: false,
+                        status: 'idle',
+                        activeTaskId: null,
+                        lastUpdated: issuedAt,
+                    },
                 },
             },
-        },
+        ]),
         commandWrite(command, revision),
     );
 

@@ -817,6 +817,75 @@ describe('revisioned timer transition plans', () => {
         });
     });
 
+    // Regression (reported 2026-08-04) — handing in an OLD, already-worked task while a different
+    // timer is running used to throw timer/conflict, so the worker's only route was to stop the live
+    // timer first. Finishing a task that owns no live run is bookkeeping, not a session transition:
+    // it must write the completion and touch NOTHING that describes the running activity.
+    it('finishes a non-running task without disturbing another task that is live', () => {
+        const liveRecord = {
+            userId,
+            revision: 8,
+            status: 'active',
+            run: {
+                runId: 'run-other',
+                type: 'task',
+                taskId: 'task-other',
+                taskTitle: 'Task Other',
+                startedAt: '2026-08-04T08:00:00.000Z',
+                revision: 8,
+            },
+        };
+        const plan = planTaskEnd({
+            task: { ...baseTask, timerStatus: 'paused', timerMinutes: 45 },
+            userId,
+            userData: idleUser,
+            activeRecord: liveRecord,
+            commandId: 'cmd-finish-other',
+            issuedAt: '2026-08-04T09:00:00.000Z',
+        });
+
+        expect(plan.closedSessionId).toBeNull();
+        expect(plan.finalTimerMinutes).toBe(45);
+        expect(plan.writes.find((write) => write.path === 'tasks/task-a').data)
+            .toMatchObject({ completed: true, status: 'completed', timerMinutes: 45 });
+        // No ledger row — this finish closed no stretch of work.
+        expect(plan.writes.some((write) => write.path.startsWith('work_sessions/'))).toBe(false);
+        // The live run's canonical record and legacy projection are left exactly as they are.
+        expect(plan.writes.some((write) => write.path === `active_sessions/${userId}`)).toBe(false);
+        expect(plan.writes.some((write) => write.path === `users/${userId}`)).toBe(false);
+        // The command marker records the UNCHANGED revision, so it can never be read as a transition.
+        expect(plan.writes.find((write) =>
+            write.path.startsWith(`users/${userId}/timer_commands/`)
+        ).data).toMatchObject({ kind: 'end-task', expectedRevision: 8, appliedRevision: 8 });
+    });
+
+    // A break / call / quick-work is the same case: it keeps running while an old task is handed in.
+    it('finishes a non-running task without ending a live break', () => {
+        const plan = planTaskEnd({
+            task: { ...baseTask, timerStatus: 'paused', timerMinutes: 20 },
+            userId,
+            userData: idleUser,
+            activeRecord: {
+                userId,
+                revision: 3,
+                status: 'active',
+                run: {
+                    runId: 'run-break',
+                    type: 'break',
+                    taskId: null,
+                    startedAt: '2026-08-04T11:00:00.000Z',
+                    revision: 3,
+                },
+            },
+            commandId: 'cmd-finish-during-break',
+            issuedAt: '2026-08-04T11:05:00.000Z',
+        });
+
+        expect(plan.writes.some((write) => write.path === `active_sessions/${userId}`)).toBe(false);
+        expect(plan.writes.some((write) => write.path === `users/${userId}`)).toBe(false);
+        expect(plan.writes.find((write) => write.path === 'tasks/task-a').data.completed).toBe(true);
+    });
+
     // Regression — the unearned on_estimate badge (confirmed live 2026-07-26, task
     // dwwURIYzX3ibQEUJvL6y: 30.016 min against a 30min estimate, finished from the forced
     // limit popup, badge granted anyway). onTaskFinishedBadge withholds on_estimate on the
