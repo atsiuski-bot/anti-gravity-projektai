@@ -423,6 +423,69 @@ describeEmulator('revisioned offline timer engine', () => {
         expect((await adminCollection('work_sessions')).size).toBe(1);
     });
 
+    // Reported 2026-08-04: a worker with one timer ticking could not hand in an older job they had
+    // already finished — the plan refused outright. Handing in a task that owns no live run must
+    // commit under the real rules WITHOUT touching the running task, its canonical record, or the
+    // ledger. The rules matter here: this batch deliberately omits the active_sessions write, so it
+    // must not trip the revision guard or the task-close ledger binding.
+    it('hands in an already-worked task while a different task keeps running', async () => {
+        const db = workerDb();
+        const startPlan = planTaskStart({
+            task: task('task-a'),
+            userId: USER_ID,
+            userData: userData(),
+            activeRecord: null,
+            commandId: 'cmd-parallel-start',
+            runId: 'run-parallel',
+            issuedAt: '2026-08-04T08:00:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startPlan));
+
+        const active = await adminRead(`active_sessions/${USER_ID}`);
+        const finishPlan = planTaskEnd({
+            task: task('task-b', { timerStatus: 'paused', timerMinutes: 45 }),
+            userId: USER_ID,
+            userData: userData({
+                type: 'task',
+                taskId: 'task-a',
+                runId: 'run-parallel',
+                startTime: '2026-08-04T08:00:00.000Z',
+            }),
+            activeRecord: active.data(),
+            commandId: 'cmd-parallel-finish',
+            issuedAt: '2026-08-04T09:00:00.000Z',
+        });
+
+        await assertSucceeds(applyTimerTransitionPlan(db, finishPlan));
+
+        const [activeAfter, runningAfter, handedIn, commandAfter] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+            adminRead('tasks/task-b'),
+            adminRead(`users/${USER_ID}/timer_commands/cmd-parallel-finish`),
+        ]);
+        // The live run is untouched — same revision, same run, still ticking.
+        expect(activeAfter.data()).toMatchObject({ status: 'active', revision: 1 });
+        expect(activeAfter.data().run.runId).toBe('run-parallel');
+        expect(runningAfter.data()).toMatchObject({
+            timerStatus: 'running',
+            timerStartedAt: '2026-08-04T08:00:00.000Z',
+        });
+        // The old job is handed in with exactly the minutes it already carried.
+        expect(handedIn.data()).toMatchObject({
+            completed: true,
+            status: 'completed',
+            timerMinutes: 45,
+        });
+        // No ledger row: this finish closed no stretch of work.
+        expect((await adminCollection('work_sessions')).size).toBe(0);
+        expect(commandAfter.data()).toMatchObject({
+            kind: 'end-task',
+            expectedRevision: 1,
+            appliedRevision: 1,
+        });
+    });
+
     it('allows a manager to force-end a canonical running task without bypassing the revision guard', async () => {
         const db = workerDb();
         const startPlan = planTaskStart({
