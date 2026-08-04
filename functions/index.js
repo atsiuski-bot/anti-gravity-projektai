@@ -1154,6 +1154,89 @@ exports.stampTeamOnArchivedTaskWrite = onDocumentWritten({ document: 'archived_t
 exports.stampTeamOnWorkSessionCreate = onDocumentCreated({ document: 'work_sessions/{id}', retry: true }, (event) => stampOwnedCreate(event, 'userId'));
 exports.stampTeamOnBreakSessionCreate = onDocumentCreated({ document: 'break_sessions/{id}', retry: true }, (event) => stampOwnedCreate(event, 'userId'));
 
+// ---------------------------------------------------------------------------
+// ADR 0025 follow-up #1 — a claimed work gap must reach the task counter even when the claim
+// was made OFFLINE.
+//
+// work_sessions is canonical, but the task doc carries a DENORMALISED counter (timerMinutes) that
+// the task card, the earnings popup and the time-limit monitor read. Every client correction path
+// therefore re-derives that counter from the task's sessions
+// (src/utils/sessionEditActions.js reconcileTaskTimerFromSessions) — and for a plain WORKER it
+// cannot: the rules deny the broad by-taskId query, so the client falls back to a delta, and the
+// delta is only safe once a READ has proven the deterministic `sess_gap_…` row is genuinely new
+// (a second claim of the same gap merges onto the same id and adds no time, so incrementing for it
+// would inflate the task above the ledger).
+//
+// That read is exactly what a gap claim cannot have. The claim exists BECAUSE the worker was
+// offline; a write can be queued, a read cannot. So the guard fails closed precisely when it is
+// needed, the row lands and the counter never follows — which is how Povilas's task showed 1h56m
+// against a 4h08m ledger on 2026-07-29.
+//
+// The fix cannot be a better client read; it has to be a party that does not need one. The server
+// does not: it fires AFTER the queued write commits, reads the whole ledger unrestricted, and
+// writes the total WHOLESALE. That makes it idempotent by construction — unlike an increment it
+// cannot double-count, so it is safe next to whatever the client did or did not manage to do
+// (including a stale bundle still applying its own delta) and safe to retry.
+//
+// Scope is deliberately the one row class that has no other way home: a client-authored gap claim
+// (claimRecoveredGap / creditRefusedGap). The canonical engine's own recovered gap carries
+// `engineVersion` and updates the counter inside the SAME atomic batch, so it is already in
+// lock-step and must not be second-guessed here.
+// ---------------------------------------------------------------------------
+
+// A gap row whose task counter nothing else is guaranteed to have moved. Absent `engineVersion`
+// is what separates a client claim from the atomic engine's own write.
+const isClientClaimedGapSession = (s) => !!s
+    && s.isRecoveredGap === true
+    && s.isDeleted !== true
+    && s.engineVersion === undefined
+    && typeof s.taskId === 'string' && s.taskId.length > 0
+    && typeof s.durationMinutes === 'number' && s.durationMinutes > 0;
+
+// Re-derive one task's counter from the FULL session ledger — the server-side mirror of the
+// client's wholesale branch: timerMinutes := sum, manualMinutes := 0, timeChanged := true.
+//
+// `actualTime` is deliberately NOT written (the client's delta branch skips it for the same
+// reason): it is a legacy display string calculateCurrentTotalMinutes consults only while manual
+// and timer both read 0 AND timeChanged is falsy, so the flag below keeps it inert. Leaving it out
+// avoids mirroring a formatter across the deploy boundary for a value nothing reads.
+async function reconcileTaskCounterFromLedger(taskId) {
+    // Wherever the task lives now — a confirmed task is archived nightly under the same id. A
+    // synthetic (quick_/call_/manual_) taskId matches neither and correctly does nothing.
+    let ref = db.collection('tasks').doc(taskId);
+    let snap = await ref.get();
+    if (!snap.exists) {
+        ref = db.collection('archived_tasks').doc(taskId);
+        snap = await ref.get();
+    }
+    if (!snap.exists) return { skipped: 'no-task' };
+
+    const rows = await db.collection('work_sessions').where('taskId', '==', taskId).get();
+    let total = 0;
+    rows.forEach((d) => {
+        const s = d.data();
+        if (s.isDeleted) return;
+        if (typeof s.durationMinutes === 'number' && s.durationMinutes > 0) total += s.durationMinutes;
+    });
+
+    await ref.update({
+        timerMinutes: total,
+        manualMinutes: 0,
+        timeChanged: true,
+        updatedAt: new Date().toISOString(),
+    });
+    return { total };
+}
+
+// retry:true is safe for the same reason the whole design works: a re-run recomputes the identical
+// total rather than adding anything.
+exports.reconcileCounterOnGapClaim = onDocumentCreated({ document: 'work_sessions/{id}', retry: true }, async (event) => {
+    const s = event.data && event.data.data();
+    if (!isClientClaimedGapSession(s)) return;
+    const res = await reconcileTaskCounterFromLedger(s.taskId);
+    logger.info('reconcileCounterOnGapClaim', { sessionId: event.params.id, taskId: s.taskId, ...res });
+});
+
 // Re-stamp ALL of a user's private rows to a desired team set. Used by the membership-change
 // trigger and the one-time backfill. Chunked via BulkWriter; idempotent (skips rows already
 // correct), so it is safe to run repeatedly. Returns the number of rows actually rewritten.

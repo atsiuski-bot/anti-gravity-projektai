@@ -199,6 +199,17 @@ forfeits real work. Durability without accountability moves the failure, it does
    new; offline that read fails, so no delta is passed, `reconcileTaskTimerFromSessions` returns
    `partial`, and the task counter silently diverges from the canonical ledger. This is exactly
    what produced Povilas's 1 h 56 m vs 4 h 08 m mismatch. Needs its own fix.
+   **— CLOSED 2026-08-04.** Not by a better client read (there cannot be one: the claim exists
+   *because* the device is offline), but by moving the fold to the party that needs no read. The
+   `reconcileCounterOnGapClaim` trigger fires when the queued claim finally commits and re-derives
+   the task counter **wholesale** from the full ledger. Wholesale, not an increment, is what makes
+   it idempotent — safe to retry, safe when the worker's claim and a manager's settlement land on
+   the same deterministic id, and safe alongside a stale client bundle still applying its own
+   delta. Scoped to client-authored claims only (the atomic engine's own gap row carries
+   `engineVersion` and moves the counter inside its batch; two authorities must not fight over one
+   number). The client is unchanged: it stays correct when online and merely stops being the *only*
+   route. **Requires a `functions` deploy to take effect** — until then the hole is open exactly as
+   described above.
 2. **Retro-scan** `error_logs` for `orphanRecovery:gapNotAutoCredited` and
    `reconcile:*` `partial` outcomes, to size how much historical time and how many stale counters
    are affected across all workers.

@@ -1621,3 +1621,63 @@ describe('untracked-gap admission lockstep (legacy recovery ↔ canonical plan)'
     expect(MAX_UNTRACKED_GAP_MINUTES).toBeLessThan(MAX_SESSION_MINUTES);
   });
 });
+
+// =============================================================================================
+//  GAP-CLAIM COUNTER RECONCILIATION (ADR 0025 follow-up #1) — the server trigger that closes the
+//  offline hole. The client's delta guard needs a READ to prove a deterministic gap row is new,
+//  and a read cannot be queued offline — which is the exact situation a gap claim is made in. The
+//  trigger below is the party that needs no read. What must stay true is its SCOPE: it fires for a
+//  client-authored claim and never for the atomic engine's own gap row (which already moves the
+//  counter inside its batch), or the two authorities would fight over one number.
+// =============================================================================================
+describe('isClientClaimedGapSession (functions/index.js gap-claim counter trigger)', () => {
+  const { isClientClaimedGapSession } = (() => {
+    const start = FUNCTIONS_SRC.indexOf('const isClientClaimedGapSession');
+    const end = FUNCTIONS_SRC.indexOf('async function reconcileTaskCounterFromLedger');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice isClientClaimedGapSession out of functions/index.js — markers moved; update this test.');
+    }
+    return new Function(`${FUNCTIONS_SRC.slice(start, end)}\n;return { isClientClaimedGapSession };`)();
+  })();
+
+  // The row claimRecoveredGap / creditRefusedGap write — a real taskId, no engineVersion.
+  const claim = { isRecoveredGap: true, taskId: 't-1', durationMinutes: 231 };
+
+  it('fires for a worker- or manager-authored gap claim (the rows with no other way home)', () => {
+    expect(isClientClaimedGapSession(claim)).toBe(true);
+  });
+
+  it('does NOT fire for the atomic engine\'s own recovered gap — its batch already moved the counter', () => {
+    expect(isClientClaimedGapSession({ ...claim, engineVersion: 2 })).toBe(false);
+  });
+
+  it('does NOT fire for an ordinary timer session (the live timer keeps the counter in lock-step)', () => {
+    expect(isClientClaimedGapSession({ taskId: 't-1', durationMinutes: 60 })).toBe(false);
+  });
+
+  it('ignores a deleted or zero-length row (nothing to credit)', () => {
+    expect(isClientClaimedGapSession({ ...claim, isDeleted: true })).toBe(false);
+    expect(isClientClaimedGapSession({ ...claim, durationMinutes: 0 })).toBe(false);
+  });
+
+  it('ignores a row with no usable taskId (a counter needs a task to land on)', () => {
+    expect(isClientClaimedGapSession({ ...claim, taskId: '' })).toBe(false);
+    expect(isClientClaimedGapSession({ ...claim, taskId: undefined })).toBe(false);
+    expect(isClientClaimedGapSession(null)).toBe(false);
+  });
+
+  it('re-derives the counter WHOLESALE — an increment could not be safely retried', () => {
+    // The whole design rests on idempotence: the trigger is retry:true, the same gap can be
+    // claimed by the worker and settled by a manager onto the same id, and a stale client bundle
+    // may still be applying its own delta. Summing the ledger is correct under all three;
+    // incrementing is correct under none.
+    const body = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('async function reconcileTaskCounterFromLedger'),
+      FUNCTIONS_SRC.indexOf('exports.reconcileCounterOnGapClaim')
+    );
+    expect(body).toContain('timerMinutes: total');
+    expect(body).not.toContain('increment');
+    // …and it must look in the archive too: a confirmed task is archived nightly under the same id.
+    expect(body).toContain('archived_tasks');
+  });
+});
