@@ -1659,6 +1659,7 @@ export function planTaskRecover({
         : 0;
     const timerMinutes = Number(task.timerMinutes || 0) + provenMinutes + gapMinutes;
 
+
     const command = baseCommand({
         kind: 'recover',
         userId,
@@ -1747,86 +1748,62 @@ export function planTaskRecover({
         }
         : null;
 
-    // Only a BRIEF interruption re-anchors and keeps running. A genuinely closed app must come back
-    // PAUSED, exactly as the legacy path does (mode 'pause-at-beat'): the worker is not demonstrably
-    // at work, and silently resuming would run an unattended timer until someone noticed. Recovery
-    // previously re-anchored every orphan unconditionally — including one the phone abandoned days
-    // ago — which is the same runaway the 16h ceiling exists to bound.
-    if (briefInterruption) {
-        writes.push(
-            {
-                type: 'set',
-                path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
-                data: activeRecord({ command, revision, status: 'active', run: nextRun }),
+    // Recovery NEVER leaves the timer stopped (ADR 0027). It closes the old run so the proven stretch
+    // and any admitted gap are credited, then re-anchors a fresh run from this instant.
+    //
+    // Why it used to stop, and why that was wrong. The rule was "only a brief interruption keeps
+    // running" — three minutes, calibrated for a page reload. But the heartbeat only ticks in the
+    // FOREGROUND and iOS discards a backgrounded PWA, so on a phone every return to the app is a cold
+    // boot with a beat older than that window. The worker's timer was therefore stopped on EVERY
+    // re-open and they had to press start again each time (reported 2026-08-05). Worse, nothing
+    // announced the stop, so a worker who did not notice kept working untracked.
+    //
+    // The app cannot tell "pocketed but working" from "stopped working" — both are just a quiet
+    // heartbeat — so it no longer guesses. A running timer means work until the worker stops it; that
+    // is the one signal that is unambiguous, and it is theirs to give.
+    //
+    // Continuing is NOT the same as paying. What may be CREDITED is decided separately and is
+    // unchanged: only a gap `isCreditableUntrackedGap` admits (≥1 min, ≤4h, one work day) is
+    // auto-credited, everything longer becomes `refusedGap` → the manager's decision (ADR 0025), and
+    // the whole run stays under one 16h budget. A forgotten timer therefore still cannot pay itself;
+    // it only stays visibly running, where the worker and the server's nets can see it.
+    writes.push(
+        {
+            type: 'set',
+            path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
+            data: activeRecord({ command, revision, status: 'active', run: nextRun }),
+        },
+        {
+            type: 'update',
+            path: `tasks/${task.id}`,
+            data: {
+                timerStatus: 'running',
+                timerStartedAt: recoveryEnd.toISOString(),
+                timerLastHeartbeat: recoveryEnd.toISOString(),
+                // Claim the re-anchored run for THIS app instance, or the ownership rule in
+                // useTaskHeartbeat refuses to beat it and the run looks dead a minute later.
+                timerOwnerInstance: APP_INSTANCE_ID,
+                timerMinutes,
+                manualMinutes: Number(task.manualMinutes || 0),
+                status: 'in-progress',
+                updatedAt: issuedAt,
+                timerRunId: runId,
+                timerRevision: revision,
+                timerProjectionVersion: TIMER_ENGINE_VERSION,
             },
-            {
-                type: 'update',
-                path: `tasks/${task.id}`,
-                data: {
-                    timerStatus: 'running',
-                    timerStartedAt: recoveryEnd.toISOString(),
-                    timerLastHeartbeat: recoveryEnd.toISOString(),
-                    // Claim the re-anchored run for THIS app instance, or the ownership rule in
-                    // useTaskHeartbeat refuses to beat it and the run looks dead a minute later.
-                    timerOwnerInstance: APP_INSTANCE_ID,
-                    timerMinutes,
-                    manualMinutes: Number(task.manualMinutes || 0),
-                    status: 'in-progress',
-                    updatedAt: issuedAt,
-                    timerRunId: runId,
-                    timerRevision: revision,
-                    timerProjectionVersion: TIMER_ENGINE_VERSION,
-                },
-            },
-            {
-                type: 'update',
-                path: `users/${userId}`,
-                data: legacyRunningProjection(task, nextRun, issuedAt),
-            },
-            commandWrite(command, revision),
-        );
-    } else {
-        writes.push(
-            {
-                type: 'set',
-                path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
-                data: activeRecord({ command, revision, status: 'idle', run: null }),
-            },
-            {
-                type: 'update',
-                path: `tasks/${task.id}`,
-                data: {
-                    timerStatus: 'paused',
-                    timerStartedAt: null,
-                    timerMinutes,
-                    manualMinutes: Number(task.manualMinutes || 0),
-                    updatedAt: issuedAt,
-                    timerRunId: null,
-                    timerRevision: revision,
-                    timerProjectionVersion: TIMER_ENGINE_VERSION,
-                },
-            },
-            {
-                type: 'update',
-                path: `users/${userId}`,
-                data: {
-                    activeSession: null,
-                    workStatus: {
-                        isWorking: false,
-                        status: 'paused',
-                        activeTaskId: task.id,
-                        lastUpdated: issuedAt,
-                    },
-                },
-            },
-            commandWrite(command, revision),
-        );
-    }
+        },
+        {
+            type: 'update',
+            path: `users/${userId}`,
+            data: legacyRunningProjection(task, nextRun, issuedAt),
+        },
+        commandWrite(command, revision),
+    );
 
     return {
         command,
         creditedMinutes: provenMinutes + gapMinutes,
-        resumed: briefInterruption,
+        resumed: true,
         recoveredGap,
         refusedGap,
         writes,

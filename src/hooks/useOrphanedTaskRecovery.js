@@ -38,9 +38,12 @@ export const appLoadTimeServer = () => toServerFrame(APP_LOAD_TIME);
 // credit-instant policy is unit-testable without a React renderer (mirrors isAbandonedSession in
 // useOrphanedSessionRecovery). Returns one of:
 //   { mode: 'skip' }                              — not an orphan (unparseable start, or started this session)
-//   { mode: 'pause-now' }                         — no heartbeat: pause crediting up to now (clamped downstream)
-//   { mode: 'resume', creditTo }                  — brief reload while working: credit + re-anchor, no banner
-//   { mode: 'pause-at-beat', creditTo, gapFrom, gapTo } — genuinely closed: credit to last beat, pause, offer gap
+//   { mode: 'resume', creditTo }                  — credit the whole stretch up to now, then re-anchor
+//   { mode: 'pause-at-beat', creditTo, gapFrom, gapTo } — long silence: credit to the last beat, then
+//                                                   resolve the untracked gap, then re-anchor
+//
+// Neither outcome leaves the timer stopped any more (ADR 0027) — "pause" here names only the CLOSE
+// half of each transition, which is what files the ledger row; a fresh run is anchored right after.
 //
 // The key policy fix: in the RESUME case we credit up to the reload instant (appLoadTime), NOT the
 // last heartbeat. A gap short enough to resume (≤ TIMER_HEARTBEAT_CONTINUE_MS) with the worker
@@ -52,8 +55,11 @@ export function decideOrphanTaskRecovery(task, appLoadTime = Date.now()) {
     // A timer started during THIS app session is live, not orphaned.
     if (startedAt >= appLoadTime) return { mode: 'skip' };
 
+    // No usable beat — pre-heartbeat data, or a timer killed before its first beat. There is no
+    // proven boundary to split on, so the whole stretch is credited up to now (clamped downstream)
+    // and the run continues: the same outcome as a brief reload, which is why it is the same mode.
     const beatMs = task?.timerLastHeartbeat ? new Date(task.timerLastHeartbeat).getTime() : NaN;
-    if (!Number.isFinite(beatMs)) return { mode: 'pause-now' };
+    if (!Number.isFinite(beatMs)) return { mode: 'resume', creditTo: appLoadTime };
 
     // The last proven-alive instant can't precede the start (guard a stale beat).
     const lastBeat = Math.max(beatMs, startedAt);
@@ -191,33 +197,33 @@ export async function recoverConfirmedOrphan(task, currentUser, nowMs = serverNo
     const decision = decideOrphanTaskRecovery(fresh, nowMs);
     if (decision.mode === 'skip') return null;
     try {
-        // (1) No proof of life — fall back to the original behaviour exactly: credit up to
-        // now (clamped), pause, and tell the worker. We have nothing better to go on.
-        if (decision.mode === 'pause-now') {
-            stampRecoveredNotice(fresh, await pauseTask(fresh));
-            return null;
-        }
-        // (2) Brief reload while working — credit up to the reload instant (real continuous
-        // work, not just up to the last beat) and re-anchor. Seamless, no banner.
+        // (1) Nothing proven to split on, or only a brief silence — credit the whole stretch up to
+        // now (clamped) and re-anchor. Seamless, no banner.
         if (decision.mode === 'resume') {
             await creditAndResumeTask(fresh, decision.creditTo);
             return null;
         }
-        // (3) Large tail — credit the proven part up to the last beat and pause, then resolve
-        // the untracked gap (auto-credit or claim offer); see pauseAtBeatAndResolveGap.
+        // (2) Long silence — credit the proven part up to the last beat, resolve the untracked gap
+        // (auto-credit or claim offer), then re-anchor; see pauseAtBeatAndResolveGap.
         //
-        // …unless THIS app has been open, and showing this timer as running, the whole time. That
-        // is the offline-restart case: the app restarted with no signal, so it could neither
-        // server-confirm the orphan (this function's first line throws, and the caller retries)
-        // nor write a heartbeat (it does not own the run). Meanwhile the worker watched a running
-        // timer and kept working. When signal finally returns, the last beat is hours old and the
-        // stale-tail rule above would stop a timer that never actually stopped — leaving everything
-        // worked from here on untracked until they notice. A confirm that lands well after boot is
-        // itself the evidence: the app was alive and displaying the run for that whole stretch.
-        return await pauseAtBeatAndResolveGap(
-            fresh, currentUser, decision,
-            nowMs - appLoadTime > TIMER_HEARTBEAT_CONTINUE_MS,
-        );
+        // The re-anchor is unconditional (ADR 0027). The app cannot tell "pocketed but working" from
+        // "stopped working" — both are just a quiet heartbeat — and iOS discards a backgrounded PWA,
+        // so on a phone EVERY return to the app arrived here with a stale beat and stopped a timer
+        // the worker was still using (reported 2026-08-05). It no longer guesses: a running timer
+        // means work until the worker stops it. What may be PAID is a separate question, answered
+        // below by resolveUntrackedGap and unchanged.
+        //
+        // `silentGap` still is conditional, and on different evidence: the offline restart, where
+        // THIS app has been open and showing this timer as running the whole time. It restarted with
+        // no signal, so it could neither server-confirm the orphan (this function's first line
+        // throws, and the caller retries) nor write a heartbeat (it does not own the run) — while the
+        // worker watched a running timer and kept working. A confirm that lands well after boot is
+        // the evidence that this is what happened, and there the worker should notice nothing at all.
+        // On an ordinary cold re-open they WERE away, so the credited-gap banner must appear: those
+        // minutes are opt-OUT pay, and that banner is their only way to refuse them.
+        return await pauseAtBeatAndResolveGap(fresh, currentUser, decision, {
+            silentGap: nowMs - appLoadTime > TIMER_HEARTBEAT_CONTINUE_MS,
+        });
     } catch (e) {
         logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id });
         return null;
@@ -237,23 +243,27 @@ export async function recoverConfirmedOrphan(task, currentUser, nowMs = serverNo
 // work_sessions row for the same interval; since reports sum work_sessions, the interval would
 // double-count and the summed sessions would diverge from task.timerMinutes (the very invariant
 // pauseTask maintains). Gating on the result closes that double-credit path.
-// `keepRunning` turns this into a SILENT CONTINUATION: the proven stretch and the untracked gap are
-// credited exactly as always, but the timer is then re-anchored instead of left stopped, and no
-// "timer was recovered and stopped" notice is shown — because it was not stopped. The worker sees
-// nothing at all; the only difference to them is that the timer did not die. The gap's own
-// "Nedirbau" opt-out banner still appears: that one is about credited MONEY, not about the timer,
-// and it is the worker's only way to reject time they did not work.
-export async function pauseAtBeatAndResolveGap(task, currentUser, decision, keepRunning = false) {
-    // Skip the user-doc clear when a re-anchor follows, for the same reason creditAndResumeTask
+//
+// The close is always followed by a re-anchor (ADR 0027), so no "timer was recovered and stopped"
+// notice is shown — it was not stopped. The one exception is a re-anchor that DECLINES, handled at
+// the bottom: there the timer really is stopped and the worker must be told so.
+//
+// `silentGap` swallows the gap's own success banner, and it is a separate decision on different
+// evidence: the offline restart, where the app was open and visibly running the whole time and the
+// worker should notice nothing at all. On an ordinary cold re-open they were away, and those
+// credited minutes are opt-OUT pay whose "Nedirbau" banner is their only way to refuse time they did
+// not work. That banner is about credited MONEY, not about the timer.
+export async function pauseAtBeatAndResolveGap(task, currentUser, decision, { silentGap = false } = {}) {
+    // Skip the user-doc clear because a re-anchor follows, for the same reason creditAndResumeTask
     // does — the session must not blink out between the close and the restart.
-    const result = await pauseTask(task, { endTime: decision.creditTo, skipUserStatusUpdate: keepRunning });
-    if (result) await resolveUntrackedGap(task, currentUser, decision, keepRunning);
+    const result = await pauseTask(task, { endTime: decision.creditTo, skipUserStatusUpdate: true });
+    if (result) await resolveUntrackedGap(task, currentUser, decision, silentGap);
 
     // A null result means our pause was DEDUPED — the time-limit monitor closed this same run one
     // tick earlier and credited it up to now, which is also why it is showing the worker a forced
     // "limit reached" popup. Re-anchoring on top of that would start a second run behind that popup,
     // so the continuation is off here for the same reason the gap credit above is.
-    if (!keepRunning || !result) {
+    if (!result) {
         stampRecoveredNotice(task, result);
         return result;
     }
@@ -277,20 +287,24 @@ export async function pauseAtBeatAndResolveGap(task, currentUser, decision, keep
  * every such orphan — but that ALSO stopped the timer of a worker whose app merely reloaded
  * mid-shift, silently dropping the rest of their work until they noticed (the reported incident).
  *
- * With the per-minute heartbeat ({@link useTaskHeartbeat}) we can do better, using the last beat
- * as the "last proof of work" instant:
- *   1. No heartbeat at all (pre-heartbeat data, or a timer killed within the first beat) →
- *      preserve the original safe behaviour: pause, crediting up to now, clamped to 16h.
- *   2. Small tail (load time − last beat ≤ {@link TIMER_HEARTBEAT_CONTINUE_MS}) → a brief reload
- *      WHILE WORKING: credit up to the last beat and RE-ANCHOR the timer to keep running. Seamless,
- *      no banner — the worker never has to restart.
- *   3. Large tail → the app was genuinely closed: credit up to the last beat (never the dead gap)
- *      and pause, then AUTO-credit the untracked gap [last beat → load] as work and show a notice
- *      with a one-tap "Nedirbau" to remove it. This is an OPT-OUT, not an opt-in: offline field
- *      work with a pocketed phone (which freezes the heartbeat) is the norm, so silently requiring
- *      the worker to claim it lost real pay. Bounded to a plausible single shift (≤16h); a longer
- *      gap, or no signed-in identity / a failed auto-credit write, falls back to the opt-in claim
- *      offer so the time is never silently lost.
+ * RECOVERY NEVER LEAVES THE TIMER STOPPED (ADR 0027). It always closes the old run — which is what
+ * files the ledger row — and anchors a fresh one from this instant. The app cannot tell "pocketed but
+ * working" from "stopped working": both are just a quiet heartbeat, and since iOS discards a
+ * backgrounded PWA, every return to the app on a phone arrives here with a stale beat. Guessing
+ * "stopped" there killed the timer on EVERY re-open. So it no longer guesses — a running timer means
+ * work until the worker stops it.
+ *
+ * What may be CREDITED is a separate question, and the per-minute heartbeat ({@link useTaskHeartbeat})
+ * is what answers it, using the last beat as the "last proof of work" instant:
+ *   1. No heartbeat at all (pre-heartbeat data, or a timer killed within the first beat), or a small
+ *      tail (load time − last beat ≤ {@link TIMER_HEARTBEAT_CONTINUE_MS}) → nothing to split on, or a
+ *      brief reload while working: credit the whole stretch up to now, clamped to 16h. No banner.
+ *   2. Large tail → credit up to the last beat (never blindly the dead gap), then AUTO-credit the
+ *      untracked gap [last beat → load] as work and show a notice with a one-tap "Nedirbau" to remove
+ *      it. This is an OPT-OUT, not an opt-in: offline field work with a pocketed phone (which freezes
+ *      the heartbeat) is the norm, so silently requiring the worker to claim it lost real pay.
+ *      Bounded to a plausible single shift; a longer gap, no signed-in identity, or a failed
+ *      auto-credit write falls back to the opt-in claim offer so the time is never silently lost.
  *
  * Each task is handled at most once per app session — after a SERVER confirmation that the orphan
  * is real (confirmTaskOrphanOnServer). A failed confirmation (offline boot) unlatches the task so

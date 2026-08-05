@@ -649,17 +649,24 @@ describe('revisioned timer transition plans', () => {
                 // refuses to beat it and it looks abandoned a minute later.
                 expect(typeof taskWrite.timerOwnerInstance).toBe('string');
             } else {
-                // GENUINELY CLOSED: the app was gone for longer than a skipped beat. The proven
-                // stretch and the plausible gap are still credited, but the timer comes back
-                // PAUSED — exactly as the legacy path does. Re-anchoring every orphan
-                // unconditionally is how an unattended timer runs away.
-                expect(plan.resumed).toBe(false);
-                expect(active).toMatchObject({ revision: 4, status: 'idle', run: null });
+                // AWAY LONGER THAN A SKIPPED BEAT, but the absence is still one plausible stretch
+                // of work, so it is auto-credited — as its own gap row this time, because the app
+                // really was gone and only the credited part is proven. The timer nonetheless
+                // SURVIVES: paying for the absence and stopping the clock over it are contradictory
+                // answers about the same minutes, and on a phone (where a backgrounded PWA is
+                // discarded within minutes) the stopping one fired on every single re-open.
+                expect(plan.resumed).toBe(true);
+                expect(active).toMatchObject({
+                    revision: 4,
+                    status: 'active',
+                    run: { runId: `run-after-recovery-${minutes}`, startedAt: recoveredAt },
+                });
                 expect(taskWrite).toMatchObject({
-                    timerStatus: 'paused',
-                    timerStartedAt: null,
+                    timerStatus: 'running',
+                    timerStartedAt: recoveredAt,
                     timerMinutes: minutes,
                 });
+                expect(typeof taskWrite.timerOwnerInstance).toBe('string');
                 expect(plan.recoveredGap).toMatchObject({
                     sessionId: 'sess_gap_run_run-before-crash',
                     gapMinutes: minutes,
@@ -710,8 +717,10 @@ describe('revisioned timer transition plans', () => {
         expect(plan.creditedMinutes).toBe(2);
         expect(plan.recoveredGap).toBeNull();
         expect(plan.writes.some((w) => w.path.includes('sess_gap_run_'))).toBe(false);
-        // …and a run abandoned for three days comes back stopped.
-        expect(plan.resumed).toBe(false);
+        // The timer itself still comes back running — that is the worker's to stop (ADR 0027) — but
+        // the weekend buys them nothing. Continuing and paying are separate questions.
+        expect(plan.resumed).toBe(true);
+        expect(plan.refusedGap).not.toBeNull();
     });
 
     it('caps a split-heartbeat recovery run to one MAX_SESSION_MINUTES budget (R-03)', () => {
@@ -1684,11 +1693,14 @@ describe('an overnight gap is a forgotten timer, not silent work', () => {
         expect(plan.creditedMinutes).toBeLessThan(1);
     });
 
-    it('still comes back PAUSED — an unattended timer must never re-anchor itself', () => {
+    it('comes back RUNNING but unpaid — the night buys nothing, the timer is still the worker\'s', () => {
+        // ADR 0027: the app no longer decides that a quiet heartbeat means "stopped working" — that
+        // guess is what killed a live timer on every phone re-open. It decides what to PAY, and it
+        // pays nothing for the night (asserted above). The worker stops the timer themselves.
         const plan = overnightPlan();
-        expect(plan.resumed).toBe(false);
+        expect(plan.resumed).toBe(true);
         expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
-            .toMatchObject({ status: 'idle', run: null });
+            .toMatchObject({ status: 'active', run: { runId: 'run-after-overnight', startedAt: RECOVERED } });
     });
 
     it('reports the refused interval so the worker can still CLAIM it deliberately', () => {
@@ -1717,5 +1729,95 @@ describe('an overnight gap is a forgotten timer, not silent work', () => {
         expect(plan.recoveredGap).toMatchObject({ sessionId: 'sess_gap_run_run-shift' });
         expect(Math.round(plan.recoveredGap.gapMinutes)).toBe(40);
         expect(plan.refusedGap).toBeNull();
+    });
+});
+
+// The iPhone report (2026-08-05): "I start work, the time runs. I open the app again later to look
+// at something, and from that second open the time is stopped — I always have to press start again."
+//
+// iOS discards a backgrounded PWA within minutes, so every return to the app is a COLD BOOT, and the
+// heartbeat only runs in the foreground — so its last beat is always older than the three-minute
+// reload window. Recovery therefore classified every ordinary re-open as "app genuinely closed",
+// credited the absence as work, and stopped the timer in the same breath. The credit and the stop
+// are contradictory answers about the same minutes; these lock the credit decision as the one that
+// governs, and lock the refusals that must still stop a timer.
+describe('returning to the app must not stop a timer whose absence we just paid for', () => {
+    const recoverAfter = ({ start, beat, back, timerMinutes = 0 }) => planTaskRecover({
+        task: {
+            ...baseTask,
+            timerStatus: 'running',
+            timerStartedAt: start,
+            timerLastHeartbeat: beat,
+            timerMinutes,
+        },
+        userId,
+        userData: idleUser,
+        activeRecord: {
+            userId, revision: 5, status: 'active',
+            run: { runId: 'run-phone', type: 'task', taskId: 'task-a', taskTitle: 'Task A', startedAt: start, revision: 5 },
+        },
+        commandId: 'cmd-recover-phone',
+        runId: 'run-after-phone',
+        issuedAt: back,
+        recoveredAt: back,
+    });
+
+    it('keeps the timer running after a pocketed-phone absence, and credits it', () => {
+        // 09:00 Vilnius start, foreground for 5 minutes (beats), phone away 40 minutes, app re-opened.
+        const plan = recoverAfter({
+            start: '2026-07-27T06:00:00.000Z',
+            beat: '2026-07-27T06:05:00.000Z',
+            back: '2026-07-27T06:45:00.000Z',
+        });
+
+        expect(plan.resumed).toBe(true);
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'active', run: { startedAt: '2026-07-27T06:45:00.000Z' } });
+        const taskWrite = plan.writes.find((w) => w.path === 'tasks/task-a').data;
+        expect(taskWrite).toMatchObject({
+            timerStatus: 'running',
+            timerStartedAt: '2026-07-27T06:45:00.000Z',
+        });
+        // The whole absence is paid for — 5 proven + 40 untracked — so the worker is no worse off
+        // than when they had to press start again, they simply no longer have to.
+        expect(Math.round(plan.creditedMinutes)).toBe(45);
+        expect(Math.round(plan.recoveredGap.gapMinutes)).toBe(40);
+        // The re-anchored run must be claimed or useTaskHeartbeat refuses to beat it and it reads
+        // as abandoned a minute later — i.e. the bug would return on the NEXT re-open.
+        expect(typeof taskWrite.timerOwnerInstance).toBe('string');
+    });
+
+    it('keeps running but pays nothing when the gap is too long to be one stretch of work', () => {
+        // Away for 5 hours — past MAX_UNTRACKED_GAP_MINUTES. The timer is still the worker's to stop,
+        // but those hours are not auto-credited: they become the manager's decision (ADR 0025).
+        const plan = recoverAfter({
+            start: '2026-07-27T06:00:00.000Z',
+            beat: '2026-07-27T06:05:00.000Z',
+            back: '2026-07-27T11:05:00.000Z',
+        });
+
+        expect(plan.resumed).toBe(true);
+        expect(plan.writes.find((w) => w.path === 'tasks/task-a').data)
+            .toMatchObject({ timerStatus: 'running', timerStartedAt: '2026-07-27T11:05:00.000Z' });
+        expect(plan.recoveredGap).toBeNull();
+        expect(plan.refusedGap).not.toBeNull();
+        // Only the 5 heartbeat-proven minutes reach the counter — not the 300 it was away.
+        expect(Math.round(plan.creditedMinutes)).toBe(5);
+    });
+
+    it('never credits more than one 16h budget across the proven stretch and the gap (R-03)', () => {
+        // Proven 15h, then a 4h absence the gap rule admits on its own. The single-run budget still
+        // caps the pair at 960 minutes — continuing the timer must not become a way around the
+        // ceiling, since a fresh run starts its own budget from the recovery instant.
+        const start = '2026-07-27T02:00:00.000Z';   // 05:00 Vilnius — start of the work day
+        const startMs = new Date(start).getTime();
+        const plan = recoverAfter({
+            start,
+            beat: new Date(startMs + 15 * 60 * 60000).toISOString(),
+            back: new Date(startMs + 19 * 60 * 60000).toISOString(),
+        });
+
+        expect(plan.creditedMinutes).toBe(960);
+        expect(plan.writes.find((w) => w.path === 'tasks/task-a').data.timerMinutes).toBe(960);
     });
 });

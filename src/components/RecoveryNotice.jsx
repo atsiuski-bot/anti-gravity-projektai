@@ -227,8 +227,8 @@ export default function RecoveryNotice() {
                                 Užskaitytas neužfiksuotas darbo laikas
                             </h2>
                             <p className="mt-1 text-caption text-ink-muted">
-                                Kol nebuvo ryšio arba programa buvo užverta, laikmatis sustojo. Šį laiką
-                                užskaitėme automatiškai. Jei tuo metu nedirbote — pašalinkite.
+                                Kol nebuvo ryšio arba programa buvo užverta, laikas nebuvo fiksuojamas.
+                                Šį laiką užskaitėme automatiškai. Jei tuo metu nedirbote — pašalinkite.
                             </p>
 
                             <ul className="mt-2 space-y-2">

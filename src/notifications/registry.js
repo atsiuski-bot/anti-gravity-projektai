@@ -318,12 +318,12 @@ export const NOTIFICATIONS = {
             };
         },
     },
-    // System → worker: a running TASK timer whose per-minute heartbeat has gone stale (the app was
-    // backgrounded / killed / lost signal for a while). A GENTLE, once-per-run check that the worker
-    // is still on it — so a timer they forgot to stop, OR one the OS froze while they kept working, is
-    // caught in minutes instead of surfacing days later as a cold "Neaktyvus" band. Deliberately
-    // 'info' (calm, non-sticky): a worker who is still working simply ignores it. Fired by the
-    // scheduled notifyStaleRunningTimers net (functions/index.js); the tap deep-links to the timer.
+    // RETIRED (ADR 0027) — nothing produces this type any more. It asked a running timer's owner
+    // whether they were still on it, because a stale heartbeat could mean either "pocketed but
+    // working" or "forgot to stop". The app now answers that by policy instead of asking: a running
+    // timer means work until the worker stops it. The entry stays so notifications already sitting in
+    // workers' bell history keep rendering (and so the server-mirror lockstep test stays honest);
+    // delete it only once those have aged out.
     timer_running_check: {
         category: 'info',
         sound: 'info',

@@ -1,4 +1,4 @@
-# ADR 0027 — The work day (05:00→05:00), not the calendar day, is the filing unit for work time
+# ADR 0028 — The work day (05:00→05:00), not the calendar day, is the filing unit for work time
 
 Status: Accepted · Date: 2026-08-05
 
