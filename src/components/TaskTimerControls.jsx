@@ -625,9 +625,16 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             const start = task.timerStartedAt ? new Date(task.timerStartedAt) : null;
             const now = getLithuanianNow();
 
+            // Does this finish close a LIVE run? Only when nothing else is running. A break / call /
+            // quick-work always pauses the task first, so a 'running' timerStatus underneath one of
+            // them is a stale remnant — crediting minutes from its timerStartedAt would pay the
+            // break's stretch twice. This mirrors planTaskEnd's endsTheLiveRun: finishing while
+            // another activity ticks is bookkeeping only, and must not touch the live session.
+            const closesLiveRun = isRunning && !!start && !isSecondarySessionActive;
+
             // 1. If running, calculate elapsed (clamped like the pause path, so finishing
             // a task whose timer was orphaned across a crash cannot credit ghost hours).
-            if (isRunning && start) {
+            if (closesLiveRun) {
                 finalTimerMinutes += clampSessionMinutes((now - start) / (1000 * 60));
             }
 
@@ -669,7 +676,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             let sessionDocRef = null;
 
             // 3. Run task update + user status update in PARALLEL, work session log fire-and-forget
-            if (isRunning && start) {
+            if (closesLiveRun) {
                 const elapsedMinutes = clampSessionMinutes((now - start) / (1000 * 60));
                 if (elapsedMinutes > 0.1) {
                     // Fire and forget work session log
@@ -751,13 +758,19 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
             if (task.assignedUserId === currentUser.uid) {
                 // Determine if this task was the user's active one based on stale closure
-                const wasRunning = isRunning && start;
+                const wasRunning = closesLiveRun;
                 const wasActiveSession = userData?.activeSession?.taskId === task.id;
                 const wasWorkStatusActive = userData?.workStatus?.activeTaskId === task.id;
 
                 let shouldClearUserSession = false;
 
-                if (wasRunning || wasActiveSession || wasWorkStatusActive) {
+                // A live break/call/quick-work owns activeSession right now. Clearing it here would
+                // silently END that activity — the screen colour drops, its clock stops, and the
+                // worker loses the stretch they are still in. A stale workStatus.activeTaskId
+                // pointing at THIS task is exactly the trap: it looks like "our" session to the
+                // check below. So while something else is live, this finish touches nothing but the
+                // task document.
+                if (!isSecondarySessionActive && (wasRunning || wasActiveSession || wasWorkStatusActive)) {
                     // Fetch real-time user doc to prevent race condition
                     // where user actively started another task before finish completed
                     try {
@@ -927,30 +940,34 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 )}
 
                 {/* Užbaigti — the irreversible action: deliberately quieter and narrower than the
-                    primary control, and gated by a confirm dialog (DESIGN_SYSTEM §8). */}
+                    primary control, and gated by a confirm dialog (DESIGN_SYSTEM §8).
+                    Deliberately NOT disabled by a live break/call/quick-work: handing in a job that
+                    was worked and paused earlier is pure bookkeeping, not a session transition, so
+                    it must not require stopping whatever is running now (planTaskEnd leaves the
+                    canonical record alone in that case). Blocking it forced the worker to cut their
+                    break — or their other timer — just to close a finished task. */}
                 <Button
                     variant="secondary"
                     icon={Square}
                     onClick={openFinish}
-                    disabled={isSecondarySessionActive}
                     className="flex-1 whitespace-nowrap text-ink-muted"
                 >
                     Užbaigti
                 </Button>
             </div>
 
-            {/* Why the whole row above is dead. The reason used to live ONLY in `title=`, which is
-                unreachable for the two audiences that need it most: a phone has no hover, and a
-                disabled button is not focusable, so assistive tech never reaches the tooltip either.
-                A worker on a break therefore saw three greyed-out controls and no explanation. One
-                shared line — all three buttons are disabled by the same cause. */}
+            {/* Why the START/PAUSE controls above are dead. The reason used to live ONLY in `title=`,
+                which is unreachable for the two audiences that need it most: a phone has no hover,
+                and a disabled button is not focusable, so assistive tech never reaches the tooltip
+                either. A worker on a break therefore saw greyed-out controls and no explanation.
+                "Užbaigti" stays enabled, so the line names what is blocked. */}
             {isSecondarySessionActive && (
                 <div
                     role="status"
                     className="mt-2 flex items-center gap-1.5 text-caption font-medium text-ink-muted"
                 >
                     <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
-                    {getInterruptionReason(activeSessionType)}
+                    {getInterruptionReason(activeSessionType)} — užduotį užbaigti vis tiek galite.
                 </div>
             )}
 
