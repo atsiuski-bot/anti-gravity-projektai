@@ -191,7 +191,7 @@ export default function ManagerView() {
             seen.set(id, formatDisplayName(fullName) || '—');
         }
         return [...seen.entries()]
-            .map(([value, label]) => ({ value, label }))
+            .map(([value, label]) => ({ value, label, userId: value }))
             .sort((a, b) => a.label.localeCompare(b.label, 'lt'));
     }, [tasks, users]);
 
