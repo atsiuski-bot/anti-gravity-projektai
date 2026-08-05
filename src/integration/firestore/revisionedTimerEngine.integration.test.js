@@ -1003,11 +1003,14 @@ describeEmulator('revisioned offline timer engine', () => {
         });
     });
 
-    // A 2h silence is NOT a reload the worker survived — it is a genuinely abandoned run. Recovery
-    // credits the proven stretch plus the plausible untracked gap, then comes back PAUSED, exactly
-    // as the legacy path does. Re-anchoring it instead would leave an unattended timer running on a
-    // device nobody is holding, which is the runaway the 16h ceiling exists to bound.
-    it('recovers a killed PWA by crediting the gap and coming back PAUSED in one atomic transition', async () => {
+    // The phone shape (reported 2026-08-05): iOS discards a backgrounded PWA, so the worker's
+    // return is a cold boot and the foreground-only heartbeat is 2h stale. The absence is still one
+    // plausible stretch of the same work day, so it is credited as work — and the timer therefore
+    // has to survive it, because paying for the minutes and stopping the clock over them are
+    // contradictory answers about the same absence. This also proves the combination the rules had
+    // never seen: a recovered-gap ledger row (isManualSession + isRecoveredGap) written in the same
+    // batch that leaves the session ACTIVE.
+    it('recovers a killed PWA by crediting the gap and STAYING running in one atomic transition', async () => {
         const db = workerDb();
         const startPlan = planTaskStart({
             task: task('task-a'),
@@ -1056,15 +1059,17 @@ describeEmulator('revisioned offline timer engine', () => {
             adminRead('work_sessions/sess_gap_run_run-before-process-death'),
         ]);
         expect(activeAfter.data()).toMatchObject({
-            status: 'idle',
+            status: 'active',
             revision: 2,
-            run: null,
+            run: { runId: 'run-after-process-death', startedAt: recoveredAt },
         });
         expect(taskAfter.data()).toMatchObject({
-            timerStatus: 'paused',
-            timerStartedAt: null,
+            timerStatus: 'running',
+            timerStartedAt: recoveredAt,
             timerMinutes: 120,
         });
+        expect(taskAfter.data().timerOwnerInstance, 'an unowned re-anchored run stops being beaten')
+            .toBeTruthy();
         expect(provenSession.data()).toMatchObject({
             runId: 'run-before-process-death',
             durationMinutes: 1,
@@ -1074,6 +1079,75 @@ describeEmulator('revisioned offline timer engine', () => {
             durationMinutes: 119,
             isRecoveredGap: true,
         });
+    });
+
+    // The other side of that decision, and the one that must never regress: CONTINUING is not PAYING.
+    // An overnight orphan re-anchors like any other — the worker is the only one who stops a timer —
+    // but the night itself buys nothing, so the batch must carry no gap row at all.
+    it('re-anchors an overnight orphan WITHOUT crediting the night, in one atomic transition', async () => {
+        const db = workerDb();
+        const startPlan = planTaskStart({
+            task: task('task-a'),
+            userId: USER_ID,
+            userData: userData(),
+            activeRecord: null,
+            commandId: 'cmd-overnight-start',
+            runId: 'run-before-night',
+            issuedAt: '2026-07-09T19:00:00.000Z',   // 22:00 Vilnius
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startPlan));
+
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'tasks', 'task-a'), {
+                timerLastHeartbeat: '2026-07-09T19:01:00.000Z',
+            }, { merge: true });
+        });
+
+        const [active, runningTask] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+        ]);
+        const recoveredAt = '2026-07-10T05:30:00.000Z';  // 08:30 Vilnius, next morning
+        const recoveryPlan = planTaskRecover({
+            task: { id: runningTask.id, ...runningTask.data() },
+            userId: USER_ID,
+            userData: userData({
+                type: 'task',
+                taskId: 'task-a',
+                runId: 'run-before-night',
+                startTime: '2026-07-09T19:00:00.000Z',
+            }),
+            activeRecord: active.data(),
+            commandId: 'cmd-recover-night',
+            runId: 'run-after-night',
+            issuedAt: recoveredAt,
+            recoveredAt,
+        });
+
+        await assertSucceeds(applyTimerTransitionPlan(db, recoveryPlan));
+
+        const [activeAfter, taskAfter, provenSession, gap] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+            adminRead('work_sessions/sess_run_run-before-night'),
+            adminRead('work_sessions/sess_gap_run_run-before-night'),
+        ]);
+        expect(activeAfter.data()).toMatchObject({
+            status: 'active',
+            revision: 2,
+            run: { runId: 'run-after-night', startedAt: recoveredAt },
+        });
+        expect(taskAfter.data()).toMatchObject({
+            timerStatus: 'running',
+            timerStartedAt: recoveredAt,
+            timerMinutes: 1,               // only the heartbeat-proven minute; the night is not work
+        });
+        expect(provenSession.data()).toMatchObject({
+            runId: 'run-before-night',
+            durationMinutes: 1,
+        });
+        expect(gap.exists(), 'a night must never be auto-credited as one stretch of work')
+            .toBe(false);
     });
 
     // The other half of the same branch: an ordinary mid-shift reload (PWA update, tab eviction)

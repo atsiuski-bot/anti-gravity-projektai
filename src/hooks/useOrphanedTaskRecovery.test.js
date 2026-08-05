@@ -66,9 +66,12 @@ describe('decideOrphanTaskRecovery — which timers are orphans', () => {
 });
 
 describe('decideOrphanTaskRecovery — credit-instant policy', () => {
-    it('no heartbeat → pause-now (credit up to now, downstream-clamped)', () => {
+    it('no heartbeat → resume, crediting the whole stretch up to now (downstream-clamped)', () => {
+        // Nothing proven to split the run on, so there is no gap to reason about: the stretch is
+        // credited whole and the run continues, exactly as a brief reload does. Same outcome, so the
+        // same mode — a separate 'pause-now' mode would now be a name that no longer pauses.
         const d = decideOrphanTaskRecovery({ timerStartedAt: iso(LOAD - 60 * 60 * 1000) }, LOAD);
-        expect(d.mode).toBe('pause-now');
+        expect(d).toEqual({ mode: 'resume', creditTo: LOAD });
     });
 
     it('brief reload (tail within window) → resume, crediting up to the RELOAD INSTANT not the beat', () => {
@@ -356,9 +359,9 @@ describe('pauseAtBeatAndResolveGap — the untracked gap is credited only when O
         // Our pause credited up to the last beat, so the [beat → load] gap is auto-credited as its
         // own recovered-gap session.
         expect(pauseTask).toHaveBeenCalledTimes(1);
-        // skipUserStatusUpdate:false — this is the STOPPING path, so pauseTask's own clear of the
-        // live session is exactly what we want (see the silent-continuation tests below).
-        expect(pauseTask).toHaveBeenCalledWith(task, { endTime: decision.creditTo, skipUserStatusUpdate: false });
+        // skipUserStatusUpdate:true — a re-anchor always follows now, so the live session must not
+        // blink out between the close and the restart.
+        expect(pauseTask).toHaveBeenCalledWith(task, { endTime: decision.creditTo, skipUserStatusUpdate: true });
         expect(claimRecoveredGap).toHaveBeenCalledTimes(1);
     });
 
@@ -380,9 +383,9 @@ describe('pauseAtBeatAndResolveGap — the untracked gap is credited only when O
 
 // The offline-restart case. The app restarted with no signal, so it could neither server-confirm the
 // orphan nor beat it (it does not own the run) — while the worker watched a running timer and kept
-// working. When signal returns hours later the stale-tail rule would stop a timer that never
-// actually stopped, leaving everything worked from then on untracked until someone notices.
-// keepRunning re-anchors instead, and says nothing: from the worker's side the timer did not die.
+// working. Every recovery re-anchors now, so what is special here is the SILENCE: the worker was
+// looking at a running timer the whole time, so even the credited-gap banner would be an
+// interruption reporting something they never experienced.
 describe('pauseAtBeatAndResolveGap — silent continuation after an offline restart', () => {
     const task = { id: 't1', title: 'Garso komplektu patikrinimas', assignedUserId: 'worker-1' };
     const worker = { uid: 'worker-1', displayName: 'Giedrius' };
@@ -401,7 +404,7 @@ describe('pauseAtBeatAndResolveGap — silent continuation after an offline rest
     });
 
     it('re-anchors the timer and shows NO "recovered and stopped" notice', async () => {
-        await pauseAtBeatAndResolveGap(task, worker, decision, true);
+        await pauseAtBeatAndResolveGap(task, worker, decision, { silentGap: true });
 
         // The proven stretch and the gap are credited exactly as on the stopping path…
         expect(pauseTask).toHaveBeenCalledWith(task, { endTime: decision.creditTo, skipUserStatusUpdate: true });
@@ -422,7 +425,7 @@ describe('pauseAtBeatAndResolveGap — silent continuation after an offline rest
         // genuinely un-credited, so the worker must be offered the claim and a durable trace left.
         claimRecoveredGap.mockResolvedValue({ ok: false });
 
-        await pauseAtBeatAndResolveGap(task, worker, decision, true);
+        await pauseAtBeatAndResolveGap(task, worker, decision, { silentGap: true });
 
         expect(addRecoveryNotice.mock.calls.map(([, n]) => n.kind)).toContain('task-gap');
         expect(logError).toHaveBeenCalled();
@@ -432,7 +435,7 @@ describe('pauseAtBeatAndResolveGap — silent continuation after an offline rest
         // startTask fails CLOSED (returns false, never throws) — e.g. a live break superseded the run.
         startTask.mockResolvedValue(false);
 
-        await pauseAtBeatAndResolveGap(task, worker, decision, true);
+        await pauseAtBeatAndResolveGap(task, worker, decision, { silentGap: true });
 
         // The skipped clear must happen after all, or a stopped timer keeps a "still working" banner.
         expect(clearLiveSessionAfterFailedResume).toHaveBeenCalledWith(task);
@@ -442,7 +445,7 @@ describe('pauseAtBeatAndResolveGap — silent continuation after an offline rest
     it('does not re-anchor when our pause was pre-empted (deduped null result)', async () => {
         pauseTask.mockResolvedValue(null);
 
-        await pauseAtBeatAndResolveGap(task, worker, decision, true);
+        await pauseAtBeatAndResolveGap(task, worker, decision, { silentGap: true });
 
         // Another closer owns this stretch; restarting on top of it would re-anchor a run we did
         // not close and invent a second live timer.
@@ -550,6 +553,7 @@ describe('recoverConfirmedOrphan — confirm → re-decide on the fresh doc → 
         getDocFromServer.mockResolvedValue(serverDoc(fresh));
         pauseTask.mockResolvedValue({ creditedMinutes: 30, rawMinutes: 30, wasCapped: false });
         claimRecoveredGap.mockResolvedValue({ ok: true, id: 'sess-gap' });
+        startTask.mockResolvedValue(true);
         // The stale trigger copy carries an OLD minutes base — it must not reach pauseTask.
         const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, timerMinutes: 10, assignedUserId: 'worker-1' };
 
@@ -558,8 +562,60 @@ describe('recoverConfirmedOrphan — confirm → re-decide on the fresh doc → 
         expect(pauseTask).toHaveBeenCalledTimes(1);
         const [pausedTask, opts] = pauseTask.mock.calls[0];
         expect(pausedTask.timerMinutes).toBe(55); // the SERVER doc, not the stale snapshot copy
-        expect(opts).toEqual({ endTime: beat, skipUserStatusUpdate: false });
+        // skipUserStatusUpdate:true — this 30-minute absence is auto-credited as work, so the run
+        // is re-anchored right after and the live session must not blink out in between.
+        expect(opts).toEqual({ endTime: beat, skipUserStatusUpdate: true });
         expect(claimRecoveredGap).toHaveBeenCalledTimes(1); // the [beat → LOAD] gap auto-credit
+    });
+
+    // The iPhone report (2026-08-05), on the legacy engine: a backgrounded PWA is discarded by iOS,
+    // so returning to the app is a cold boot whose foreground-only heartbeat is always stale. The
+    // absence is auto-credited as work — and the timer must not be stopped over the same minutes we
+    // just paid for, or the worker has to press start again on every single re-open.
+    it('re-anchors the timer when the absence is auto-credited as work', async () => {
+        const beat = LOAD - 30 * 60 * 1000;
+        getDocFromServer.mockResolvedValue(serverDoc({
+            timerStatus: 'running', timerStartedAt: START, timerLastHeartbeat: iso(beat),
+            assignedUserId: 'worker-1', title: 'X', timerOwnerInstance: OURS,
+        }));
+        pauseTask.mockResolvedValue({ creditedMinutes: 30, rawMinutes: 30, wasCapped: false });
+        claimRecoveredGap.mockResolvedValue({ ok: true, id: 'sess-gap' });
+        startTask.mockResolvedValue(true);
+        const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, assignedUserId: 'worker-1' };
+
+        await recoverConfirmedOrphan(stale, worker, LOAD);
+
+        expect(startTask).toHaveBeenCalledTimes(1);
+        // No "recovered and stopped" banner — it was not stopped…
+        expect(addRecoveryNotice.mock.calls.map(([, n]) => n.kind)).not.toContain('task');
+        // …but the credited minutes DO get their opt-out banner. Silence is for the offline restart
+        // alone, where the worker watched the timer the whole time; here they were away, and this
+        // banner is their only way to refuse pay for an absence they did not work.
+        expect(addRecoveryNotice.mock.calls.map(([, n]) => n.kind)).toContain('task-gap-credited');
+    });
+
+    // The separation the whole policy rests on: CONTINUING is not PAYING. A refused absence still
+    // re-anchors the timer — the worker is the only one who stops it — but not one of its minutes is
+    // credited without a decision.
+    it('re-anchors the timer but pays nothing when the absence is too long to be credited', async () => {
+        // 6h away — past MAX_UNTRACKED_GAP_MINUTES, so the gap falls back to the opt-IN claim.
+        const beat = LOAD - 6 * 60 * 60 * 1000;
+        getDocFromServer.mockResolvedValue(serverDoc({
+            timerStatus: 'running', timerStartedAt: START, timerLastHeartbeat: iso(beat),
+            assignedUserId: 'worker-1', title: 'X', timerOwnerInstance: OURS,
+        }));
+        pauseTask.mockResolvedValue({ creditedMinutes: 120, rawMinutes: 120, wasCapped: false });
+        startTask.mockResolvedValue(true);
+        const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, assignedUserId: 'worker-1' };
+
+        await recoverConfirmedOrphan(stale, worker, LOAD);
+
+        // Closed at the last proof of life, re-anchored from there — the session never blinks out.
+        expect(pauseTask.mock.calls[0][1]).toEqual({ endTime: beat, skipUserStatusUpdate: true });
+        expect(startTask).toHaveBeenCalledTimes(1);
+        // …and the six unproven hours are NOT auto-credited: they go to the opt-IN claim instead.
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice.mock.calls.map(([, n]) => n.kind)).toContain('task-gap');
     });
 
     it('dispatches resume (credit + re-anchor) for a brief-reload orphan', async () => {
