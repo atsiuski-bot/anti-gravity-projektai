@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { shiftRange, resolvePresetRange, PERIOD_PRESETS } from './periodPresets';
-import { getLithuanianDateString } from '../../utils/timeUtils';
+import { getWorkDayString } from '../../utils/timeUtils';
 
 // ---------------------------------------------------------------------------
 // shiftRange — pure calendar arithmetic for period navigation.
 //
 // Strategy: use PAST dates for most cases so the "end capped at today" branch
 // never fires and expected values are fully deterministic. Future dates are
-// used only for the cap tests (where we call getLithuanianDateString() in the
+// used only for the cap tests (where we call getWorkDayString() in the
 // assertion to stay in sync with the test runner's wall clock).
 // ---------------------------------------------------------------------------
 
@@ -36,7 +36,7 @@ describe('shiftRange — week', () => {
     });
 
     it('caps end at today when forward shift would exceed today', () => {
-        const today = getLithuanianDateString();
+        const today = getWorkDayString();
         // Shifting a far-future week forward — end always capped
         const result = shiftRange('week', { start: '2030-01-06', end: '2030-01-12' }, 1);
         expect(result.start).toBe('2030-01-13');
@@ -78,7 +78,7 @@ describe('shiftRange — month', () => {
     });
 
     it('caps end at today when forward shift exceeds today', () => {
-        const today = getLithuanianDateString();
+        const today = getWorkDayString();
         const result = shiftRange('month', { start: '2030-01-01', end: '2030-01-31' }, 1);
         expect(result.start).toBe('2030-02-01');
         expect(result.end).toBe(today);
@@ -126,7 +126,7 @@ describe('shiftRange — year', () => {
     });
 
     it('caps end at today when forward year exceeds today', () => {
-        const today = getLithuanianDateString();
+        const today = getWorkDayString();
         const result = shiftRange('year', { start: '2030-01-01', end: '2030-12-31' }, 1);
         expect(result.start).toBe('2031-01-01');
         expect(result.end).toBe(today);
@@ -152,7 +152,7 @@ describe('shiftRange — custom (shift by window length)', () => {
     });
 
     it('caps end at today when custom shift would exceed today', () => {
-        const today = getLithuanianDateString();
+        const today = getWorkDayString();
         const result = shiftRange('custom', { start: '2030-01-01', end: '2030-01-07' }, 1);
         expect(result.start).toBe('2030-01-08');
         expect(result.end).toBe(today);
@@ -198,7 +198,7 @@ describe('resolvePresetRange', () => {
     });
 
     it('all presets end on today', () => {
-        const today = getLithuanianDateString();
+        const today = getWorkDayString();
         for (const { id } of PERIOD_PRESETS) {
             expect(resolvePresetRange(id).end).toBe(today);
         }

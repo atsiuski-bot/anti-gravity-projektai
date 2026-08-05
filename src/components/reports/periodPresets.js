@@ -1,4 +1,4 @@
-import { getLithuanianDateString, addDaysToDateString } from '../../utils/timeUtils';
+import { getWorkDayString, addDaysToDateString } from '../../utils/timeUtils';
 
 // Period ladder shared by every report surface (team work report, calendar history, and the
 // per-member statistics drill-down): a single day (default) up through the year, plus a custom
@@ -13,10 +13,13 @@ export const PERIOD_PRESETS = [
 
 // Resolve a period preset to a from/to range. All math is pure date-string arithmetic
 // (addDaysToDateString is DST-safe), weeks are Monday-started per Lithuanian convention, and
-// every range ends "today" so the report always runs up to the current day. Pure (returns the
-// range) so every picker can share one source of truth.
+// every range ends "today" so the report always runs up to the current day. "Today" is the WORK
+// day (getWorkDayString), because the ranges are matched against the work-day `date` stamped on
+// every session row — a calendar "today" would, between midnight and 05:00, end the range on a day
+// that holds no work yet and drop the shift still in progress. Pure (returns the range) so every
+// picker can share one source of truth.
 export function resolvePresetRange(preset) {
-    const today = getLithuanianDateString();
+    const today = getWorkDayString();
     const pad = (n) => String(n).padStart(2, '0');
     const dayOfWeek = (dateStr) => {
         const [y, m, d] = dateStr.split('-').map(Number);
@@ -58,7 +61,7 @@ export function resolvePresetRange(preset) {
 // 'custom' shifts by the current window length. The returned end is capped at today so future
 // ranges are never produced.
 export function shiftRange(reportPeriod, dateRange, direction) {
-    const today = getLithuanianDateString();
+    const today = getWorkDayString();
     const pad = (n) => String(n).padStart(2, '0');
     const [sy, sm] = dateRange.start.split('-').map(Number);
     const [ey, em, ed] = dateRange.end.split('-').map(Number);

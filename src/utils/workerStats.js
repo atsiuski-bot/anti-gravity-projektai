@@ -18,6 +18,7 @@
  */
 import {
     getLithuanianDateString,
+    getWorkDayString,
     sanitizeReportMinutes,
     calculateCurrentTotalMinutes,
     parseTimeStringToMinutes,
@@ -238,7 +239,7 @@ export function computeWorkerStats(raw, window, opts = {}) {
         // first moved a task into the period of its sign-off, so re-pulling a CLOSED month after
         // the acceptance landed silently dropped the task out of it — the same report gave two
         // different answers on two days. Acceptance timing stays visible via approvalPct.
-        const day = getLithuanianDateString(t.completedAt || t.confirmedAt || t.archivedAt || t.createdAt);
+        const day = getWorkDayString(t.completedAt || t.confirmedAt || t.archivedAt || t.createdAt);
         return inWindow(day, startStr, endStr);
     });
     const completedCount = tasks.length;

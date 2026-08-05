@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, vilniusWallClockToISO, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getWorkDayString, vilniusWallClockToISO, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId } from '../utils/formatters';
 import { privateScopeConstraints, scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
@@ -82,8 +82,11 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     const [taskFilters, setTaskFilters] = useState({
         userId: 'all',
         tag: 'all',
-        startDate: getLithuanianDateString(),
-        endDate: getLithuanianDateString(),
+        // Default to the current WORK day, not the calendar day: opened at 01:00 the calendar day
+        // has turned but the work day has not, so a calendar default would open on a day with no
+        // work in it yet.
+        startDate: getWorkDayString(),
+        endDate: getWorkDayString(),
     });
 
     const [filteredTasks, setFilteredTasks] = useState([]);
@@ -394,13 +397,14 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     const groupedTasks = React.useMemo(() => {
         const groups = {};
 
-        // Helper to get the VILNIUS calendar-day key (YYYY-MM-DD). Using getLithuanianDateString
-        // (not a raw UTC split) keeps a task finished 00:00–03:00 Vilnius on the correct day, so the
-        // grouped view agrees with DailyStatistics' 03:00 work-day boundary. (Full-sweep M2.)
+        // Helper to get the WORK-day key (YYYY-MM-DD). Using getWorkDayString (not a raw UTC split,
+        // and not the calendar day) keeps a task finished 00:00–05:00 Vilnius on the day it was
+        // worked, so the grouped view agrees with DailyStatistics' work-day boundary and with the
+        // `date` stamped on that task's own sessions. (Full-sweep M2.)
         const getDateStr = (t) => {
             const dateStr = t.completedAt || t.archivedAt || t.updatedAt;
             if (!dateStr) return 'No Date';
-            return getLithuanianDateString(dateStr);
+            return getWorkDayString(dateStr);
         };
 
         filteredTasks.forEach(t => {
@@ -695,7 +699,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
                             onDrillWorker={(userId, name) => setSummaryDrillWorker({ userId, name })}
                             onShiftPeriod={shiftPeriod}
-                            atToday={dateRange.end >= getLithuanianDateString()}
+                            atToday={dateRange.end >= getWorkDayString()}
                         />
                     )}
 
@@ -709,7 +713,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             users={users}
                             scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
                             onShiftPeriod={shiftPeriod}
-                            atToday={dateRange.end >= getLithuanianDateString()}
+                            atToday={dateRange.end >= getWorkDayString()}
                         />
                     )}
 

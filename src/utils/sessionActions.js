@@ -2,7 +2,7 @@ import { doc, getDoc, getDocFromServer, updateDoc, collection, addDoc, setDoc, g
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
 import { withUserLock, LOCK_MAX_HOLD_MS } from './sessionLock';
-import { getLithuanianNow, getLithuanianDateString, breakDayBaseMinutes, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
+import { getLithuanianNow, getWorkDayString, breakDayBaseMinutes, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
 import { isManagerRole, formatTime } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
@@ -139,7 +139,7 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                                 startTime: userData.activeSession.startTime,
                                 endTime: interruptNow.toISOString(),
                                 durationMinutes: partialDuration,
-                                date: getLithuanianDateString(interruptNow),
+                                date: getWorkDayString(interruptNow),
                                 createdAt: new Date().toISOString(),
                                 isQuickWork: partialType === 'quickWork',
                                 isSystemTask: partialType === 'call',
@@ -240,7 +240,7 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                 // Rebase BEFORE re-dating (breakDayBaseMinutes): stamping today onto yesterday's
                 // total is exactly how this counter used to walk across the day boundary.
                 dailyAccumulatedMinutes: breakDayBaseMinutes(userData?.breakState, nowMoment) + bankedBreakMinutes,
-                lastDate: getLithuanianDateString(nowMoment),
+                lastDate: getWorkDayString(nowMoment),
                 resumableTaskIds: resumableTaskIds
             };
         } else if (type === 'call') {
@@ -271,7 +271,7 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
             updates['breakState.dailyAccumulatedMinutes'] = breakDayBaseMinutes(userData?.breakState, nowMoment) + bankedBreakMinutes;
             // The total and the day it belongs to are one pair — writing the number alone would
             // leave it dated to whenever the break started, which may be yesterday.
-            updates['breakState.lastDate'] = getLithuanianDateString(nowMoment);
+            updates['breakState.lastDate'] = getWorkDayString(nowMoment);
         }
 
         // The task pause must COMMIT BEFORE the new session does — it is a precondition, not a
@@ -380,7 +380,7 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         // SUBTRACT from the running break total. pauseTask already guards this way; endSession
         // did not. (Also caps an implausibly large value, matching the timer paths.)
         const durationMinutes = clampSessionMinutes((endMoment - start) / (1000 * 60));
-        const sessionDate = getLithuanianDateString(endMoment);
+        const sessionDate = getWorkDayString(endMoment);
 
         // 1. Prepare User State Update (CRITICAL PATH - must be fast)
         const updates = {};
@@ -425,8 +425,9 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         // Apply legacy clears for the session that just ended
         if (session.type === 'break') {
             updates['breakState.isTakingBreak'] = false;
-            // Bucketed by the day the break ENDS — the same day `sessionDate` gives its logged row —
-            // so a break running past midnight lands wholly in the new day and re-dates the field.
+            // Bucketed by the WORK day the break ends in — the same day `sessionDate` gives its
+            // logged row — so a break running past midnight stays in the day it started and only a
+            // break crossing 05:00 re-dates the field.
             updates['breakState.dailyAccumulatedMinutes'] = breakDayBaseMinutes(userData.breakState, endMoment) + durationMinutes;
             updates['breakState.lastDate'] = sessionDate;
         } else if (session.type === 'call') {
@@ -694,7 +695,7 @@ const endLegacySession = async (userId, type, userData, endAt = null) => {
             // Accumulate minutes so daily counter is correct — rebased to the day this close is
             // credited to, and re-dated with it, so the pair never describes two different days.
             updates['breakState.dailyAccumulatedMinutes'] = breakDayBaseMinutes(userData.breakState, now) + duration;
-            updates['breakState.lastDate'] = getLithuanianDateString(now);
+            updates['breakState.lastDate'] = getWorkDayString(now);
         } else if (type === 'call') {
             updates['callState.isCalling'] = false;
         } else if (type === 'quickWork') {
@@ -727,7 +728,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
     // Ignore accidental sub-minute taps — EXCEPT calls, which always pass through the deliberate
     // end-of-call modal (classify or "Vėliau aprašysiu") and so must be logged at any length.
     if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES && session.type !== 'call') return;
-    const sessionDate = getLithuanianDateString(now);
+    const sessionDate = getWorkDayString(now);
 
     // DETERMINISTIC record id, keyed on (kind + owner + this session's start instant). Two
     // INDEPENDENT closers can finalize the SAME abandoned session: this client path (on the

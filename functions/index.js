@@ -1568,7 +1568,9 @@ async function scanDailyOverdraft(scanErrors) {
             const anchor = d.startTime || d.createdAt;
             const parsed = anchor ? new Date(anchor) : null;
             if (!parsed || Number.isNaN(parsed.getTime())) return;
-            const date = lithuanianDay(parsed);
+            // Bucket by WORK day so a night shift is one day's total, not two half-days that each
+            // slip under the ceiling — the check is about how much one PERSON-DAY holds.
+            const date = currentWorkDay(parsed);
             const key = `${d.userId}|${date}`;
             const entry = totals.get(key) || { userId: d.userId, date, minutes: 0 };
             entry.minutes += dur;
@@ -1672,10 +1674,11 @@ async function scanCreditIntegrity(scanErrors) {
     }
     const orphan = { checked: taskIds.length, ...findOrphanSessions(rows, existing) };
 
-    // Suspicious work day: pure classification, Vilnius-day bucketed (guard unparseable anchors).
+    // Suspicious work day: pure classification, WORK-day bucketed (guard unparseable anchors) — same
+    // reason as the overdraft scan: a shift split across midnight must be weighed as one day.
     const dayOf = (iso) => {
         const d = new Date(iso);
-        return Number.isNaN(d.getTime()) ? null : lithuanianDay(d);
+        return Number.isNaN(d.getTime()) ? null : currentWorkDay(d);
     };
     const suspicious = classifySuspiciousWorkDays(rows, dayOf);
 
@@ -2001,7 +2004,10 @@ async function autoStopForgottenTimers(scanErrors) {
                     startTime: new Date(startMs).toISOString(),
                     endTime: new Date(beatMs).toISOString(),
                     durationMinutes: creditedMin,
-                    date: lithuanianDay(new Date(beatMs)),
+                    // The WORK day the credited stretch ended in — the same filing rule every client
+                    // writer uses (getWorkDayString), so a night run auto-stopped at 02:00 is filed
+                    // under the day it started, not the one that has not begun.
+                    date: currentWorkDay(new Date(beatMs)),
                     createdAt: nowIso,
                     autoStopped: true,
                     ...(canonicalRun
@@ -2461,7 +2467,10 @@ async function autoCloseForgottenSessions(scanErrors) {
     const now = new Date();
     const nowIso = now.toISOString();
     const nowMs = now.getTime();
-    const date = lithuanianDay(now);
+    // Work day, not calendar day — this net writes the same work_sessions/break_sessions rows the
+    // client writes, and the two must file identically or one closer's row lands in a day window
+    // the other's does not.
+    const date = currentWorkDay(now);
     let closed = 0;
     const samples = [];
     const audits = [];

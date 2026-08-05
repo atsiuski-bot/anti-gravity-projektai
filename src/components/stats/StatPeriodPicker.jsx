@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 import DatePicker from '../ui/DatePicker';
-import { getLithuanianDateString, addDaysToDateString } from '../../utils/timeUtils';
+import { getWorkDayString, addDaysToDateString } from '../../utils/timeUtils';
 import { PRESETS, rangeForPreset } from '../../utils/statsPeriods';
 
 /**
@@ -10,7 +10,7 @@ import { PRESETS, rangeForPreset } from '../../utils/statsPeriods';
  * Controlled — emits `{ key, startStr, endStr }` through `onChange`.
  */
 export default function StatPeriodPicker({ value, onChange }) {
-    const today = getLithuanianDateString();
+    const today = getWorkDayString();
     const [customStart, setCustomStart] = useState(value?.startStr || addDaysToDateString(today, -29));
     const [customEnd, setCustomEnd] = useState(value?.endStr || today);
 

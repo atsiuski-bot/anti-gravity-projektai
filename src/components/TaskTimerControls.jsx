@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Clock, CheckCircle2, RefreshCw, AlertTriangle, WifiOff } from 'lucide-react';
 import { doc, updateDoc, setDoc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getWorkDayString, clampSessionMinutes } from '../utils/timeUtils';
 import { serverNowISO } from '../utils/serverClock';
 import { startTask, pauseTask, resumeTask, taskSessionDocId } from '../utils/taskActions';
 import { resolveCompletionStatus } from '../utils/formatters';
@@ -673,9 +673,10 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 const elapsedMinutes = clampSessionMinutes((now - start) / (1000 * 60));
                 if (elapsedMinutes > 0.1) {
                     // Fire and forget work session log
-                    // Attribute to the end date (now), consistent with the other
-                    // work_sessions writers - start-based mis-bucketed midnight-spanning work.
-                    const sessionDate = getLithuanianDateString(now);
+                    // Attribute to the WORK DAY the finish lands in, consistent with the other
+                    // work_sessions writers - start-based mis-bucketed midnight-spanning work,
+                    // and the calendar end date mis-bucketed the 00:00-05:00 night band.
+                    const sessionDate = getWorkDayString(now);
                     // Deterministic id — the SAME key pauseTask mints for this running stretch, so
                     // a finish racing the time-limit monitor's (or recovery's) pause of the same
                     // run converges on one row instead of logging the interval twice. The ref is

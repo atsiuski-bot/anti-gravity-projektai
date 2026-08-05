@@ -1,6 +1,6 @@
 import { doc, updateDoc, collection, query, where, getDocs, getDoc, getDocFromServer, addDoc, setDoc, deleteDoc, orderBy, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase';
-import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
+import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getWorkDayString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
 import { notify, categoryOf } from './notify';
@@ -276,10 +276,11 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
         // accrual above so the task total and the summed work_sessions never diverge (a recovery
         // pause that credits a sub-minute segment also logs its matching session).
         if (shouldCredit) {
-            // Attribute the session to the date the work ENDED (endMoment), matching every
-            // other work_sessions writer (sessionActions, time-correction). Using the
-            // start date previously mis-bucketed sessions that ran across midnight.
-            const sessionDate = getLithuanianDateString(endMoment);
+            // Attribute the session to the WORK DAY the work ENDED in (endMoment), matching every
+            // other work_sessions writer (sessionActions, time-correction). Using the start date
+            // previously mis-bucketed sessions that ran across midnight; using the calendar end
+            // date mis-bucketed the night band, where the work day has not turned over yet.
+            const sessionDate = getWorkDayString(endMoment);
             // Deterministic id (taskSessionDocId): a concurrent closer of this SAME running
             // stretch — a second device, the manager's force-end, the server auto-stop — lands on
             // the same doc, so the interval can never be logged twice. merge:true keeps the

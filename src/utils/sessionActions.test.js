@@ -753,13 +753,14 @@ describe('break day counter must not survive the day boundary', () => {
         expect(u['breakState.lastDate']).toBe('2026-06-24');
     });
 
-    it('buckets a break that runs PAST MIDNIGHT into the day it ends, like its logged row', async () => {
+    it('keeps a break that runs PAST MIDNIGHT in the work day it started, like its logged row', async () => {
         getLithuanianNow.mockReturnValue(new Date('2026-06-24T09:00:00.000Z'));
         const userData = {
             displayName: 'Worker',
             // 23:30 Vilnius on the 23rd → 00:10 Vilnius on the 24th (Vilnius is UTC+3 in June).
+            // The calendar day turns inside this break; the work day (05:00 boundary) does not.
             activeSession: { type: 'break', startTime: '2026-06-23T20:30:00.000Z' },
-            // Deliberately NOT 40, so "40" below can only be the credited break, never the carry.
+            // Deliberately NOT a round 40, so the sum below can only be carry + credit.
             breakState: { ...STALE, dailyAccumulatedMinutes: 555, lastDate: '2026-06-23' },
         };
 
@@ -768,10 +769,10 @@ describe('break day counter must not survive the day boundary', () => {
 
         const u = userUpdate('u1');
         const logged = setsTo('break_sessions')[0];
-        expect(logged.date, 'the logged row buckets by the END day').toBe('2026-06-24');
-        // The counter must agree with the row: the 555 min belonged to the 23rd, so the new day
-        // starts from this 40-minute break alone.
-        expect(u['breakState.dailyAccumulatedMinutes']).toBe(40);
-        expect(u['breakState.lastDate']).toBe('2026-06-24');
+        expect(logged.date, 'the logged row stays in the work day the break began in').toBe('2026-06-23');
+        // The counter must agree with the row: the 555 min belong to the SAME work day, so this
+        // 40-minute break builds on them instead of restarting the total at midnight.
+        expect(u['breakState.dailyAccumulatedMinutes']).toBe(595);
+        expect(u['breakState.lastDate']).toBe('2026-06-23');
     });
 });

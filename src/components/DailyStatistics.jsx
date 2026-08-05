@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getWorkDayString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { validateSelfReduction, reduceOwnWorkSession, validateOwnStartCorrection, correctOwnSessionStart } from '../utils/sessionEditActions';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
@@ -109,7 +109,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     );
     // The open gap-fill modal's payload: { start, end, taskOptions }, or null when closed.
     const [backdateGap, setBackdateGap] = useState(null);
-    const [selectedDate, setSelectedDate] = useState(initialDate ?? getLithuanianDateString());
+    // "Today" here is the WORK day, not the calendar day: before 05:00 the day on screen must still
+    // be the one the worker is inside, or opening the app at 01:00 lands on a day that has not begun
+    // and shows an empty log while a timer is running.
+    const [selectedDate, setSelectedDate] = useState(initialDate ?? getWorkDayString());
     const [, setLoading] = useState(false);
 
     // When a date range is supplied (the period report), the component aggregates the whole span
@@ -142,7 +145,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const [currentTime, setCurrentTime] = useState(new Date());
 
     useEffect(() => {
-        if (selectedDate !== getLithuanianDateString()) return;
+        if (selectedDate !== getWorkDayString()) return;
         const interval = setInterval(() => {
             setCurrentTime(new Date());
         }, 60000); // Update every minute
@@ -434,7 +437,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
         const cutoff = getDayStartCutoff();
-        // End the window at the NEXT calendar day's 03:00 cutoff, not "cutoff + 24h":
+        // End the window at the NEXT calendar day's work-day cutoff, not "cutoff + 24h":
         // across a DST switch a fixed +24h drifts the boundary by an hour, dropping or
         // double-counting work done in that hour. (Range-aware: closes after rangeEnd.)
         const nextDayCutoff = getNextDayCutoff();
@@ -464,16 +467,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             const finishedDate = new Date(dateStr);
 
             // BOUNDING LOGIC:
-            // 1. If finished AFTER this day's 3AM window ends -> Hide entirely
+            // 1. If finished AFTER this work day's window ends -> Hide entirely
             if (finishedDate >= nextDayCutoff) {
                 return;
             }
 
-            // 2. If finished WITHIN this day's 3AM window -> Today
+            // 2. If finished WITHIN this work day's window -> Today
             if (finishedDate >= cutoff) {
                 todayTasksList.push(t);
             }
-            // 3. If finished BEFORE this day's 3AM window -> Earlier
+            // 3. If finished BEFORE this work day's window -> Earlier
             else {
                 earlierTasksList.push(t);
             }
@@ -590,7 +593,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         const active = [];
         // A period report is about recorded work, not what is ticking right now — skip live
         // sessions in range mode. In day mode, only the current day shows live progress.
-        if (isRange || selectedDate !== getLithuanianDateString()) return active;
+        if (isRange || selectedDate !== getWorkDayString()) return active;
 
         users.filter(u => showTestUsers || !testUserIds.has(u.id)).forEach(u => {
             if (u.activeSession && u.activeSession.type === 'task') {
@@ -608,7 +611,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         startTime: u.activeSession.startTime,
                         endTime: currentTime.toISOString(),
                         durationMinutes,
-                        date: getLithuanianDateString(start),
+                        date: getWorkDayString(start),
                         isActive: true
                     });
                 }
@@ -623,7 +626,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
     const activeBreaksForToday = useMemo(() => {
         const active = [];
-        if (isRange || selectedDate !== getLithuanianDateString()) return active;
+        if (isRange || selectedDate !== getWorkDayString()) return active;
 
 
         users.filter(u => showTestUsers || !testUserIds.has(u.id)).forEach(u => {
@@ -639,7 +642,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         startTime: u.activeSession.startTime,
                         endTime: currentTime.toISOString(),
                         durationMinutes,
-                        date: getLithuanianDateString(start),
+                        date: getWorkDayString(start),
                         isActive: true
                     });
                 }
@@ -669,7 +672,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const totalBreakMinutes = allBreakSessions.reduce((acc, s) => acc + sanitizeReportMinutes(s.durationMinutes), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
-    // AND belong to the selected date's work day (3AM - 3AM)
+    // AND belong to the selected date's work day (05:00 - 05:00)
     const manualTasks = useMemo(() => {
         const cutoff = getDayStartCutoff();
         // Calendar-day next cutoff (DST-safe), not "cutoff + 24h" — see splitTasks above.
@@ -733,9 +736,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 type: 'session',
                 startTime: s.startTime,
                 endTime: s.endTime,
-                // Canonical work-day (resolves the 03:00 boundary at write time); the drill-down
+                // Canonical work-day (resolved at write time by getWorkDayString); the drill-down
                 // groups rows by this so a multi-day period report breaks into day sections.
-                date: s.date || getLithuanianDateString(s.startTime),
+                date: s.date || getWorkDayString(s.startTime),
                 title: title,
                 duration: sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }),
                 // Raw stored minutes (pre-sanitize) so the editor can snapshot the true original.
@@ -774,7 +777,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 type: 'task',
                 startTime: start.toISOString(),
                 endTime: end.toISOString(),
-                date: getLithuanianDateString(end),
+                date: getWorkDayString(end),
                 title: title,
                 duration: sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }),
                 userId: resolveUserId(t),
@@ -793,7 +796,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 type: 'break',
                 startTime: brk.startTime,
                 endTime: brk.endTime,
-                date: brk.date || getLithuanianDateString(brk.startTime),
+                date: brk.date || getWorkDayString(brk.startTime),
                 title: 'Pertrauka',
                 duration: sanitizeReportMinutes(brk.durationMinutes),
                 userId: userId,
@@ -863,7 +866,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // Track distinct work/break DAYS per worker so the table can show a break-logging rate
         // (days-with-break / worked-days) — a coaching signal that turns invisible non-loggers
         // into a visible number, independent of how much time was logged.
-        const dayKey = s.startTime ? getLithuanianDateString(s.startTime) : null;
+        const dayKey = s.startTime ? getWorkDayString(s.startTime) : null;
         if (s.type === 'break') {
             acc[s.userId].breakMinutes += (s.duration || 0);
             if (dayKey) acc[s.userId].breakDays.add(dayKey);
@@ -1002,7 +1005,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             setErrorReportTarget(null);
             return;
         }
-        const day = item.date || getLithuanianDateString(item.startTime);
+        const day = item.date || getWorkDayString(item.startTime);
         const actorName = formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '';
 
         if (mode === 'start') {
@@ -1253,7 +1256,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 icon={ChevronRight}
                                 label="Kitas laikotarpis"
                                 onClick={() => onShiftPeriod(1)}
-                                disabled={rangeEnd >= getLithuanianDateString()}
+                                disabled={rangeEnd >= getWorkDayString()}
                             />
                         )}
                     </div>
@@ -1345,7 +1348,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 icon={ChevronRight}
                                 label="Kitas laikotarpis"
                                 onClick={() => onShiftPeriod(1)}
-                                disabled={rangeEnd >= getLithuanianDateString()}
+                                disabled={rangeEnd >= getWorkDayString()}
                             />
                         )}
                     </div>
@@ -1976,7 +1979,7 @@ function SessionErrorReportModal({ item, storedSession, canRequest, canEditStart
 
     const span = `${formatTime(item.startTime)} – ${formatTime(item.endTime)}`;
     const dur = formatMinutesToTimeString(item.duration);
-    const day = item.date || getLithuanianDateString(item.startTime);
+    const day = item.date || getWorkDayString(item.startTime);
 
     // The proposed end as a real instant. The clock field carries no date, so it is anchored to the
     // Vilnius calendar day the session ENDED on — the same wall-clock→ISO conversion the backdate
@@ -2204,7 +2207,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     const groups = [];
     const groupIndex = new Map();
     for (const item of timeline) {
-        const key = item.date || getLithuanianDateString(item.startTime);
+        const key = item.date || getWorkDayString(item.startTime);
         if (!groupIndex.has(key)) {
             groupIndex.set(key, groups.length);
             groups.push({ key, items: [] });

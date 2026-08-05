@@ -49,9 +49,16 @@ function addDaysToDay(dateStr, delta) {
 }
 
 /**
- * The current work day as a Vilnius date string. BEFORE the boundary the work day still belongs to
- * the previous calendar day — without that rollback, work finished just after midnight would sit
- * before today's still-future boundary and be treated as belonging to a day that has not started.
+ * WHICH WORK DAY an instant belongs to, as a Vilnius date string. BEFORE the boundary the work day
+ * still belongs to the previous calendar day — without that rollback, work finished just after
+ * midnight would sit before today's still-future boundary and be treated as belonging to a day that
+ * has not started.
+ *
+ * This is also the FILING rule for work time: every `date` this file's callers stamp on a
+ * work_sessions / break_sessions row goes through here, exactly as the client's getWorkDayString
+ * does. Server and client both close abandoned sessions, converging on one deterministic doc id, so
+ * a divergence here would make the same physical stretch land in two different day windows depending
+ * on which closer won.
  */
 function currentWorkDay(now) {
     const day = lithuanianDay(now);

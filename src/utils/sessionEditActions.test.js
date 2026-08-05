@@ -296,10 +296,20 @@ describe('deriveSessionFields (validate [start,end] -> the two fields reports re
         });
     });
 
-    it('buckets a cross-midnight interval into the END day', () => {
+    it('keeps a cross-MIDNIGHT interval in the work day it started', () => {
         // Start 20:00 UTC = 23:00 Vilnius on the 23rd; end 22:00 UTC = 01:00 Vilnius on the 24th.
-        // The session began on the 23rd but is credited to the day it finished — the 24th.
+        // The calendar day turned, the WORK day did not (the boundary is 05:00), so the whole
+        // session is still the 23rd's — the night shift stays one entry in one day's log.
         const r = deriveSessionFields('2026-06-23T20:00:00.000Z', '2026-06-23T22:00:00.000Z');
+        expect(r.ok).toBe(true);
+        expect(r.durationMinutes).toBe(120);
+        expect(r.date).toBe('2026-06-23');
+    });
+
+    it('still buckets by the END day when the interval crosses the work-day boundary', () => {
+        // 04:00 → 06:00 Vilnius on the 24th: the 05:00 boundary falls INSIDE the session, so the
+        // two ends sit in different work days and the row is filed under the one it finished in.
+        const r = deriveSessionFields('2026-06-24T01:00:00.000Z', '2026-06-24T03:00:00.000Z');
         expect(r.ok).toBe(true);
         expect(r.durationMinutes).toBe(120);
         expect(r.date).toBe('2026-06-24');

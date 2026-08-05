@@ -26,6 +26,7 @@ import {
     formatMinutesToHHMM,
     formatSignedMinutesToHHMM,
     getLithuanianDateString,
+    getWorkDayString,
 } from './timeUtils';
 
 // Bumped whenever the serialized shape changes in a way a downstream consumer must notice.
@@ -195,7 +196,9 @@ function aggregateDaily(workSessions, breakSessions, tasks, window, { allowLarge
         if (t.isSystemTask || t.isQuickWork || t.timeChanged) continue;
         const finishedAt = t.completedAt || t.deletedAt || t.confirmedAt;
         if (!finishedAt || Number.isNaN(new Date(finishedAt).getTime())) continue;
-        const date = getLithuanianDateString(finishedAt);
+        // The WORK day it finished in — the same key the task's own sessions carry, so typed-in
+        // manual minutes and timer minutes land in one day bucket instead of two.
+        const date = getWorkDayString(finishedAt);
         if (!inWin(date)) continue;
         bump(date, 'work', sanitizeReportMinutes(t.manualMinutes, { allowLarge }));
     }

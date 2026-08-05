@@ -38,7 +38,7 @@ import {
   parseTimeStringToMinutes,
   WORK_DAY_START_HOUR,
   getWorkDayCutoff,
-  getCurrentWorkDayCutoff,
+  getWorkDayString,
 } from '../utils/timeUtils.js';
 import { isManagerRole, isAdminRole } from '../utils/formatters.js';
 import { TIMER_ENGINE_VERSION } from '../utils/timerTransitionPlan.js';
@@ -1176,6 +1176,10 @@ describe('work-day boundary lockstep (functions workDay.js ↔ client timeUtils)
     expect(disagreements, `work-day cutoffs diverged:\n${disagreements.join('\n')}`).toEqual([]);
   });
 
+  // This pair is also the FILING rule for work time: both sides stamp `date` on work_sessions /
+  // break_sessions rows with it (client getWorkDayString, server currentWorkDay), and the two race
+  // to close the same abandoned session onto one deterministic doc id. A drift here would file the
+  // same physical stretch into two different day windows depending on which closer won.
   it('server and client agree which work day an instant belongs to', () => {
     const instants = [
       '2026-06-21T12:00:00.000Z',  // mid-afternoon Vilnius: plainly today
@@ -1192,8 +1196,9 @@ describe('work-day boundary lockstep (functions workDay.js ↔ client timeUtils)
     for (const iso of instants) {
       const now = new Date(iso);
       const server = workDay.currentWorkDay(now);
-      // The client exposes the boundary INSTANT; its work day is that instant's Vilnius date.
-      const client = getLithuanianDateString(getCurrentWorkDayCutoff(now));
+      // The client's own filing helper, not a hand-rolled equivalent — this must lock the function
+      // the writers actually call.
+      const client = getWorkDayString(now);
       if (server !== client) disagreements.push(`${iso}: server=${server} client=${client}`);
     }
     expect(disagreements, `work-day derivation diverged:\n${disagreements.join('\n')}`).toEqual([]);

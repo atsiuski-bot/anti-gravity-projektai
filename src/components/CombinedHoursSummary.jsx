@@ -5,7 +5,7 @@ import { Users, ChevronDown, ChevronUp } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
+import { getLithuanianNow, getLithuanianDateString, getCurrentWorkDayCutoff, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 import UserChip from './UserChip';
@@ -49,9 +49,13 @@ export default function CombinedHoursSummary() {
 
         const now = getLithuanianNow();
 
-        // Standard week starts Monday
-        const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-        const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+        // Standard week starts Monday — anchored to the current WORK day, not the raw instant. The
+        // rows this window selects are stamped with the work day, so a shift running past midnight
+        // into Monday still belongs to Sunday's week; anchoring on `now` would open the new week and
+        // drop the shift in progress out of the total the worker is watching.
+        const weekAnchor = getCurrentWorkDayCutoff(now);
+        const weekStart = startOfWeek(weekAnchor, { weekStartsOn: 1 });
+        const weekEnd = endOfWeek(weekAnchor, { weekStartsOn: 1 });
         const weekStartStr = getLithuanianDateString(weekStart);
         const weekEndStr = getLithuanianDateString(weekEnd);
 

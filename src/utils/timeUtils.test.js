@@ -10,6 +10,7 @@ import {
     WORK_DAY_START_HOUR,
     getWorkDayCutoff,
     getCurrentWorkDayCutoff,
+    getWorkDayString,
     addDaysToDateString,
     calculateCurrentTotalMinutes,
     formatMinutesToHHMM,
@@ -161,6 +162,39 @@ describe('getCurrentWorkDayCutoff (work-day flips at 05:00 Vilnius, device-tz-in
         // the night-shift case: work finished at 04:30 belongs to the day it started on.
         const now = new Date('2026-01-15T02:30:00Z');
         expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-14T03:00:00.000Z');
+    });
+});
+
+// getWorkDayString is the FILING rule: the `date` stamped on every work_sessions / break_sessions
+// row, and the key every day window queries by. It is the one place the answer to "whose day's work
+// is this" is decided, so the night band (00:00→05:00, where it deliberately disagrees with the
+// calendar date) is what these cases are about — that band is the whole reason it exists.
+describe('getWorkDayString (which work day an instant is filed under)', () => {
+    it('is the plain Vilnius date during the working day', () => {
+        // 12:00 UTC = 15:00 Vilnius — nowhere near a boundary, so work day == calendar day.
+        expect(getWorkDayString(new Date('2026-06-23T12:00:00Z'))).toBe('2026-06-23');
+    });
+
+    it('files work done AFTER midnight under the previous day — the night shift', () => {
+        // 21:30 UTC = 00:30 Vilnius on the 24th (UTC+3): the calendar day turned, the work day
+        // did not. This is the case the whole change exists for.
+        expect(getWorkDayString(new Date('2026-06-23T21:30:00Z'))).toBe('2026-06-23');
+        // 01:59 UTC = 04:59 Vilnius — one minute short of the boundary, still the previous day.
+        expect(getWorkDayString(new Date('2026-06-24T01:59:00Z'))).toBe('2026-06-23');
+    });
+
+    it('turns over exactly AT the boundary', () => {
+        // 02:00 UTC = 05:00 Vilnius sharp — the new work day has begun.
+        expect(getWorkDayString(new Date('2026-06-24T02:00:00Z'))).toBe('2026-06-24');
+    });
+
+    it('reads the boundary on the Vilnius clock in winter too (UTC+2)', () => {
+        expect(getWorkDayString(new Date('2026-01-15T02:59:00Z'))).toBe('2026-01-14'); // 04:59 Vilnius
+        expect(getWorkDayString(new Date('2026-01-15T03:00:00Z'))).toBe('2026-01-15'); // 05:00 Vilnius
+    });
+
+    it('accepts an ISO string as well as a Date — session writers hand it both', () => {
+        expect(getWorkDayString('2026-06-23T21:30:00.000Z')).toBe('2026-06-23');
     });
 });
 
@@ -523,11 +557,23 @@ describe('breakDayBaseMinutes — what today\'s break total may build on', () =>
         expect(breakDayBaseMinutes({}, TODAY)).toBe(0);
     });
 
-    it('buckets by the Vilnius day, not UTC — a late-evening break stays in its own day', () => {
-        // 2026-07-26T22:30Z is already 2026-07-27 in Vilnius (UTC+3 in summer).
-        const lateEvening = new Date('2026-07-26T22:30:00.000Z');
-        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-27' }), lateEvening)).toBe(42);
-        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-26' }), lateEvening)).toBe(0);
+    it('buckets by the WORK day — a break ending after midnight builds on the day it started', () => {
+        // 2026-07-26T22:30Z is 01:30 Vilnius on the 27th (UTC+3 in summer): past midnight, but
+        // before the 05:00 boundary, so it is still the 26th's work day. Filing it under the 27th
+        // would zero the counter mid-shift and under-report the night's break total.
+        const afterMidnight = new Date('2026-07-26T22:30:00.000Z');
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-26' }), afterMidnight)).toBe(42);
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-27' }), afterMidnight)).toBe(0);
+    });
+
+    it('turns the day over AT the boundary, on the Vilnius clock', () => {
+        // 04:30 Vilnius on the 27th — one boundary-hour short, still the 26th's work day.
+        const beforeBoundary = new Date('2026-07-27T01:30:00.000Z');
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-26' }), beforeBoundary)).toBe(42);
+        // 05:30 Vilnius on the 27th — the new work day has begun, so the 26th's total is stale.
+        const afterBoundary = new Date('2026-07-27T02:30:00.000Z');
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-26' }), afterBoundary)).toBe(0);
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-27' }), afterBoundary)).toBe(42);
     });
 });
 

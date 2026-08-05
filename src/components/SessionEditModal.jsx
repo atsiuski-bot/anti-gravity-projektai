@@ -7,6 +7,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import {
     formatMinutesToTimeString,
     getLithuanianDateString,
+    getWorkDayString,
     vilniusWallClockToISO,
 } from '../utils/timeUtils';
 import {
@@ -134,7 +135,9 @@ export default function SessionEditModal({
 
     const originalDay = isCreate
         ? null
-        : session?.date || (session?.startTime ? getLithuanianDateString(session.startTime) : null);
+        // Work day, matching deriveSessionFields' own `date` — a calendar-day fallback would report
+        // "the day changed" for an untouched night session that simply has no stored `date`.
+        : session?.date || (session?.startTime ? getWorkDayString(session.startTime) : null);
     const dateChanged = !isCreate && derived?.ok && originalDay && derived.date !== originalDay;
 
     const hasTotal = Number.isFinite(dayTotalMinutes);

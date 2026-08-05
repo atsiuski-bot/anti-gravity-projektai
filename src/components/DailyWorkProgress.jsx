@@ -1,24 +1,25 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
-import { startOfWeek, endOfWeek, eachDayOfInterval, format, isSameDay } from 'date-fns';
+import { startOfWeek, endOfWeek, eachDayOfInterval, format } from 'date-fns';
 import { Sun, CalendarDays, CheckCircle2 } from 'lucide-react';
 import { cn } from '../utils/cn';
-import { getLithuanianDateString, formatMinutesToTimeString } from '../utils/timeUtils';
+import { getLithuanianDateString, getWorkDayString, formatMinutesToTimeString } from '../utils/timeUtils';
 
 export default function DailyWorkProgress({ currentUser, tasks = [] }) {
-    // The day this card reports on, as the canonical Vilnius date string the session docs are
-    // keyed by. It MUST be state rather than a value captured when the listeners were set up: a
-    // worker who leaves the PWA open across midnight (normal here — the work day runs to 03:00)
-    // otherwise keeps seeing YESTERDAY's "Šiandien" hours, because the effect below never re-armed,
-    // while the break half further down recomputed the day on every render — the two halves of one
-    // card describing different days. Re-checked every minute, and used by BOTH halves, so the
-    // queries and both comparisons flip together.
-    const [todayStr, setTodayStr] = useState(() => getLithuanianDateString());
+    // The day this card reports on, as the canonical WORK day the session docs are keyed by — the
+    // same getWorkDayString every session writer stamps, so the card's "Šiandien" and the rows it
+    // sums can never describe different days. It MUST be state rather than a value captured when
+    // the listeners were set up: a worker who leaves the PWA open across the boundary (normal here —
+    // the work day runs to 05:00) otherwise keeps seeing YESTERDAY's hours, because the effect below
+    // never re-armed, while the break half further down recomputed the day on every render — the two
+    // halves of one card describing different days. Re-checked every minute, and used by BOTH
+    // halves, so the queries and both comparisons flip together.
+    const [todayStr, setTodayStr] = useState(() => getWorkDayString());
     useEffect(() => {
         const interval = setInterval(() => {
             setTodayStr((prev) => {
-                const next = getLithuanianDateString();
+                const next = getWorkDayString();
                 return next === prev ? prev : next; // keep identity stable so the listeners only re-arm on a real day change
             });
         }, 60000);
@@ -121,7 +122,13 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                             // Filter for current week (client-side to avoid index)
                             if (start >= weekStart && start <= weekEnd) {
                                 wPlanned += duration;
-                                if (isSameDay(start, now)) {
+                                // Match the plan to the same WORK day the worked half sums, and on
+                                // the Vilnius clock rather than the device's. isSameDay(start, now)
+                                // compared device-local calendar days, so after midnight the card
+                                // paired the NEXT day's plan with the current work day's hours —
+                                // one card reporting two different days, which is exactly what
+                                // todayStr exists to prevent.
+                                if (getLithuanianDateString(start) === todayStr) {
                                     dPlanned += duration;
                                 }
                             }

@@ -2,6 +2,7 @@ import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs,
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
+    getWorkDayString,
     addDaysToDateString,
     MAX_SESSION_MINUTES,
     MAX_BACKDATE_DAYS,
@@ -50,10 +51,11 @@ export const deriveSessionFields = (startISO, endISO) => {
         ok: true,
         error: null,
         durationMinutes: rawMinutes,
-        // Bucket by the END day, matching every other work_sessions writer (pauseTask,
-        // sessionActions, the legacy time-correction). A session that runs across midnight
-        // credits to the day it finished, so the day windows never double-count or drop it.
-        date: getLithuanianDateString(end)
+        // Bucket by the WORK day the session ends in, matching every other work_sessions writer
+        // (pauseTask, sessionActions, the legacy time-correction). A session that runs across
+        // midnight credits to the work day it finished in — the day it started — so the day
+        // windows never double-count or drop it.
+        date: getWorkDayString(end)
     };
 };
 
@@ -317,7 +319,7 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
         // Tell the worker an admin removed one of their logged (paid) sessions. Same self-edit guard
         // and best-effort posture as editWorkSession. The day comes from the stored bucket (or the
         // session's start), so the worker knows which day's total changed.
-        const day = session.date || (session.startTime ? getLithuanianDateString(session.startTime) : null);
+        const day = session.date || (session.startTime ? getWorkDayString(session.startTime) : null);
         await notify({
             recipientId: session.userId,
             type: 'session_deleted',

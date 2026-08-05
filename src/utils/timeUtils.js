@@ -297,15 +297,19 @@ export const getLithuanianDateString = (date = new Date()) => {
  * legacy (sessionActions) and canonical (timerTransitionPlan) — must go through this.
  *
  * @param {Object|null} breakState - the user's stored breakState.
- * @param {Date|string} [at] - the instant the write is credited to; a break is bucketed by the day
- *                             it ENDS, matching the break_sessions row's own `date`.
+ * @param {Date|string} [at] - the instant the write is credited to; a break is bucketed by the WORK
+ *                             day it ENDS in, matching the break_sessions row's own `date`.
  * @returns {number} minutes to build on — 0 on a new day, or a stale/unusable stored value.
  */
 export const breakDayBaseMinutes = (breakState, at = new Date()) => {
     const stored = Number(breakState?.dailyAccumulatedMinutes || 0);
     // A negative or unparseable total is corruption, not history — never carry it forward.
     if (!Number.isFinite(stored) || stored <= 0) return 0;
-    return breakState?.lastDate === getLithuanianDateString(at) ? stored : 0;
+    // The WORK day, not the calendar day: `lastDate` is written by the same writers that stamp the
+    // break_sessions row, and those file by work day. Comparing against the calendar day here would
+    // zero the running total at midnight while the row it mirrors still lands in the previous day —
+    // a night-shift break would restart the counter and under-report the day's break total.
+    return breakState?.lastDate === getWorkDayString(at) ? stored : 0;
 };
 
 /**
@@ -443,11 +447,14 @@ export const getLithuanianWeekday = (date = new Date()) => {
 // finished at 01:00 dropping out of "today" is a lie the worker has to argue with. Set to 05:00 so
 // a genuine night shift ending before dawn still belongs to the day it started on.
 //
-// Changing this ONE number moves every day window that governs what a worker SEES: which finished
-// tasks linger in the personal and team lists, the Dienos statistika 05:00→05:00 span, and when
-// archiveOldTasks sweeps. It does NOT move where minutes are STORED — work_sessions.date is stamped
-// by the pure Vilnius calendar day at the moment the session ends — so reports and pay are
-// unaffected by this constant and no historical row is rewritten.
+// Changing this ONE number moves every day window that governs what a worker SEES *and* where their
+// minutes are FILED: which finished tasks linger in the personal and team lists, the Dienos
+// statistika 05:00→05:00 span, when archiveOldTasks sweeps, and — via getWorkDayString — the `date`
+// every work_sessions / break_sessions row is stamped with. One boundary, one answer: work done at
+// 01:00 is filed under the day it started, on screen and in the ledger alike.
+//
+// Rows written BEFORE this became the filing rule still carry their pure calendar day; nothing here
+// rewrites history. Only the 00:00→05:00 band can differ, and only for rows already in Firestore.
 export const WORK_DAY_START_HOUR = 5;
 
 /**
@@ -496,6 +503,35 @@ export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
         cutoffDate = addDaysToDateString(cutoffDate, -1);
     }
     return getWorkDayCutoff(cutoffDate);
+};
+
+/**
+ * WHICH WORK DAY does an instant belong to, as 'YYYY-MM-DD'.
+ *
+ * This is the app's filing rule for work TIME, and the counterpart of getLithuanianDateString: that
+ * one answers "what is the calendar date", this one answers "whose day's work is this". They differ
+ * only in the 00:00→{@link WORK_DAY_START_HOUR}:00 band, where this returns the PREVIOUS day —
+ * because a shift that runs past midnight is one shift to the person doing it, and splitting it in
+ * two is a lie the worker has to argue with at payroll.
+ *
+ * Every writer that stamps a `date` on a work_sessions / break_sessions row goes through here, and
+ * so does every reader that buckets a time record into a day. They must agree: the day windows are
+ * queried by that stored field, so a writer using the calendar day would file a 01:00 session into a
+ * day the reader's 05:00 window has not opened yet — the row exists and is credited, but appears on
+ * no screen the worker looks at.
+ *
+ * NOT for: calendar dates a human picks or reads (deadlines, planned shifts, date pickers, week
+ * ids), and never for anchoring a typed wall-clock time to a day — vilniusWallClockToISO needs the
+ * true calendar day or it builds an instant 24h off.
+ *
+ * MIRROR of functions/workDay.js currentWorkDay(); locked by src/__tests__/firebaseConsistency.test.js.
+ *
+ * @param {Date|string} [at=getLithuanianNow()] - the instant to file.
+ * @returns {string} the work day as 'YYYY-MM-DD'.
+ */
+export const getWorkDayString = (at = getLithuanianNow()) => {
+    const instant = typeof at === 'string' ? new Date(at) : at;
+    return getLithuanianDateString(getCurrentWorkDayCutoff(instant));
 };
 
 /**

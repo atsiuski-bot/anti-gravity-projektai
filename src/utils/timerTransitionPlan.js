@@ -2,7 +2,7 @@ import {
     breakDayBaseMinutes,
     clampSessionMinutes,
     formatMinutesToTimeString,
-    getLithuanianDateString,
+    getWorkDayString,
     isCreditableUntrackedGap,
     MIN_LOGGED_SESSION_MINUTES,
     TIMER_HEARTBEAT_CONTINUE_MS,
@@ -199,7 +199,7 @@ const secondaryRunningProjection = (
             // rebasing) is what let yesterday's total be read as today's.
             dailyAccumulatedMinutes:
                 breakDayBaseMinutes(userData?.breakState, issuedAt) + closedBreakMinutes,
-            lastDate: getLithuanianDateString(new Date(issuedAt)),
+            lastDate: getWorkDayString(new Date(issuedAt)),
         },
         callState: {
             ...(userData?.callState || {}),
@@ -247,7 +247,7 @@ const closeBreakWrites = ({ userId, userData, run, endedAt }) => {
                 startTime: start.toISOString(),
                 endTime: end.toISOString(),
                 durationMinutes,
-                date: getLithuanianDateString(end),
+                date: getWorkDayString(end),
                 createdAt: endedAt,
                 completedAt: end.toISOString(),
                 isBreak: true,
@@ -344,7 +344,7 @@ const breakRunningProjection = (userData, run, issuedAt, pausedTaskId = null) =>
         // Rebase BEFORE re-dating. Stamping today's date onto yesterday's total is precisely how the
         // counter used to survive the day boundary (see breakDayBaseMinutes).
         dailyAccumulatedMinutes: breakDayBaseMinutes(userData?.breakState, issuedAt),
-        lastDate: getLithuanianDateString(new Date(issuedAt)),
+        lastDate: getWorkDayString(new Date(issuedAt)),
         resumableTaskIds: pausedTaskId ? [pausedTaskId] : (userData?.breakState?.resumableTaskIds || []),
     },
     callState: {
@@ -369,11 +369,12 @@ const idleProjectionAfterBreak = (userData, creditedMinutes, issuedAt) => ({
     breakState: {
         ...(userData?.breakState || {}),
         isTakingBreak: false,
-        // A break is bucketed by the day it ENDS — the same day its break_sessions row carries — so
-        // one that runs past midnight lands wholly in the new day and re-dates the field with it.
+        // A break is bucketed by the WORK day it ENDS in — the same day its break_sessions row
+        // carries — so one that runs past midnight stays in the day it started; only crossing the
+        // 05:00 boundary re-dates the field.
         dailyAccumulatedMinutes:
             breakDayBaseMinutes(userData?.breakState, issuedAt) + creditedMinutes,
-        lastDate: getLithuanianDateString(new Date(issuedAt)),
+        lastDate: getWorkDayString(new Date(issuedAt)),
     },
     workStatus: {
         ...(userData?.workStatus || {}),
@@ -430,7 +431,7 @@ function closeTaskWrites({ task, run, endedAt, userId }) {
             startTime: start.toISOString(),
             endTime: end.toISOString(),
             durationMinutes,
-            date: getLithuanianDateString(end),
+            date: getWorkDayString(end),
             createdAt: endedAt,
             ...(task?.id ? {} : { orphanedTaskClose: true }),
             engineVersion: TIMER_ENGINE_VERSION,
@@ -800,7 +801,7 @@ export function planBreakEnd({
                 startTime: startedAt.toISOString(),
                 endTime: endedAt.toISOString(),
                 durationMinutes,
-                date: getLithuanianDateString(endedAt),
+                date: getWorkDayString(endedAt),
                 createdAt: issuedAt,
                 completedAt: endedAt.toISOString(),
                 isBreak: true,
@@ -856,7 +857,7 @@ export function planBreakEnd({
                         isTakingBreak: false,
                         dailyAccumulatedMinutes:
                             breakDayBaseMinutes(userData?.breakState, issuedAt) + durationMinutes,
-                        lastDate: getLithuanianDateString(new Date(issuedAt)),
+                        lastDate: getWorkDayString(new Date(issuedAt)),
                     },
                     callState: {
                         ...(userData?.callState || {}),
@@ -1057,7 +1058,7 @@ function callLogWrites({ userId, userData, run, endedAt, durationMinutes, contac
                 startTime: start.toISOString(),
                 endTime: end.toISOString(),
                 durationMinutes,
-                date: getLithuanianDateString(end),
+                date: getWorkDayString(end),
                 createdAt: endedAt,
                 isSystemTask: true,
                 engineVersion: TIMER_ENGINE_VERSION,
@@ -1137,7 +1138,7 @@ function quickWorkLogWrites({
                     startTime: start.toISOString(),
                     endTime: end.toISOString(),
                     durationMinutes,
-                    date: getLithuanianDateString(end),
+                    date: getWorkDayString(end),
                     createdAt: endedAt,
                     isQuickWork: true,
                     engineVersion: TIMER_ENGINE_VERSION,
@@ -1545,7 +1546,7 @@ export function planManagerForceEnd({
                     ...(closedBreakMinutes === null ? {} : {
                         dailyAccumulatedMinutes:
                             breakDayBaseMinutes(targetUser.breakState, issuedAt) + closedBreakMinutes,
-                        lastDate: getLithuanianDateString(new Date(issuedAt)),
+                        lastDate: getWorkDayString(new Date(issuedAt)),
                     }),
                 },
                 callState: {
@@ -1688,7 +1689,7 @@ export function planTaskRecover({
                 startTime: oldStart.toISOString(),
                 endTime: provenEnd.toISOString(),
                 durationMinutes: provenMinutes,
-                date: getLithuanianDateString(provenEnd),
+                date: getWorkDayString(provenEnd),
                 createdAt: issuedAt,
                 recoveredAt: recoveryEnd.toISOString(),
                 engineVersion: TIMER_ENGINE_VERSION,
@@ -1711,7 +1712,7 @@ export function planTaskRecover({
                 startTime: provenEnd.toISOString(),
                 endTime: recoveryEnd.toISOString(),
                 durationMinutes: gapMinutes,
-                date: getLithuanianDateString(recoveryEnd),
+                date: getWorkDayString(recoveryEnd),
                 createdAt: issuedAt,
                 createdBy: userId,
                 createdByName: task.assignedUserName || null,
