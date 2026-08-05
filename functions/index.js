@@ -290,7 +290,8 @@ function copyForRequestNotification(n) {
             };
         }
         case 'timer_running_check':
-            // System → worker: a running task timer went heartbeat-stale — a gentle "still on it?" check.
+            // RETIRED (ADR 0027) — no producer left; kept so already-delivered notifications still
+            // render, and so this switch keeps covering the same type set as the client registry.
             return { title: 'Ar laikmatis vis dar veikia?', body: title };
         case 'task_over_estimate':
             // System → worker: the running timer passed the task's planned time while the app was
@@ -2076,100 +2077,6 @@ async function autoStopForgottenTimers(scanErrors) {
 }
 
 // ---------------------------------------------------------------------------
-// Proactive stale-running-timer nudge (short cadence) — the real-time companion
-// ---------------------------------------------------------------------------
-//
-// autoStopForgottenTimers above only reconciles timers left running PAST the 16h ceiling, once a day.
-// That misses the SHORT dropped-session: a worker whose phone backgrounded / killed the PWA / lost
-// signal — which freezes the per-minute client heartbeat — while a task timer is still marked running.
-// They keep working, the timer's proof-of-life goes cold, and (unless reopen-recovery cleanly credits
-// it) the stretch later reads as a cold "Neaktyvus" band the worker only discovers days later.
-//
-// There is NO server-side way to tell "pocketed but still working" from "stopped": both look like a
-// stale heartbeat (a field worker with the screen off IS the normal case). So this net deliberately
-// does NOT credit or stop anything — that stays the worker's (reopen → recovery) and the daily net's
-// job. It fires ONE gentle "still on it?" nudge per run: a real loss is caught in minutes, and a
-// worker who is still working simply ignores it.
-const TIMER_STALE_NUDGE_MS = 25 * 60 * 1000; // heartbeat older than this → nudge. The feature's tuning knob.
-
-// Pure decision (unit-tested via a source slice in firebaseConsistency.test.js): nudge this running
-// task NOW? Yes when its heartbeat is stale beyond TIMER_STALE_NUDGE_MS AND the run is still under the
-// 16h ceiling — past that the daily autoStopForgottenTimers owns it, so the two nets never both act on
-// one run. No heartbeat at all → skip: no proof the app was ever alive on it (pre-heartbeat data, or a
-// timer killed before its first beat), and nudging a never-alive timer would be noise. No assignee →
-// nobody to notify. Once-per-run is enforced downstream by the deterministic notification id, not here.
-function shouldNudgeStaleTimer(task, nowMs) {
-    if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return false;
-    if (!task.assignedUserId) return false;
-    const startMs = new Date(task.timerStartedAt).getTime();
-    if (!Number.isFinite(startMs)) return false;
-    const beatMs = task.timerLastHeartbeat ? new Date(task.timerLastHeartbeat).getTime() : NaN;
-    if (!Number.isFinite(beatMs)) return false;                              // no proof of life → not ours to nudge
-    if (nowMs - beatMs < TIMER_STALE_NUDGE_MS) return false;                 // heartbeat still fresh (app alive on it)
-    if (nowMs - startMs > MAX_RUNNING_TIMER_MINUTES * 60000) return false;   // >16h → the daily net owns this run
-    return true;
-}
-
-// Scan running task timers and fire one gentle "still running?" nudge per stale run. The notification
-// id is deterministic on (taskId + the run's start), so create() + ALREADY_EXISTS makes it fire
-// exactly ONCE per run — never repeating across the 10-min cadence, while a fresh run after the worker
-// resumes/restarts (new timerStartedAt) can nudge again. The existing notifyOnRequestNotification
-// onCreate trigger turns the doc into the FCM push; a re-created (already-exists) doc never re-fires it.
-async function notifyStaleRunningTimers(nowMs = Date.now()) {
-    let snap;
-    try {
-        snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
-    } catch (err) {
-        logger.warn('notifyStaleRunningTimers query failed', { err: err.message });
-        return { scanned: 0, nudged: 0 };
-    }
-    const nowIso = new Date(nowMs).toISOString();
-    let nudged = 0;
-    for (const docSnap of snap.docs) {
-        const t = docSnap.data();
-        // A run that is ALSO past its planned time belongs to notifyOverEstimateTimers below: that
-        // message strictly dominates this one (it names a concrete problem instead of asking a
-        // question), and both nets are once-per-run, so firing both would just double the push for a
-        // single silent timer. The two thresholds nest (over-estimate speaks at 5 min of client
-        // silence, this one at 25), so every run this net would ever see is already decided there.
-        if (shouldNotifyOverEstimate(t, nowMs)) continue;
-        if (!shouldNudgeStaleTimer(t, nowMs)) continue;
-        const startMs = new Date(t.timerStartedAt).getTime();
-        const ref = db.collection('request_notifications').doc(`timercheck_${docSnap.id}_${startMs}`);
-        try {
-            // create (not add): the deterministic id + ALREADY_EXISTS is the once-per-run dedup, so a
-            // still-stale timer is never re-notified every 10 minutes.
-            await ref.create({
-                recipientId: t.assignedUserId,
-                type: 'timer_running_check',
-                category: 'info',
-                taskId: docSnap.id,
-                taskTitle: t.title || 'Užduotis',
-                isRead: false,
-                createdAt: nowIso,
-                createdBy: 'system_timer_check',
-            });
-            nudged += 1;
-        } catch (err) {
-            if (err && (err.code === 6 || err.code === 'already-exists')) continue; // already nudged this run
-            logger.warn('notifyStaleRunningTimers nudge failed', { id: docSnap.id, err: err.message });
-        }
-    }
-    return { scanned: snap.size, nudged };
-}
-
-// Every 10 minutes — bounds "how long until a dropped timer is flagged" to ~10 min + the stale
-// threshold. Cheap: one indexed query (timerStatus == running, the same index autoStopForgottenTimers
-// uses) over a single company's tasks, and a write only for the rare genuinely-stale run.
-exports.notifyStaleRunningTimers = onSchedule(
-    { schedule: 'every 10 minutes', timeZone: 'Europe/Vilnius' },
-    async () => {
-        const result = await notifyStaleRunningTimers();
-        if (result.nudged > 0) logger.info('notifyStaleRunningTimers fired', result);
-    },
-);
-
-// ---------------------------------------------------------------------------
 // Over-the-plan alert — the offline half of the 100% time-limit gate
 // ---------------------------------------------------------------------------
 //
@@ -2182,9 +2089,12 @@ exports.notifyStaleRunningTimers = onSchedule(
 // This is the server-side half of the same gate, and it deliberately does LESS than the client one:
 // it only SPEAKS. It does not stop the timer and does not credit or drop anything — the server cannot
 // tell "still working past the plan" from "forgot to stop", and guessing either way corrupts real
-// paid time (the same reasoning that keeps notifyStaleRunningTimers advisory). Stopping stays the
-// client's job on reopen; this just makes sure the worker learns about the overrun in minutes,
-// through a push that reaches a locked phone, instead of at the end of the day.
+// paid time. Stopping stays the client's job on reopen; this just makes sure the worker learns about
+// the overrun in minutes, through a push that reaches a locked phone, instead of at the end of the day.
+//
+// It speaks about a CONCRETE fact — this run passed its plan — which is why it survived the removal of
+// its former companion, the "is the timer still running?" nudge (ADR 0027). That one only asked a
+// question the app now answers by policy: a running timer means work until the worker stops it.
 //
 // How long the client must be SILENT before the server speaks. Above the 1-min heartbeat interval and
 // above the client's 3-min continue window, so a live app is never talked over — if the heartbeat is
@@ -2220,7 +2130,7 @@ function runningTaskMinutes(task, nowMs) {
 // Pure decision (unit-tested via a source slice in firebaseConsistency.test.js): tell this worker NOW
 // that their running task passed its plan? Every clause is a reason the server must stay quiet:
 //   • not a running, owned, parseable run → nothing to talk about;
-//   • no heartbeat at all → no proof the app was ever alive on this run (mirrors shouldNudgeStaleTimer);
+//   • no heartbeat at all → no proof the app was ever alive on this run, so there is nothing to report;
 //   • heartbeat still fresh → the in-app 100% gate owns it, and a push would duplicate its popup;
 //   • past 16h → the daily autoStopForgottenTimers owns that run, so the nets never both act on one;
 //   • no plan → there is no line to cross (a task with no estimate is untimed by design).
