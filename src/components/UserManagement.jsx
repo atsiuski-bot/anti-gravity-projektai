@@ -573,9 +573,10 @@ function DeleteButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
     );
 }
 
-// Per-worker pay-rate entry point. Admin-only (firestore.rules gates the write — ADR 0012) and
-// shown only for workers (the Vykdytojas, who finish tasks and see the earnings popup). The "on"
-// state (a rate is set) is signalled by a check badge over the coins glyph, not by color alone (§5).
+// Per-user pay-rate entry point. Admin-only (firestore.rules gates the write — ADR 0012), shown
+// for EVERY role: managers and admins also run their own timers and finish their own tasks, so
+// they earn the same way a Meistras does and need the same rate table. The "on" state (a rate is
+// set) is signalled by a check badge over the coins glyph, not by color alone (§5).
 function PayRateButton({ user, onEdit, fullWidth, iconOnly }) {
     const has = hasPayRate(user.payRate);
     if (iconOnly) {
@@ -1302,7 +1303,7 @@ export default function UserManagement() {
                                 {isAdmin && (
                                     <StartTimeCorrectionToggle user={user} onToggle={handleToggleStartTimeCorrection} />
                                 )}
-                                {isAdmin && user.role === 'worker' && (
+                                {isAdmin && (
                                     <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
                                 )}
                                 <BlockButton
@@ -1411,7 +1412,7 @@ export default function UserManagement() {
                                                     onRequest={requestBlock}
                                                     iconOnly
                                                 />
-                                                {isAdmin && user.role === 'worker' && (
+                                                {isAdmin && (
                                                     <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
                                                 )}
                                                 {isAdmin && (

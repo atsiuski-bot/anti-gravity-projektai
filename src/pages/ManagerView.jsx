@@ -37,6 +37,7 @@ import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
+import EarningsModal from '../components/EarningsModal';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
 import useFullBleed from '../hooks/useFullBleed';
@@ -81,6 +82,8 @@ export default function ManagerView() {
     // Kom. ataskaitos to sit beside the calendar it describes), and Veiklos ataskaita (the
     // work-hours report, also lifted out of the retired Kom. ataskaitos tab).
     const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
+    // Post-completion earnings popup payload ({ task, totalMinutes }), set by the finish event below.
+    const [earnings, setEarnings] = useState(null);
 
     // Arrow-key + single-Tab-stop behaviour for the two `role="tablist"` strips below (APG).
     const teamTasksTabs = useRovingFocus();
@@ -218,10 +221,22 @@ export default function ManagerView() {
         const handleOpenTeamReport = () => setTeamCalendarSubTab('report');
         window.addEventListener('open-team-report', handleOpenTeamReport);
 
+        // Post-finish earnings breakdown. Both finish doors fire ONE event carrying the earnings
+        // flag; a manager/admin who finishes their own task now gets the same popup a Meistras does
+        // whenever a pay rate is set. The work-end PHOTO prompt that rides on the same event stays
+        // worker-only, so here we consume just the earnings half.
+        const handleFinishEarnings = (e) => {
+            if (e?.detail?.task && e.detail.showEarnings) {
+                setEarnings({ task: e.detail.task, totalMinutes: e.detail.totalMinutes });
+            }
+        };
+        window.addEventListener('request-completion-photo', handleFinishEarnings);
+
         return () => {
             window.removeEventListener('resize', handleResize);
             window.removeEventListener('open-task-modal', handleOpenModalEvent);
             window.removeEventListener('open-team-report', handleOpenTeamReport);
+            window.removeEventListener('request-completion-photo', handleFinishEarnings);
         };
     }, []);
 
@@ -904,6 +919,16 @@ export default function ManagerView() {
                     uid={currentUser?.uid}
                     onRequestExtension={requestExtension}
                     onFinish={finishFromLimit}
+                />
+            )}
+
+            {/* Post-completion earnings popup — gross (with tax) first, net (take-home) beside it */}
+            {earnings && (
+                <EarningsModal
+                    open
+                    onClose={() => setEarnings(null)}
+                    task={earnings.task}
+                    totalMinutes={earnings.totalMinutes}
                 />
             )}
         </div>
