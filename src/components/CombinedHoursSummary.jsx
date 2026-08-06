@@ -5,7 +5,8 @@ import { Users, ChevronDown, ChevronUp } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { getLithuanianNow, getLithuanianDateString, getCurrentWorkDayCutoff, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
+import { getLithuanianNow, getLithuanianDateString, getCurrentWorkDayCutoff, clampSessionMinutes, sanitizeReportMinutes, calculateCurrentTotalMinutes, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { PRIORITIES, normalizePriority, getPriorityColor, getPriorityLabel } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 import UserChip from './UserChip';
@@ -196,7 +197,40 @@ export default function CombinedHoursSummary() {
                 }
             });
 
-            // 3. Breaks are tracked SEPARATELY — never folded into workedMinutes. The worked
+            // 3. Remaining URGENT/HIGH workload — "kiek dar liko padaryti", not "kiek priskirta".
+            // Each open urgent/high task assigned to the user contributes
+            // max(0, estimate − total time already worked on it), where the worked total spans the
+            // task's WHOLE life (calculateCurrentTotalMinutes: manual + timer + live run). A task
+            // started last week therefore only counts for what is still left of it this week —
+            // last week's hours have already eaten into the estimate — with no per-week session
+            // bookkeeping needed. Overrun tasks (worked ≥ estimate) contribute 0: what remains is
+            // unknown, and guessing would inflate the bar. Tasks without any estimate cannot be
+            // sized, so they are surfaced as a separate count instead of being silently dropped.
+            let urgentLeftMinutes = 0;
+            let highLeftMinutes = 0;
+            let priorityNoEstimate = 0;
+            tasks.forEach(t => {
+                if (t.assignedUserId !== user.id) return;
+                if (t.isQuickWork || t.isSystemTask || t.isDeleted) return;
+                // Finished / archived tasks are no longer workload; unapproved ones are not yet
+                // actionable work (same gate the shared list applies), so neither may count.
+                if (t.completed === true || t.status === 'completed' || t.status === 'confirmed'
+                    || t.status === 'deleted' || t.status === 'unapproved' || t.archivedAt) return;
+                const p = normalizePriority(t.priority);
+                if (p !== PRIORITIES.URGENT && p !== PRIORITIES.HIGH) return;
+                const estimate = Number(t.estimatedTimeMinutes) > 0
+                    ? Number(t.estimatedTimeMinutes)
+                    : parseTimeStringToMinutes(t.estimatedTime || '');
+                if (!estimate) {
+                    priorityNoEstimate += 1;
+                    return;
+                }
+                const left = Math.max(0, estimate - calculateCurrentTotalMinutes(t));
+                if (p === PRIORITIES.URGENT) urgentLeftMinutes += left;
+                else highLeftMinutes += left;
+            });
+
+            // 4. Breaks are tracked SEPARATELY — never folded into workedMinutes. The worked
             // bar must mean actual work so it is comparable to the planned bar (which never
             // contains breaks); summing breaks in would silently overstate the comparison.
             let breakMinutes = 0;
@@ -217,8 +251,11 @@ export default function CombinedHoursSummary() {
 
             const workedHours = workedMinutes / 60;
             const breakHours = breakMinutes / 60;
+            const urgentLeftHours = urgentLeftMinutes / 60;
+            const highLeftHours = highLeftMinutes / 60;
             if (plannedHours > maxVal) maxVal = plannedHours;
             if (workedHours > maxVal) maxVal = workedHours;
+            if (urgentLeftHours + highLeftHours > maxVal) maxVal = urgentLeftHours + highLeftHours;
 
             stats.push({
                 id: user.id,
@@ -226,7 +263,10 @@ export default function CombinedHoursSummary() {
                 color: user.color || WORKER_FALLBACK_COLOR,
                 plannedHours,
                 workedHours,
-                breakHours
+                breakHours,
+                urgentLeftHours,
+                highLeftHours,
+                priorityNoEstimate
             });
         });
 
@@ -308,6 +348,44 @@ export default function CombinedHoursSummary() {
                                                     <div
                                                         className="h-full bg-session-break-accent rounded-r-full"
                                                         style={{ width: `${(user.breakHours / combinedStats.max) * 100}%` }}
+                                                    />
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Remaining URGENT/HIGH workload bar. Segment order (urgent
+                                            first) plus the tooltip carry the meaning, so the greyscale
+                                            priority ramp is never the sole signal (§5). */}
+                                        <div
+                                            className="flex items-center gap-2"
+                                            title={`Liko atlikti pagal įvertį — ${getPriorityLabel(PRIORITIES.URGENT)}: ${user.urgentLeftHours.toFixed(1)}h, ${getPriorityLabel(PRIORITIES.HIGH)}: ${user.highLeftHours.toFixed(1)}h${user.priorityNoEstimate > 0 ? `, be įverčio: ${user.priorityNoEstimate}` : ''}`}
+                                        >
+                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Liko</span>
+                                            <span className="text-body-lg font-bold font-mono w-24 text-right tabular-nums">
+                                                <span className="text-ink-strong">{user.urgentLeftHours.toFixed(1)}</span>
+                                                {user.highLeftHours > 0 && (
+                                                    <span className="text-ink-muted">+{user.highLeftHours.toFixed(1)}</span>
+                                                )}
+                                                <span className="text-ink-strong">h</span>
+                                                {user.priorityNoEstimate > 0 && (
+                                                    <span className="text-ink-muted font-normal"> +{user.priorityNoEstimate}?</span>
+                                                )}
+                                            </span>
+                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
+                                                <div
+                                                    className={`h-full rounded-l-full ${user.highLeftHours > 0 ? '' : 'rounded-r-full'}`}
+                                                    style={{
+                                                        width: `${(user.urgentLeftHours / combinedStats.max) * 100}%`,
+                                                        backgroundColor: getPriorityColor(PRIORITIES.URGENT)
+                                                    }}
+                                                />
+                                                {user.highLeftHours > 0 && (
+                                                    <div
+                                                        className="h-full rounded-r-full"
+                                                        style={{
+                                                            width: `${(user.highLeftHours / combinedStats.max) * 100}%`,
+                                                            backgroundColor: getPriorityColor(PRIORITIES.HIGH)
+                                                        }}
                                                     />
                                                 )}
                                             </div>
