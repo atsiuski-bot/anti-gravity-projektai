@@ -333,15 +333,18 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
 
-                                        {/* Worked Bar */}
-                                        <div className="flex items-center gap-2">
+                                        {/* Worked Bar — the NUMBER is one summed total (work + break); the
+                                            BAR keeps the two-colour split so the composition is still
+                                            visible without the label having to spell it out in digits. */}
+                                        <div
+                                            className="flex items-center gap-2"
+                                            title={user.breakHours > 0
+                                                ? `Dirbta ${user.workedHours.toFixed(1)}h + pertraukos ${user.breakHours.toFixed(1)}h = ${(user.workedHours + user.breakHours).toFixed(1)}h`
+                                                : undefined}
+                                        >
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
                                             <span className="text-body-lg font-bold font-mono w-64 text-right tabular-nums whitespace-nowrap">
-                                                <span className="text-ink-strong">{user.workedHours.toFixed(1)}</span>
-                                                {user.breakHours > 0 && (
-                                                    <span className="text-session-break-accent">+{user.breakHours.toFixed(1)}</span>
-                                                )}
-                                                <span className="text-ink-strong">h</span>
+                                                <span className="text-ink-strong">{(user.workedHours + user.breakHours).toFixed(1)}h</span>
                                             </span>
                                             <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
                                                 <div
