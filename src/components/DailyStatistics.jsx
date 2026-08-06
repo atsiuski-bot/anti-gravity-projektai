@@ -78,6 +78,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // instead, so the affordance is workers-only. Note there is deliberately NO manager requirement:
     // a self-reduction needs nobody's approval, so a worker with no manager assigned can still fix an
     // over-long row (the modal disables only the request half when there is no one to ask).
+    // A manager is not an admin, so the session editor above is closed to them — yet a manager CAN
+    // author a manual session (the task screen's "Koreguoti laiką → Pridėti sesiją"), and a
+    // double-submit then leaves a duplicate only an admin could remove (founder, 2026-08-06). The
+    // narrowest repair: the author of a manual row gets the editor for THAT row. Three conditions,
+    // all required — the row is a manual session, it belongs to the viewer, and the viewer is the
+    // one who created it (createWorkSession's stamp). So an admin's correction on a worker's day
+    // stays untouchable by that worker, and no timer-tracked row is ever reachable this way.
+    // Gated on the DB role (userData), not the surface `userRole` prop, because a manager's own
+    // report renders as 'worker' — the very screen where they meet their own duplicate.
+    // Firestore already permits the write (work_sessions update/delete allow ownsUserId), so this
+    // is a UI gate only and needs no rules deploy.
+    const ownsAuthoredManualRow = (item) =>
+        isManagerRole(userData?.role) &&
+        !!item.isManualSession &&
+        resolveUserId(item) === currentUser?.uid &&
+        item.createdByAdmin === currentUser?.uid;
+
     const canReportRow = (item) =>
         !isManagerRole(userRole) &&
         item.type === 'session' &&
@@ -753,6 +770,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 // here); the original* snapshot + reason feed SessionEditedBadge.
                 isManualAdjustment: !!s.isManualAdjustment,
                 isManualSession: !!s.isManualSession,
+                // Who AUTHORED this manual row (createWorkSession's stamp). Carried so the row can
+                // offer its own author the editor — see ownsAuthoredManualRow below.
+                createdByAdmin: s.createdByAdmin || null,
                 edited: !!s.edited,
                 originalStartTime: s.originalStartTime,
                 originalEndTime: s.originalEndTime,
@@ -1163,6 +1183,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
                         tasks={allLoadedTasks}
                         canEditSessions={canEditSessions}
+                        canEditOwnManualRow={ownsAuthoredManualRow}
                         onEditSession={(item, dayTotal) => openEditSession(item, { id: workerDetail.userId, name: workerDetail.name }, dayTotal)}
                         onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
                         onClose={() => { setWorkerDetail(null); onClose?.(); }}
@@ -1590,7 +1611,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             {combinedTimelineItems.map((item, idx) => {
                                 // Real, finished work sessions are editable; legacy synthetic delta rows
                                 // (isManualAdjustment) and live sessions are not.
-                                const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                const canEditRow = (canEditSessions || ownsAuthoredManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
                                 const reportable = canReportRow(item);
                                 return (
                                 <li key={item.id || idx} className="flex items-center justify-between gap-3 p-4">
@@ -1656,7 +1677,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {combinedTimelineItems.map((item, idx) => {
-                                    const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                    const canEditRow = (canEditSessions || ownsAuthoredManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
                                     const reportable = canReportRow(item);
                                     return (
                                     <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
@@ -1859,6 +1880,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
                     tasks={allLoadedTasks}
                     canEditSessions={canEditSessions}
+                    canEditOwnManualRow={ownsAuthoredManualRow}
                     onEditSession={(item, dayTotal) => openEditSession(item, { id: workerDetail.userId, name: workerDetail.name }, dayTotal)}
                     onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
                     onClose={() => setWorkerDetail(null)}
@@ -2177,7 +2199,7 @@ function SessionErrorReportModal({ item, storedSession, canRequest, canEditStart
 // manager never has to switch the user filter just to inspect one person. Each work row carries
 // the same status the task shows everywhere else and, when resolvable, opens the full task on
 // click — editable only for a viewer with the rights (TaskModal gates that itself).
-function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, date, items, tasks = [], canEditSessions = false, onEditSession, onOpenTask, onClose }) {
+function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, date, items, tasks = [], canEditSessions = false, canEditOwnManualRow = () => false, onEditSession, onOpenTask, onClose }) {
     // Resolve each timeline row back to its task so the card shows the task's real status and
     // clicking it opens the task. Regular sessions join by their real taskId; quick-work/call
     // sessions carry a SYNTHETIC taskId, so they join on the durable workSessionId link instead
@@ -2282,7 +2304,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
         // Real, finished work sessions are editable here too (the team-report drill-down is the
         // natural admin entry); the edit control sits OUTSIDE the clickable card so it is never a
         // button nested in a button. Legacy synthetic delta rows and live sessions stay read-only.
-        const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+        const canEditRow = (canEditSessions || canEditOwnManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
         return (
             <li key={item.id || idx}>
                 <div className="flex items-stretch gap-1">
