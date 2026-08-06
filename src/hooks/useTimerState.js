@@ -140,9 +140,9 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
             // Interval update
             interval = setInterval(updateTimer, 1000);
 
-            // Start the periodic reminder beep (~7 min) for this active secondary session.
+            // Start the periodic reminder beep (~10 min) for this active secondary session.
             if (isReminderSession) {
-                SoundManager.startPeriodicBeep(420000, false);
+                SoundManager.startPeriodicBeep(600000, false);
                 didStartBeepRef.current = true;
             }
 

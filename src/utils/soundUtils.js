@@ -84,16 +84,16 @@ export const SoundManager = {
                 try { oscillator.disconnect(); gainNode.disconnect(); } catch { /* already gone */ }
             };
 
-            // NOTE: playBeep is now SOUND ONLY. The OS "7 min block" notification it used to fire as a
+            // NOTE: playBeep is now SOUND ONLY. The OS "10 min block" notification it used to fire as a
             // side effect is owned by playSevenMinuteBlock() — so callers that only want the alarm tone
-            // (e.g. the notification feed) no longer raise a mislabelled "Praėjo 7 min." notification.
+            // (e.g. the notification feed) no longer raise a mislabelled "Praėjo 10 min." notification.
 
         } catch (error) {
             console.error("Error playing sound:", error);
         }
     },
 
-    // Sound + the OS "7-minute block" notification, fired together on each 7-min mark. Kept separate
+    // Sound + the OS "10-minute block" notification, fired together on each 10-min mark. Kept separate
     // from playBeep so the periodic timer is the ONLY thing that announces the block.
     playSevenMinuteBlock() {
         this.playBeep();
@@ -165,7 +165,7 @@ export const SoundManager = {
                 // Routed through the SW helper so it also fires on Android / installed PWA
                 // (where the page Notification constructor throws).
                 showLocalNotification("Laikas!", {
-                    body: "Praėjo 7 min. laiko blokas.",
+                    body: "Praėjo 10 min. laiko blokas.",
                     tag: 'timer-notification', // Replace existing notification
                     renotify: true,
                     requireInteraction: true, // Keep visible until user interacts
@@ -404,17 +404,17 @@ export const SoundManager = {
         }
     },
 
-    startPeriodicBeep(intervalMs = 420000, playImmediately = true) { // Default 7 minutes
+    startPeriodicBeep(intervalMs = 600000, playImmediately = true) { // Default 10 minutes
         this.stopPeriodicBeep(); // Ensure no duplicates
 
         // IMPORTANT: Play sound immediately to UNLOCK the AudioContext while we have a user gesture.
         // Without this, the browser may block future sounds when the tab is in background. Sound only
-        // (playBeep) — this is an unlock, not a 7-min mark, so it must NOT raise the block notification.
+        // (playBeep) — this is an unlock, not a 10-min mark, so it must NOT raise the block notification.
         if (playImmediately) {
             this.playBeep();
         }
 
-        // Each real 7-min mark: the alarm tone AND the "Praėjo 7 min." OS notification, together.
+        // Each real 10-min mark: the alarm tone AND the "Praėjo 10 min." OS notification, together.
         this.intervalId = setInterval(() => {
             this.playSevenMinuteBlock();
         }, intervalMs);
