@@ -337,11 +337,17 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
     }
 };
 
-// Create a missing session from scratch (e.g. a worker who forgot to start the timer). Stores a
-// real start/end with a synthetic taskId so it can never be mistaken for a tracked task's session
-// — its id never matches a Firestore task id (like quick_/call_ sessions), so the daily view's
-// double-count guard treats it purely as session time.
-export const createWorkSession = async ({ userId, userName, taskTitle, startTime, endTime, reason, editor } = {}) => {
+// Create a missing session from scratch (e.g. a worker who forgot to start the timer).
+//
+// Two callers, two shapes, and the difference matters. From the DAY report there is no task in
+// context, so the row gets a SYNTHETIC taskId — it can never collide with a real task id (like
+// quick_/call_ sessions), so the daily view's double-count guard treats it purely as session time.
+// From a TASK's time editor the caller passes that task's real id, and the row is an ordinary
+// session of that task: it appears in the task's own session list, and the task's cached counter is
+// re-derived below so card and report agree. Without the real id the row was written successfully
+// yet stayed invisible in the very list it was created from — which is exactly how one missed
+// session became two (founder, 2026-08-06).
+export const createWorkSession = async ({ userId, userName, taskId, taskTitle, startTime, endTime, reason, editor } = {}) => {
     if (!userId) return { ok: false, error: 'user' };
     const trimmedReason = (reason || '').trim();
     if (!trimmedReason) return { ok: false, error: 'reason' };
@@ -351,7 +357,7 @@ export const createWorkSession = async ({ userId, userName, taskTitle, startTime
 
     const nowIso = new Date().toISOString();
     const payload = {
-        taskId: `manual_${Date.now()}`,
+        taskId: (taskId || '').trim() || `manual_${Date.now()}`,
         taskTitle: (taskTitle || '').trim() || 'Rankinė sesija',
         userId,
         userName: userName || null,
@@ -368,7 +374,12 @@ export const createWorkSession = async ({ userId, userName, taskTitle, startTime
     };
     try {
         const ref = await addDoc(collection(db, 'work_sessions'), payload);
-        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
+        // Same contract as the edit/delete paths: work_sessions is canonical, so the task's cached
+        // counter is re-derived from its sessions. A synthetic taskId resolves to no task document
+        // and reconciliation self-skips, so the day-report caller is unaffected.
+        const rec = await reconcileTaskTimerFromSessions(payload.taskId, userId);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:createWorkSession', taskId: payload.taskId });
+        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:createWorkSession' });
         return { ok: false, error: 'write' };
