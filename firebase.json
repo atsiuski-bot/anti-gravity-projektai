@@ -24,6 +24,9 @@
         "firestore": {
             "port": 8180
         },
+        "hub": {
+            "port": 4477
+        },
         "singleProjectMode": true
     },
     "functions": [
