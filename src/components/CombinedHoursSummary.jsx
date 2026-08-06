@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { Users, ChevronDown, ChevronUp } from 'lucide-react';
+import { Users, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString, getCurrentWorkDayCutoff, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
+import { PRIORITIES, getPriorityColor, getPriorityLabel } from '../utils/priority';
+import { summarizePlannedHours, sumRemainingPriorityWork, assessCapacity } from '../utils/workloadCapacity';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 import UserChip from './UserChip';
@@ -160,20 +162,14 @@ export default function CombinedHoursSummary() {
         const wEnd = endOfWeek(now, { weekStartsOn: 1 });
 
         users.forEach(user => {
-            let plannedHours = 0;
             let workedMinutes = 0;
 
-            // Calculate weekly scheduled hours (Calendar). Approved leave (any absence type, all of
-            // which keep isVacation true) is time OFF, not planned work — counting it would inflate
-            // the planned bar and make a holiday week read as planned hours, the same exclusion
-            // Reports and DailyWorkProgress already apply.
-            workHours.forEach(wh => {
-                if (wh.userId === user.id && !wh.isVacation) {
-                    const whStart = new Date(wh.start);
-                    const whEnd = new Date(wh.end);
-                    const duration = (whEnd - whStart) / (1000 * 60 * 60);
-                    plannedHours += duration;
-                }
+            // Weekly scheduled hours (Calendar) + the part of them still ahead — see
+            // summarizePlannedHours for why the latter is not `planned - worked`.
+            const { plannedHours, plannedRemainingHours } = summarizePlannedHours(workHours, {
+                userId: user.id,
+                now,
+                weekEnd: wEnd
             });
 
             // Calculate weekly actual worked minutes
@@ -196,7 +192,14 @@ export default function CombinedHoursSummary() {
                 }
             });
 
-            // 3. Breaks are tracked SEPARATELY — never folded into workedMinutes. The worked
+            // 3. Remaining URGENT/HIGH workload — "kiek dar liko padaryti", not "kiek priskirta".
+            const {
+                urgentMinutes: urgentLeftMinutes,
+                highMinutes: highLeftMinutes,
+                noEstimateCount: priorityNoEstimate
+            } = sumRemainingPriorityWork(tasks, { userId: user.id });
+
+            // 4. Breaks are tracked SEPARATELY — never folded into workedMinutes. The worked
             // bar must mean actual work so it is comparable to the planned bar (which never
             // contains breaks); summing breaks in would silently overstate the comparison.
             let breakMinutes = 0;
@@ -217,8 +220,21 @@ export default function CombinedHoursSummary() {
 
             const workedHours = workedMinutes / 60;
             const breakHours = breakMinutes / 60;
+            const urgentLeftHours = urgentLeftMinutes / 60;
+            const highLeftHours = highLeftMinutes / 60;
+
+            // OVERLOAD: more urgent/high work left than there is planned time left to do it in.
+            // The deficit is a LOWER BOUND whenever priorityNoEstimate > 0, since unestimated
+            // tasks add unknown hours on top of it.
+            const { capacityDeficitHours, isOverloaded } = assessCapacity({
+                priorityLeftHours: urgentLeftHours + highLeftHours,
+                plannedRemainingHours,
+                plannedHours
+            });
+
             if (plannedHours > maxVal) maxVal = plannedHours;
             if (workedHours > maxVal) maxVal = workedHours;
+            if (urgentLeftHours + highLeftHours > maxVal) maxVal = urgentLeftHours + highLeftHours;
 
             stats.push({
                 id: user.id,
@@ -226,12 +242,20 @@ export default function CombinedHoursSummary() {
                 color: user.color || WORKER_FALLBACK_COLOR,
                 plannedHours,
                 workedHours,
-                breakHours
+                breakHours,
+                urgentLeftHours,
+                highLeftHours,
+                priorityNoEstimate,
+                plannedRemainingHours,
+                capacityDeficitHours,
+                isOverloaded
             });
         });
 
-        // Add buffer to max value for visual spacing
-        return { data: stats, max: Math.max(maxVal, 40) }; // Minimum scale 40h
+        // `hasOverload` drives ONE shared badge column for every row rather than a per-row slot:
+        // the three bars are read against a common scale, so their width must not differ between
+        // members (or between rows of one member) depending on who happens to be flagged.
+        return { data: stats, max: Math.max(maxVal, 40), hasOverload: stats.some(s => s.isOverloaded) }; // Minimum scale 40h
     }, [users, workHours, workSessions, tasks, breakSessions]);
 
     // NOTE: the live "Aktyvi veikla" list used to be duplicated here. It now lives solely in
@@ -312,7 +336,65 @@ export default function CombinedHoursSummary() {
                                                 )}
                                             </div>
                                         </div>
+
+                                        {/* Remaining URGENT/HIGH workload bar. Segment order (urgent
+                                            first) plus the tooltip carry the meaning, so the greyscale
+                                            priority ramp is never the sole signal (§5). */}
+                                        <div
+                                            className="flex items-center gap-2"
+                                            title={`Liko atlikti pagal įvertį — ${getPriorityLabel(PRIORITIES.URGENT)}: ${user.urgentLeftHours.toFixed(1)}h, ${getPriorityLabel(PRIORITIES.HIGH)}: ${user.highLeftHours.toFixed(1)}h${user.priorityNoEstimate > 0 ? `, be įverčio: ${user.priorityNoEstimate}` : ''}. Liko suplanuoto laiko: ${user.plannedRemainingHours.toFixed(1)}h.`}
+                                        >
+                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Liko</span>
+                                            <span className="text-body-lg font-bold font-mono w-24 text-right tabular-nums">
+                                                <span className="text-ink-strong">{user.urgentLeftHours.toFixed(1)}</span>
+                                                {user.highLeftHours > 0 && (
+                                                    <span className="text-ink-muted">+{user.highLeftHours.toFixed(1)}</span>
+                                                )}
+                                                <span className="text-ink-strong">h</span>
+                                                {user.priorityNoEstimate > 0 && (
+                                                    <span className="text-ink-muted font-normal"> +{user.priorityNoEstimate}?</span>
+                                                )}
+                                            </span>
+                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
+                                                <div
+                                                    className={`h-full rounded-l-full ${user.highLeftHours > 0 ? '' : 'rounded-r-full'}`}
+                                                    style={{
+                                                        width: `${(user.urgentLeftHours / combinedStats.max) * 100}%`,
+                                                        backgroundColor: getPriorityColor(PRIORITIES.URGENT)
+                                                    }}
+                                                />
+                                                {user.highLeftHours > 0 && (
+                                                    <div
+                                                        className="h-full rounded-r-full"
+                                                        style={{
+                                                            width: `${(user.highLeftHours / combinedStats.max) * 100}%`,
+                                                            backgroundColor: getPriorityColor(PRIORITIES.HIGH)
+                                                        }}
+                                                    />
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
+
+                                    {/* Overload verdict — the one signal that combines the three bars:
+                                        more priority work left than planned time left to do it in.
+                                        Icon + words carry it, colour only reinforces (§5). */}
+                                    {combinedStats.hasOverload && (
+                                        <div className="w-32 shrink-0 flex justify-end">
+                                            {user.isOverloaded && (
+                                                <span
+                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-feedback-warning-soft border border-feedback-warning-border text-feedback-warning-text text-caption font-medium"
+                                                    title={`Nespės: liko ${(user.urgentLeftHours + user.highLeftHours).toFixed(1)}h skubių/aukšto prioriteto darbų, o suplanuoto laiko liko tik ${user.plannedRemainingHours.toFixed(1)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — trūkumas yra dar didesnis.` : ''}`}
+                                                >
+                                                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                                    <span className="tabular-nums">
+                                                        Nespės −{user.capacityDeficitHours.toFixed(1)}h
+                                                        {user.priorityNoEstimate > 0 && '+'}
+                                                    </span>
+                                                </span>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             ))
                         )}
