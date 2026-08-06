@@ -4,7 +4,7 @@ import { Wallet } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { getLithuanianDateString, sanitizeReportMinutes } from '../utils/timeUtils';
-import { hasPayRate, marginalNetEarnings, netToGross, getPayRateTiers, getPayRateLabel, EFFECTIVE_TAX_RATE } from '../utils/payRate';
+import { hasPayRate, marginalNetEarnings, netToGross, getPayRateTiers, getPayRateLabel } from '../utils/payRate';
 import { formatEur, formatEurPerHour } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
 import Modal from './ui/Modal';
@@ -76,7 +76,6 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
     const rateLabel = getPayRateLabel(payRate, task?.payRateId);
     const netEarnings = marginalNetEarnings(priorHours, priorHours + taskHours, rateTiers);
     const grossEarnings = netToGross(netEarnings);
-    const taxPct = Math.round(EFFECTIVE_TAX_RATE * 100);
 
     return (
         <Modal
@@ -127,8 +126,8 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
                     <p className="text-center text-caption text-ink-muted">
                         Įkainis: {formatEurPerHour(taskHours > 0 ? grossEarnings / taskHours : 0)} su mokesčiais ·{' '}
                         {formatEurPerHour(taskHours > 0 ? netEarnings / taskHours : 0)} į rankas. Suma „į rankas“ –
-                        orientacinė: mokesčiai skaičiuoti pagal fiksuotą prielaidą (individuali veikla, ~{taxPct}%,
-                        ~30 000 €/m. pajamos, be išlaidų). Tikrasis atskaitymas priklauso nuo Jūsų visų metinių pajamų.
+                        orientacinė: mokesčiai skaičiuoti pagal fiksuotą prielaidą. Tikrasis atskaitymas priklauso
+                        nuo Jūsų visų metinių pajamų.
                     </p>
                 </div>
             )}
