@@ -62,6 +62,9 @@ const ERROR_COPY = {
  *   durationMinutes/duration, date, edited, original* snapshot fields).
  * @param {{ id: string, name?: string }} [props.targetUser] - the worker the session belongs to.
  * @param {string} [props.defaultDate] - create mode: the day to seed (yyyy-MM-dd).
+ * @param {string} [props.taskId] - create mode: attach the new session to THIS task (the task's own
+ *   time editor). Omitted from the day report, where the session gets a synthetic id instead.
+ * @param {string} [props.defaultTitle] - create mode: the title to seed (the task's own title).
  * @param {number} [props.dayTotalMinutes] - the currently visible total, for the "A → B" preview.
  * @param {{ uid?: string, displayName?: string, email?: string }} props.editor - the acting admin.
  * @param {() => void} [props.onSaved] - called after a successful write.
@@ -73,6 +76,8 @@ export default function SessionEditModal({
     session = null,
     targetUser = null,
     defaultDate = null,
+    taskId = null,
+    defaultTitle = '',
     dayTotalMinutes = null,
     editor,
     onSaved,
@@ -103,14 +108,14 @@ export default function SessionEditModal({
             setEndDate(seed);
             setStartTimeStr('');
             setEndTimeStr('');
-            setTitle('');
+            setTitle(defaultTitle || '');
         } else if (session) {
             setStartDate(getLithuanianDateString(session.startTime));
             setEndDate(getLithuanianDateString(session.endTime));
             setStartTimeStr(toTimeInput(session.startTime));
             setEndTimeStr(toTimeInput(session.endTime));
         }
-    }, [open, isCreate, session, defaultDate]);
+    }, [open, isCreate, session, defaultDate, defaultTitle]);
 
     // Recompute the derived fields (duration, day bucket) from the typed wall-clock pair.
     const { startISO, endISO, derived, complete } = useMemo(() => {
@@ -159,6 +164,7 @@ export default function SessionEditModal({
             ? await createWorkSession({
                   userId: targetUser?.id,
                   userName: targetUser?.name,
+                  taskId,
                   taskTitle: title,
                   startTime: startISO,
                   endTime: endISO,

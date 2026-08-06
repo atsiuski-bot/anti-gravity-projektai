@@ -458,7 +458,7 @@ describe('createWorkSession (admin-authored manual session)', () => {
 
     it('persists a manual-session payload and returns the new id', async () => {
         const res = await createWorkSession(base);
-        expect(res).toEqual({ ok: true, id: 'generated-id', durationMinutes: 60, date: '2026-06-23' });
+        expect(res).toEqual({ ok: true, id: 'generated-id', durationMinutes: 60, date: '2026-06-23', reconciled: true });
         expect(addDoc).toHaveBeenCalledTimes(1);
 
         const payload = addDoc.mock.calls[0][1];
@@ -472,6 +472,19 @@ describe('createWorkSession (admin-authored manual session)', () => {
         expect(payload.editReason).toBe('forgot to start the timer');
         // Synthetic taskId can never collide with a real Firestore task id.
         expect(String(payload.taskId)).toMatch(/^manual_/);
+    });
+
+    // The task-scoped caller (a task's own time editor) passes the real task id, so the row is an
+    // ordinary session OF that task and shows up in the list it was created from. Without this the
+    // row was written but invisible there, which is how one missed session became two.
+    it('links the session to a supplied task id instead of minting a synthetic one', async () => {
+        await createWorkSession({ ...base, taskId: 'task-77' });
+        expect(addDoc.mock.calls[0][1].taskId).toBe('task-77');
+    });
+
+    it('falls back to a synthetic id when the task id is blank', async () => {
+        await createWorkSession({ ...base, taskId: '   ' });
+        expect(String(addDoc.mock.calls[0][1].taskId)).toMatch(/^manual_/);
     });
 
     it('defaults a blank title and trims a supplied one', async () => {

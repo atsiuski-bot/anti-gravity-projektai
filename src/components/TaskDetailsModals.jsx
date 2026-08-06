@@ -488,6 +488,8 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
                 </div>
             </DetailsModal>
 
+            {/* taskId binds a newly added session to THIS task, so it lands in the list above instead
+                of vanishing into a synthetic id this query can never match. */}
             {editTarget && (
                 <SessionEditModal
                     open
@@ -495,6 +497,8 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
                     session={editTarget.session}
                     targetUser={targetUser}
                     defaultDate={editTarget.session?.date || null}
+                    taskId={taskId}
+                    defaultTitle={task.title || ''}
                     editor={currentUser}
                     onClose={() => setEditTarget(null)}
                     onSaved={() => setEditTarget(null)}
