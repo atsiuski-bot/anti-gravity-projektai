@@ -111,12 +111,25 @@ describe('assessCapacity', () => {
         const result = assessCapacity({ priorityLeftHours: 12, plannedRemainingHours: 8, plannedHours: 40 });
         expect(result.isOverloaded).toBe(true);
         expect(result.capacityDeficitHours).toBe(4);
+        expect(result.netRemainingHours).toBe(-4);
     });
 
     it('stays quiet when the remaining plan covers the remaining work', () => {
         const result = assessCapacity({ priorityLeftHours: 6, plannedRemainingHours: 8, plannedHours: 40 });
         expect(result.isOverloaded).toBe(false);
         expect(result.capacityDeficitHours).toBe(-2);
+        expect(result.netRemainingHours).toBe(2);
+    });
+
+    it('keeps the displayed balance X - Y = Z and the badge in lockstep', () => {
+        // The row prints "X - Y = Z" and the badge prints the deficit; both must come from the same
+        // arithmetic, or a manager sees a positive balance next to a "will not make it" warning.
+        for (const [X, Y] of [[8, 12], [8, 6], [0, 3], [10, 10]]) {
+            const r = assessCapacity({ priorityLeftHours: Y, plannedRemainingHours: X, plannedHours: 40 });
+            expect(r.netRemainingHours).toBe(X - Y);
+            expect(r.capacityDeficitHours).toBe(-r.netRemainingHours);
+            expect(r.isOverloaded).toBe(r.netRemainingHours < 0);
+        }
     });
 
     it('flags a booked-out week: plan exists but none of it is left', () => {

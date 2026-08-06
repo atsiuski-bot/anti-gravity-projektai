@@ -12,6 +12,12 @@ import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 import UserChip from './UserChip';
 
+// Typographic minus (U+2212), not a hyphen: it is the same width as a digit in a tabular font, so
+// the "X − Y = Z" balance stays column-aligned between rows and its sign cannot be misread as a
+// list dash. Applied to the operator AND to a negative result so both render identically.
+const MINUS = '−';
+const fmtHours = (value) => value.toFixed(1).replace('-', MINUS);
+
 export default function CombinedHoursSummary() {
     const { currentUser, userData } = useAuth();
     const { users: allUsers, loading: usersLoading } = useUsers();
@@ -226,15 +232,22 @@ export default function CombinedHoursSummary() {
             // OVERLOAD: more urgent/high work left than there is planned time left to do it in.
             // The deficit is a LOWER BOUND whenever priorityNoEstimate > 0, since unestimated
             // tasks add unknown hours on top of it.
-            const { capacityDeficitHours, isOverloaded } = assessCapacity({
-                priorityLeftHours: urgentLeftHours + highLeftHours,
+            // `netRemainingHours` is the balance the "Liko" row states outright: time left in the
+            // plan MINUS priority work left to do. Negative means the week does not contain enough
+            // hours for the work — the same fact the badge names in words.
+            const priorityLeftHours = urgentLeftHours + highLeftHours;
+            const { netRemainingHours, capacityDeficitHours, isOverloaded } = assessCapacity({
+                priorityLeftHours,
                 plannedRemainingHours,
                 plannedHours
             });
 
+            // Every bar is measured against the SAME scale, so the scale must reach the longest
+            // bar drawn — including the worked bar's break segment, which sits after the worked
+            // one and would otherwise overflow its track.
             if (plannedHours > maxVal) maxVal = plannedHours;
-            if (workedHours > maxVal) maxVal = workedHours;
-            if (urgentLeftHours + highLeftHours > maxVal) maxVal = urgentLeftHours + highLeftHours;
+            if (workedHours + breakHours > maxVal) maxVal = workedHours + breakHours;
+            if (priorityLeftHours > maxVal) maxVal = priorityLeftHours;
 
             stats.push({
                 id: user.id,
@@ -245,17 +258,24 @@ export default function CombinedHoursSummary() {
                 breakHours,
                 urgentLeftHours,
                 highLeftHours,
+                priorityLeftHours,
                 priorityNoEstimate,
                 plannedRemainingHours,
+                netRemainingHours,
                 capacityDeficitHours,
                 isOverloaded
             });
         });
 
+        // The scale ADAPTS to the week: it is the longest bar actually drawn, so a quiet week fills
+        // the width just as a busy one does and small differences stay readable. There is no
+        // minimum floor — a fixed 40h floor squashed every bar into the left third whenever nobody
+        // reached full time. The `|| 1` is only a divide-by-zero guard for an all-zero week.
+        //
         // `hasOverload` drives ONE shared badge column for every row rather than a per-row slot:
-        // the three bars are read against a common scale, so their width must not differ between
-        // members (or between rows of one member) depending on who happens to be flagged.
-        return { data: stats, max: Math.max(maxVal, 40), hasOverload: stats.some(s => s.isOverloaded) }; // Minimum scale 40h
+        // the three bars are read against that common scale, so their width must not differ
+        // between members (or between rows of one member) depending on who happens to be flagged.
+        return { data: stats, max: maxVal || 1, hasOverload: stats.some(s => s.isOverloaded) };
     }, [users, workHours, workSessions, tasks, breakSessions]);
 
     // NOTE: the live "Aktyvi veikla" list used to be duplicated here. It now lives solely in
@@ -291,7 +311,7 @@ export default function CombinedHoursSummary() {
                             <p className="text-body italic text-ink-muted">Nėra duomenų.</p>
                         ) : (
                             combinedStats.data.map(user => (
-                                <div key={user.id} className="mb-5 last:mb-0 flex items-center gap-4">
+                                <div key={user.id} className="mb-5 last:mb-0 flex items-stretch gap-4">
                                     {/* User name — left side, fixed width so all bars start on the same column */}
                                     <div className="w-36 shrink-0 flex items-center">
                                         <UserChip userId={user.id} name={user.name} colorDot={user.color} />
@@ -302,7 +322,7 @@ export default function CombinedHoursSummary() {
                                         {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
-                                            <span className="text-body-lg text-ink-muted font-mono w-24 text-right tabular-nums">
+                                            <span className="text-body-lg text-ink-muted font-mono w-64 text-right tabular-nums whitespace-nowrap">
                                                 {user.plannedHours.toFixed(1)}h
                                             </span>
                                             <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
@@ -316,7 +336,7 @@ export default function CombinedHoursSummary() {
                                         {/* Worked Bar */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
-                                            <span className="text-body-lg font-bold font-mono w-24 text-right tabular-nums">
+                                            <span className="text-body-lg font-bold font-mono w-64 text-right tabular-nums whitespace-nowrap">
                                                 <span className="text-ink-strong">{user.workedHours.toFixed(1)}</span>
                                                 {user.breakHours > 0 && (
                                                     <span className="text-session-break-accent">+{user.breakHours.toFixed(1)}</span>
@@ -337,22 +357,31 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
 
-                                        {/* Remaining URGENT/HIGH workload bar. Segment order (urgent
-                                            first) plus the tooltip carry the meaning, so the greyscale
-                                            priority ramp is never the sole signal (§5). */}
+                                        {/* Balance row: time still IN THE PLAN minus priority work still
+                                            TO DO. The two operands are the same quantities the bars above
+                                            and below carry, so the equation is auditable on the row itself
+                                            rather than being a number the manager has to trust.
+
+                                            The bar draws the SUBTRACTED quantity (the priority workload),
+                                            split urgent-then-high — the number is one total, but the two
+                                            segments still show what it is made of. Segment order plus the
+                                            tooltip carry that, so the greyscale priority ramp is never the
+                                            sole signal (§5). */}
                                         <div
                                             className="flex items-center gap-2"
-                                            title={`Liko atlikti pagal įvertį — ${getPriorityLabel(PRIORITIES.URGENT)}: ${user.urgentLeftHours.toFixed(1)}h, ${getPriorityLabel(PRIORITIES.HIGH)}: ${user.highLeftHours.toFixed(1)}h${user.priorityNoEstimate > 0 ? `, be įverčio: ${user.priorityNoEstimate}` : ''}. Liko suplanuoto laiko: ${user.plannedRemainingHours.toFixed(1)}h.`}
+                                            title={`Liko suplanuoto laiko ${user.plannedRemainingHours.toFixed(1)}h − nepadaryti skubūs/aukšto prioriteto darbai ${user.priorityLeftHours.toFixed(1)}h (${getPriorityLabel(PRIORITIES.URGENT)}: ${user.urgentLeftHours.toFixed(1)}h, ${getPriorityLabel(PRIORITIES.HIGH)}: ${user.highLeftHours.toFixed(1)}h) = ${fmtHours(user.netRemainingHours)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — likutis realiai mažesnis.` : ''}`}
                                         >
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Liko</span>
-                                            <span className="text-body-lg font-bold font-mono w-24 text-right tabular-nums">
-                                                <span className="text-ink-strong">{user.urgentLeftHours.toFixed(1)}</span>
-                                                {user.highLeftHours > 0 && (
-                                                    <span className="text-ink-muted">+{user.highLeftHours.toFixed(1)}</span>
-                                                )}
-                                                <span className="text-ink-strong">h</span>
+                                            <span className="text-body-lg font-mono w-64 text-right tabular-nums whitespace-nowrap">
+                                                <span className="text-ink-muted">{fmtHours(user.plannedRemainingHours)}</span>
+                                                <span className="text-ink-muted"> {MINUS} </span>
+                                                <span className="text-ink-strong">{fmtHours(user.priorityLeftHours)}</span>
+                                                <span className="text-ink-muted"> = </span>
+                                                <span className={`font-bold ${user.isOverloaded ? 'text-feedback-warning-text' : 'text-ink-strong'}`}>
+                                                    {fmtHours(user.netRemainingHours)}h
+                                                </span>
                                                 {user.priorityNoEstimate > 0 && (
-                                                    <span className="text-ink-muted font-normal"> +{user.priorityNoEstimate}?</span>
+                                                    <span className="text-caption text-ink-muted"> +{user.priorityNoEstimate}?</span>
                                                 )}
                                             </span>
                                             <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
@@ -376,19 +405,23 @@ export default function CombinedHoursSummary() {
                                         </div>
                                     </div>
 
-                                    {/* Overload verdict — the one signal that combines the three bars:
-                                        more priority work left than planned time left to do it in.
+                                    {/* Overload verdict. It belongs to the BALANCE row — it is that row's
+                                        negative result put into words — so the column is bottom-aligned
+                                        to sit on the same line rather than floating beside "Dirbta",
+                                        which it says nothing about. Kept as a reserved column instead of
+                                        an inline element so flagging a member never shortens that row's
+                                        bar and breaks the scale the three bars share.
                                         Icon + words carry it, colour only reinforces (§5). */}
                                     {combinedStats.hasOverload && (
-                                        <div className="w-32 shrink-0 flex justify-end">
+                                        <div className="w-32 shrink-0 flex flex-col justify-end items-end">
                                             {user.isOverloaded && (
                                                 <span
                                                     className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-feedback-warning-soft border border-feedback-warning-border text-feedback-warning-text text-caption font-medium"
-                                                    title={`Nespės: liko ${(user.urgentLeftHours + user.highLeftHours).toFixed(1)}h skubių/aukšto prioriteto darbų, o suplanuoto laiko liko tik ${user.plannedRemainingHours.toFixed(1)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — trūkumas yra dar didesnis.` : ''}`}
+                                                    title={`Nespės: liko ${user.priorityLeftHours.toFixed(1)}h skubių/aukšto prioriteto darbų, o suplanuoto laiko liko tik ${user.plannedRemainingHours.toFixed(1)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — trūkumas yra dar didesnis.` : ''}`}
                                                 >
                                                     <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                                                     <span className="tabular-nums">
-                                                        Nespės −{user.capacityDeficitHours.toFixed(1)}h
+                                                        Nespės {MINUS}{user.capacityDeficitHours.toFixed(1)}h
                                                         {user.priorityNoEstimate > 0 && '+'}
                                                     </span>
                                                 </span>

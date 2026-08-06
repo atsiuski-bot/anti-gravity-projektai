@@ -104,8 +104,14 @@ export function sumRemainingPriorityWork(tasks, { userId }) {
  * and the work still stands.
  */
 export function assessCapacity({ priorityLeftHours, plannedRemainingHours, plannedHours }) {
-    const capacityDeficitHours = priorityLeftHours - plannedRemainingHours;
+    // `netRemainingHours` is the balance the UI states outright as "X − Y = Z": planned time left
+    // MINUS priority work left. It is returned from here rather than recomputed at the call site so
+    // the number on screen and the verdict beside it can never be derived from different arithmetic
+    // and disagree — the deficit is exactly its negation.
+    const netRemainingHours = plannedRemainingHours - priorityLeftHours;
+    const capacityDeficitHours = -netRemainingHours;
     return {
+        netRemainingHours,
         capacityDeficitHours,
         isOverloaded: plannedHours > 0 && capacityDeficitHours > 0
     };
