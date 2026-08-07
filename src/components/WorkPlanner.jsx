@@ -287,15 +287,23 @@ export default function WorkPlanner() {
         const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
             const hoursData = snapshot.docs.map(doc => {
                 const data = doc.data();
+                const start = new Date(data.start);
+                const end = new Date(data.end);
                 return {
                     id: doc.id,
                     title: data.title || 'Veikla',
-                    start: new Date(data.start),
-                    end: new Date(data.end),
+                    start,
+                    end,
                     userId: data.userId,
                     isWorkFromHome: data.isWorkFromHome || false,
                     isVacation: data.isVacation || false,
                     absenceType: data.absenceType || (data.isVacation ? 'vacation' : null),
+                    // A whole-day "Nedirbu" absence runs 00:00 -> next midnight, which the time-grid
+                    // (clamped to the 7:00 `min` below) clips into invisibility. Flagging it `allDay`
+                    // routes it to react-big-calendar's dedicated all-day row instead, where it always
+                    // renders regardless of the visible hour window — and stays clickable through the
+                    // same handleSelectEvent, so it opens in the normal edit modal.
+                    allDay: isAllDaySpan(start, end),
                     // Not yet acknowledged by the server — still only on this device.
                     pending: doc.metadata.hasPendingWrites,
                 };
@@ -1134,9 +1142,12 @@ export default function WorkPlanner() {
             // was not. The state label is replaced, not appended: what matters here is that this
             // row is not saved, not whether it is work or an absence.
             const isPending = event.pending;
+            // An all-day absence has no meaningful clock time — showing "00:00" would read as a
+            // half-entered entry rather than a whole day off.
+            const timeRange = event.allDay ? null : `${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}`;
             const eventAriaLabel = isPending
-                ? `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, neišsiųsta į serverį, redaguoti`
-                : `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
+                ? `${stateLabel}${timeRange ? ` ${timeRange}` : ''}, neišsiųsta į serverį, redaguoti`
+                : `${stateLabel}${timeRange ? ` ${timeRange}` : ''}, redaguoti`;
             return (
                 <div
                     role="button"
@@ -1161,9 +1172,11 @@ export default function WorkPlanner() {
                             : isVacation ? 'bg-brand-soft text-brand' : 'text-white'
                     )}
                 >
-                    <span className="text-caption font-mono font-semibold tabular-nums">
-                        {format(event.start, 'HH:mm')}
-                    </span>
+                    {timeRange && (
+                        <span className="text-caption font-mono font-semibold tabular-nums">
+                            {format(event.start, 'HH:mm')}
+                        </span>
+                    )}
                     <span className="flex items-center gap-1 text-caption font-semibold">
                         {isPending ? (
                             <>
