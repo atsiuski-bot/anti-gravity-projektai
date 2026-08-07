@@ -310,22 +310,51 @@ export default function CombinedHoursSummary() {
                         {combinedStats.data.length === 0 ? (
                             <p className="text-body italic text-ink-muted">Nėra duomenų.</p>
                         ) : (
-                            combinedStats.data.map(user => (
-                                <div key={user.id} className="mb-5 last:mb-0 flex items-stretch gap-4">
-                                    {/* User name — left side, fixed width so all bars start on the same column */}
-                                    <div className="w-36 shrink-0 flex items-center">
+                            combinedStats.data.map(user => {
+                                // ONE definition, rendered in two places: a bottom-aligned column on
+                                // desktop, its own line under the balance row on a phone. Duplicating
+                                // the markup instead would let the two drift apart.
+                                const overloadBadge = user.isOverloaded ? (
+                                    <span
+                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-feedback-warning-soft border border-feedback-warning-border text-feedback-warning-text text-caption font-medium"
+                                        title={`Nespės: liko ${user.priorityLeftHours.toFixed(1)}h skubių/aukšto prioriteto darbų, o suplanuoto laiko liko tik ${user.plannedRemainingHours.toFixed(1)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — trūkumas yra dar didesnis.` : ''}`}
+                                    >
+                                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                        <span className="tabular-nums">
+                                            Nespės {MINUS}{user.capacityDeficitHours.toFixed(1)}h
+                                            {user.priorityNoEstimate > 0 && '+'}
+                                        </span>
+                                    </span>
+                                ) : null;
+
+                                return (
+                                // On a phone the desktop row does not fit: name 144 + label 56 + number
+                                // 256 + badge 128 already exceeds a 360px screen before the bar gets a
+                                // single pixel, which collapsed every bar to zero width and pushed the
+                                // badge on top of the numbers. Below `md` the member becomes a stacked
+                                // card — name, then each metric as "label ... number" with its bar on the
+                                // next line — so the bars get the full width they need to be comparable.
+                                <div key={user.id} className="mb-6 md:mb-5 last:mb-0 pb-4 md:pb-0 border-b border-line last:border-b-0 md:border-b-0 flex flex-col gap-2 md:flex-row md:items-stretch md:gap-4">
+                                    {/* User name — its own line on mobile; a fixed left column on desktop
+                                        so all bars start on the same x. */}
+                                    <div className="flex items-center md:w-36 md:shrink-0">
                                         <UserChip userId={user.id} name={user.name} colorDot={user.color} />
                                     </div>
 
                                     {/* Bars Area */}
-                                    <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-                                        {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
-                                        <div className="flex items-center gap-2">
-                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
-                                            <span className="text-body-lg text-ink-muted font-mono w-64 text-right tabular-nums whitespace-nowrap">
-                                                {user.plannedHours.toFixed(1)}h
-                                            </span>
-                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
+                                    <div className="flex flex-col gap-1.5 md:flex-1 md:min-w-0">
+                                        {/* Planned Bar — labelled so colour is never the sole signal (§5).
+                                            `md:contents` dissolves the label+number wrapper at md+, so its
+                                            two spans become direct flex children of the row again and the
+                                            desktop layout is exactly what it was before. */}
+                                        <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
+                                            <div className="flex items-baseline justify-between gap-2 md:contents">
+                                                <span className="shrink-0 text-caption text-ink-muted md:w-14">Planuota</span>
+                                                <span className="text-body-lg text-ink-muted font-mono tabular-nums whitespace-nowrap md:w-64 md:text-right">
+                                                    {user.plannedHours.toFixed(1)}h
+                                                </span>
+                                            </div>
+                                            <div className="h-2 w-full md:flex-1 md:w-auto bg-surface-sunken rounded-full overflow-hidden relative">
                                                 <div
                                                     className="absolute top-0 left-0 h-full bg-feedback-info rounded-full"
                                                     style={{ width: `${(user.plannedHours / combinedStats.max) * 100}%` }}
@@ -337,16 +366,18 @@ export default function CombinedHoursSummary() {
                                             BAR keeps the two-colour split so the composition is still
                                             visible without the label having to spell it out in digits. */}
                                         <div
-                                            className="flex items-center gap-2"
+                                            className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2"
                                             title={user.breakHours > 0
                                                 ? `Dirbta ${user.workedHours.toFixed(1)}h + pertraukos ${user.breakHours.toFixed(1)}h = ${(user.workedHours + user.breakHours).toFixed(1)}h`
                                                 : undefined}
                                         >
-                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
-                                            <span className="text-body-lg font-bold font-mono w-64 text-right tabular-nums whitespace-nowrap">
-                                                <span className="text-ink-strong">{(user.workedHours + user.breakHours).toFixed(1)}h</span>
-                                            </span>
-                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
+                                            <div className="flex items-baseline justify-between gap-2 md:contents">
+                                                <span className="shrink-0 text-caption text-ink-muted md:w-14">Dirbta</span>
+                                                <span className="text-body-lg font-bold font-mono tabular-nums whitespace-nowrap md:w-64 md:text-right">
+                                                    <span className="text-ink-strong">{(user.workedHours + user.breakHours).toFixed(1)}h</span>
+                                                </span>
+                                            </div>
+                                            <div className="h-2 w-full md:flex-1 md:w-auto bg-surface-sunken rounded-full overflow-hidden flex">
                                                 <div
                                                     className={`h-full bg-feedback-success rounded-l-full ${user.breakHours > 0 ? '' : 'rounded-r-full'}`}
                                                     style={{ width: `${(user.workedHours / combinedStats.max) * 100}%` }}
@@ -371,23 +402,25 @@ export default function CombinedHoursSummary() {
                                             tooltip carry that, so the greyscale priority ramp is never the
                                             sole signal (§5). */}
                                         <div
-                                            className="flex items-center gap-2"
+                                            className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2"
                                             title={`Liko suplanuoto laiko ${user.plannedRemainingHours.toFixed(1)}h − nepadaryti skubūs/aukšto prioriteto darbai ${user.priorityLeftHours.toFixed(1)}h (${getPriorityLabel(PRIORITIES.URGENT)}: ${user.urgentLeftHours.toFixed(1)}h, ${getPriorityLabel(PRIORITIES.HIGH)}: ${user.highLeftHours.toFixed(1)}h) = ${fmtHours(user.netRemainingHours)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — likutis realiai mažesnis.` : ''}`}
                                         >
-                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Liko</span>
-                                            <span className="text-body-lg font-mono w-64 text-right tabular-nums whitespace-nowrap">
-                                                <span className="text-ink-muted">{fmtHours(user.plannedRemainingHours)}</span>
-                                                <span className="text-ink-muted"> {MINUS} </span>
-                                                <span className="text-ink-strong">{fmtHours(user.priorityLeftHours)}</span>
-                                                <span className="text-ink-muted"> = </span>
-                                                <span className={`font-bold ${user.isOverloaded ? 'text-feedback-warning-text' : 'text-ink-strong'}`}>
-                                                    {fmtHours(user.netRemainingHours)}h
+                                            <div className="flex items-baseline justify-between gap-2 md:contents">
+                                                <span className="shrink-0 text-caption text-ink-muted md:w-14">Liko</span>
+                                                <span className="text-body-lg font-mono tabular-nums whitespace-nowrap md:w-64 md:text-right">
+                                                    <span className="text-ink-muted">{fmtHours(user.plannedRemainingHours)}</span>
+                                                    <span className="text-ink-muted"> {MINUS} </span>
+                                                    <span className="text-ink-strong">{fmtHours(user.priorityLeftHours)}</span>
+                                                    <span className="text-ink-muted"> = </span>
+                                                    <span className={`font-bold ${user.isOverloaded ? 'text-feedback-warning-text' : 'text-ink-strong'}`}>
+                                                        {fmtHours(user.netRemainingHours)}h
+                                                    </span>
+                                                    {user.priorityNoEstimate > 0 && (
+                                                        <span className="text-caption text-ink-muted"> +{user.priorityNoEstimate}?</span>
+                                                    )}
                                                 </span>
-                                                {user.priorityNoEstimate > 0 && (
-                                                    <span className="text-caption text-ink-muted"> +{user.priorityNoEstimate}?</span>
-                                                )}
-                                            </span>
-                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
+                                            </div>
+                                            <div className="h-2 w-full md:flex-1 md:w-auto bg-surface-sunken rounded-full overflow-hidden flex">
                                                 <div
                                                     className={`h-full rounded-l-full ${user.highLeftHours > 0 ? '' : 'rounded-r-full'}`}
                                                     style={{
@@ -406,33 +439,31 @@ export default function CombinedHoursSummary() {
                                                 )}
                                             </div>
                                         </div>
+
+                                        {/* MOBILE placement of the verdict: its own line directly under the
+                                            balance row it belongs to. On a phone there is no room for a
+                                            side column, and squeezing it beside the numbers is what made it
+                                            overlap them. */}
+                                        {overloadBadge && (
+                                            <div className="md:hidden pt-1">{overloadBadge}</div>
+                                        )}
                                     </div>
 
-                                    {/* Overload verdict. It belongs to the BALANCE row — it is that row's
-                                        negative result put into words — so the column is bottom-aligned
-                                        to sit on the same line rather than floating beside "Dirbta",
-                                        which it says nothing about. Kept as a reserved column instead of
-                                        an inline element so flagging a member never shortens that row's
-                                        bar and breaks the scale the three bars share.
+                                    {/* DESKTOP placement of the same verdict. It belongs to the BALANCE row
+                                        — it is that row's negative result put into words — so the column is
+                                        bottom-aligned to sit on the same line rather than floating beside
+                                        "Dirbta", which it says nothing about. Kept as a reserved column
+                                        instead of an inline element so flagging a member never shortens
+                                        that row's bar and breaks the scale the three bars share.
                                         Icon + words carry it, colour only reinforces (§5). */}
                                     {combinedStats.hasOverload && (
-                                        <div className="w-32 shrink-0 flex flex-col justify-end items-end">
-                                            {user.isOverloaded && (
-                                                <span
-                                                    className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-feedback-warning-soft border border-feedback-warning-border text-feedback-warning-text text-caption font-medium"
-                                                    title={`Nespės: liko ${user.priorityLeftHours.toFixed(1)}h skubių/aukšto prioriteto darbų, o suplanuoto laiko liko tik ${user.plannedRemainingHours.toFixed(1)}h.${user.priorityNoEstimate > 0 ? ` Neįskaičiuota ${user.priorityNoEstimate} užduočių be įverčio — trūkumas yra dar didesnis.` : ''}`}
-                                                >
-                                                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                                    <span className="tabular-nums">
-                                                        Nespės {MINUS}{user.capacityDeficitHours.toFixed(1)}h
-                                                        {user.priorityNoEstimate > 0 && '+'}
-                                                    </span>
-                                                </span>
-                                            )}
+                                        <div className="hidden md:flex w-32 shrink-0 flex-col justify-end items-end">
+                                            {overloadBadge}
                                         </div>
                                     )}
                                 </div>
-                            ))
+                                );
+                            })
                         )}
                     </div>
                 </div>
