@@ -8,7 +8,7 @@
   "main": "index.js",
   "scripts": {
     "lint": "eslint .",
-    "test": "node integrityScans.test.cjs && node decisionLog.test.cjs",
+    "test": "node integrityScans.test.cjs && node decisionLog.test.cjs && node workDay.test.cjs",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"

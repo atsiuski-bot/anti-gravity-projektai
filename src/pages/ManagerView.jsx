@@ -65,7 +65,14 @@ const SortableTaskCardList = lazyWithRecovery(() => import('../components/task/S
 const ReorderableTaskTable = lazyWithRecovery(() => import('../components/task/ReorderableTaskTable'));
 
 export default function ManagerView() {
-    const { userRole, currentUser, userData, timerEngineEnabled } = useAuth();
+    const { userRole, currentUser, userData, timerEngineEnabled, timerEngineResolved } = useAuth();
+    // Which recovery net owns an orphaned run is a question about the ENGINE, so it cannot be
+    // answered before the rollout flag resolves — the same guard WorkerView applies, and for the same
+    // reason: `!timerEngineEnabled` answers "legacy" during that window, and the legacy closer only
+    // clears the projection flags, so it can tear down the visible half of a canonical run and leave
+    // active_sessions still claiming it active. Recovery runs on app open and re-runs, so waiting for
+    // a resolved answer costs nothing. (The canonical side needs no guard: 'enabled' implies resolved.)
+    const legacyRecoveryOwns = timerEngineResolved && !timerEngineEnabled;
     const { activeTab, scrollPositions } = useNavigation();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
@@ -140,14 +147,14 @@ export default function ManagerView() {
     // sessions (the work-controls pill is role-agnostic), so they need the same orphan recovery
     // WorkerView has, or a manager crash credits ghost time with no notice. Scope task recovery to
     // the manager's OWN tasks (ownTasks), never the team list. (Full-sweep C2, 2026-06-24.)
-    useOrphanedTaskRecovery(ownTasks, currentUser, !timerEngineEnabled);
+    useOrphanedTaskRecovery(ownTasks, currentUser, legacyRecoveryOwns);
     useRevisionedTaskRecovery(ownTasks, currentUser, userData, timerEngineEnabled);
 
     // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery
     // below finalize a genuinely abandoned session at its last proof of life, not the reopen instant.
     useSessionHeartbeat(currentUser);
     // Split by owning engine, exactly like the task recovery above.
-    useOrphanedSessionRecovery(currentUser, !timerEngineEnabled);
+    useOrphanedSessionRecovery(currentUser, legacyRecoveryOwns);
     useRevisionedSecondaryRecovery(currentUser, userData, timerEngineEnabled);
 
     // Worker-created tasks still awaiting THIS manager's approval (status 'unapproved' — the same

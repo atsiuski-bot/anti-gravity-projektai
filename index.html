@@ -171,11 +171,17 @@
             ? 'Atrodo, kad nėra interneto ryšio. Prisijunkite prie tinklo ir bandykite dar kartą.'
             : 'Įrenginyje liko sugadinta ankstesnė programos versija. Paspauskite „Atkurti programą“ — įrašytas darbo laikas neprarandamas.') +
           '</p>' +
-          '<button id="wz-boot-repair" type="button" style="min-height:44px;width:100%;padding:0 1.25rem;border:0;border-radius:.75rem;background:#111827;color:#fff;font-size:1rem;font-weight:600;cursor:pointer">Atkurti programą</button>' +
+          '<button id="wz-boot-repair" type="button" style="min-height:44px;width:100%;padding:0 1.25rem;border:0;border-radius:.75rem;background:#111827;color:#fff;font-size:1rem;font-weight:600;cursor:pointer">' +
+          (offline ? 'Bandyti dar kartą' : 'Atkurti programą') + '</button>' +
           '<p style="font-size:.875rem;line-height:1.6;margin:1.5rem 0 0;color:#6b7280">Jei kartojasi — praneškite administratoriui ir nurodykite savo naršyklę.</p>' +
           '</div>';
         var btn = document.getElementById('wz-boot-repair');
-        if (btn) btn.addEventListener('click', repair);
+        // OFFLINE gets a plain retry, never repair(): with no connection the boot failure is almost
+        // certainly the network, while repair() unregisters every service worker and deletes every
+        // cache — destroying the offline shell (and the FCM worker) that is the one thing letting this
+        // device work without a connection, with no way to re-download it. The destructive path is
+        // offered only when the app can actually fetch itself again.
+        if (btn) btn.addEventListener('click', offline ? function () { window.location.reload(); } : repair);
       }
 
       function check() {

@@ -450,7 +450,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                 (report surface: timer hidden, accept/revert buttons). Never a table (§9). */}
             <ul className="space-y-3 md:hidden">
                 <li className="px-1 pb-1">
-                    <h3 className="text-body font-bold text-ink">{title} ({tasks.length})</h3>
+                    <h2 className="text-body font-bold text-ink">{title} ({tasks.length})</h2>
                 </li>
                 {tasks.map((task) => {
                     const { actions, detailOverrides } = reportCardProps(task);
@@ -476,7 +476,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
             {/* Desktop / wide: denser table is allowed (§9) */}
             <div className="hidden md:block bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
             <div className="px-4 py-3 bg-surface-sunken border-b border-line">
-                <h3 className="text-body font-bold text-ink">{title} ({tasks.length})</h3>
+                <h2 className="text-body font-bold text-ink">{title} ({tasks.length})</h2>
             </div>
             <table className="min-w-full divide-y divide-line table-fixed">
                 <thead className="bg-surface-sunken">
@@ -1024,7 +1024,7 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
                     <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
                 )}
                 <User className="h-5 w-5 text-brand ml-auto flex-shrink-0" aria-hidden="true" />
-                <h3 className="text-body font-bold text-ink-strong hidden sm:block">Mano suvestinė</h3>
+                <h2 className="text-body font-bold text-ink-strong hidden sm:block">Mano suvestinė</h2>
             </div>
 
             <div className="grid grid-cols-3 divide-x divide-line">
@@ -1206,7 +1206,7 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
                     <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
                 )}
                 <Users className="h-5 w-5 text-brand ml-auto flex-shrink-0" aria-hidden="true" />
-                <h3 className="text-body font-bold text-ink-strong hidden sm:block">Komandos suvestinė</h3>
+                <h2 className="text-body font-bold text-ink-strong hidden sm:block">Komandos suvestinė</h2>
             </div>
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same

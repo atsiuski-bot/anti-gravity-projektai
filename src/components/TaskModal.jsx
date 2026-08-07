@@ -1594,14 +1594,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         <p className="mt-1 text-caption text-ink-muted">
                                             {templateScope === 'team'
                                                 ? 'Komandinį šabloną matys visa komanda.'
-                                                : 'Asmeninį šabloną matote tik jūs.'}
+                                                : 'Asmeninį šabloną matote tik Jūs.'}
                                         </p>
                                     </>
                                 ) : (
                                     <p className="text-body text-ink-muted">
                                         {templateScope === 'team'
                                             ? 'Komandinis šablonas — tvarko administratorius.'
-                                            : 'Asmeninis šablonas — matomas tik jums.'}
+                                            : 'Asmeninis šablonas — matomas tik Jums.'}
                                     </p>
                                 )}
                             </div>

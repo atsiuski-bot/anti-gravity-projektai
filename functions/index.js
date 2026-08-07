@@ -252,7 +252,7 @@ function copyForRequestNotification(n) {
         case 'task_edited':
             return { title: 'Užduotis pakeista', body: title };
         case 'task_unassigned':
-            return { title: 'Užduotis nebepriskirta jums', body: title };
+            return { title: 'Užduotis nebepriskirta Jums', body: title };
         case 'task_deleted':
             return { title: 'Užduotis ištrinta', body: title };
         case 'task_confirmed':
@@ -979,24 +979,30 @@ async function assertActiveCaller(callerUid, roles) {
 // "a worker uid can never be in it". The manager arm below has enforced that assumption for a while;
 // the SENIOR arm did not, which is the half of a demotion that kept leaking authority.
 //
-// Same positive-disconfirmation rule throughout: an unreadable candidate is KEPT (a Firestore blip
-// must never strip a legitimate overseer from their whole team), and only a successful read showing
-// a non-overseer role drops the uid.
+// A uid is dropped only on POSITIVE disconfirmation (a successful read showing a non-overseer role);
+// an absent doc is a deleted account, which is also a positive answer.
+//
+// An UNREADABLE candidate throws — the same rule overseersFor applies to its own read, and for the
+// same reason. Keeping the uid on a failed read looked like the cautious choice ("never strip a
+// legitimate overseer on a blip"), but it is not conservative at all: it WRITES a stamp asserting
+// that a possibly-demoted uid still oversees this person, and firestore.rules grants cross-user write
+// access on closure membership alone. Worse, it is durable — the closure is recomputed only when a
+// role next changes, so the leak survives until someone happens to trigger another restamp, which on
+// the demotion path is exactly the write that was supposed to REVOKE the access.
+//
+// Throwing strips nobody: the stamp write simply does not happen, the row keeps the closure it
+// already had, and the platform retries the invocation (every stamp trigger carries retry:true — see
+// their definitions) until Firestore answers, at which point the closure is computed correctly.
 async function keepOverseerRoles(uids) {
     const kept = await Promise.all(uids.map(async (id) => {
-        try {
-            const snap = await db.collection('users').doc(id).get();
-            if (!snap.exists) return null; // deleted account — not an overseer of anyone
-            const role = snap.data().role || 'worker';
-            if (!OVERSEER_ROLES.includes(role)) {
-                logger.info('overseersFor dropped a demoted overseer from the closure', { uid: id, role });
-                return null;
-            }
-            return id;
-        } catch (err) {
-            logger.warn('overseer role verification failed', { uid: id, err: err.message });
-            return id; // unverified ≠ disproven — keep reach rather than break it on a blip
+        const snap = await db.collection('users').doc(id).get();
+        if (!snap.exists) return null; // deleted account — not an overseer of anyone
+        const role = snap.data().role || 'worker';
+        if (!OVERSEER_ROLES.includes(role)) {
+            logger.info('overseersFor dropped a demoted overseer from the closure', { uid: id, role });
+            return null;
         }
+        return id;
     }));
     return kept.filter(Boolean);
 }
@@ -1040,30 +1046,25 @@ async function overseersFor(uid) {
         // teamManagerIds contains the changed uid whenever a role changes, and the manager document
         // is already being read below for seniorManagerIds — so this costs no extra reads.
         //
-        // A FAILED read keeps the uid (the pre-existing behaviour): we drop a manager only on
-        // POSITIVE disconfirmation of their role, never because Firestore hiccuped, so a transient
-        // error cannot strip a legitimate manager's access to their whole team until the next stamp.
+        // A FAILED read throws rather than keeping the uid — see keepOverseerRoles for why keeping it
+        // is the dangerous option and why throwing strips nobody. The error reaches the outer catch,
+        // which rethrows so the (retry:true) invocation runs again against the previous stamp.
         const mgrs = Array.isArray(u.teamManagerIds) ? u.teamManagerIds.filter(Boolean) : [];
         const result = new Set();
         await Promise.all(mgrs.map(async (m) => {
-            try {
-                const msnap = await db.collection('users').doc(m).get();
-                if (!msnap.exists) return; // deleted account — not an overseer of anyone
-                const mdata = msnap.data();
-                if (!OVERSEER_ROLES.includes(mdata.role || 'worker')) {
-                    logger.info('overseersFor dropped a demoted manager from the closure', { uid, manager: m, role: mdata.role || 'worker' });
-                    return;
-                }
-                result.add(m);
-                const seniors = mdata.seniorManagerIds;
-                // Role-verified, not copied: see keepOverseerRoles — a senior demoted to worker must
-                // not be folded back into this worker's closure.
-                if (Array.isArray(seniors)) {
-                    (await keepOverseerRoles(seniors.filter(Boolean))).forEach((s) => result.add(s));
-                }
-            } catch (err) {
-                logger.warn('overseersFor manager read failed', { manager: m, err: err.message });
-                result.add(m); // unverified ≠ disproven — keep reach rather than break it on a blip
+            const msnap = await db.collection('users').doc(m).get();
+            if (!msnap.exists) return; // deleted account — not an overseer of anyone
+            const mdata = msnap.data();
+            if (!OVERSEER_ROLES.includes(mdata.role || 'worker')) {
+                logger.info('overseersFor dropped a demoted manager from the closure', { uid, manager: m, role: mdata.role || 'worker' });
+                return;
+            }
+            result.add(m);
+            const seniors = mdata.seniorManagerIds;
+            // Role-verified, not copied: see keepOverseerRoles — a senior demoted to worker must
+            // not be folded back into this worker's closure.
+            if (Array.isArray(seniors)) {
+                (await keepOverseerRoles(seniors.filter(Boolean))).forEach((s) => result.add(s));
             }
         }));
         return [...result];
@@ -1819,10 +1820,12 @@ async function readCanonicalRun(uid, match) {
     if (!uid) return { ok: true, run: null };
     try {
         const snap = await db.collection('active_sessions').doc(uid).get();
-        return { ok: true, run: snap.exists ? canonicalRunOf(snap.data(), match) : null };
+        return { ok: true, run: snap.exists ? canonicalRunOf(snap.data(), match) : null, error: null };
     } catch (err) {
         logger.warn('canonical run read failed', { uid, err: err.message });
-        return { ok: false, run: null };
+        // The cause is carried out, not just logged: a caller that must record the deferral needs
+        // something to record it WITH.
+        return { ok: false, run: null, error: err };
     }
 }
 
@@ -2287,9 +2290,13 @@ async function createIfAbsent(ref, data) {
 // independent closers idempotent against EACH OTHER: if the worker reopens the app at ~scan time,
 // the client and this net both resolve the same session, but both write the SAME id, so only one
 // row survives (create() here / setDoc on the client) — no double-credit.
-async function writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData, canonicalRun = null }) {
+// `nowIso` is when this net WROTE the row (createdAt); `endIso`/`endAt` is when the credited stretch
+// ENDED (the session's last proof of life). They are the same instant only when no heartbeat was
+// usable. Keeping them apart is what the client closer does too — createdAt is the real write, while
+// endTime/completedAt/date describe the session — so the two closers' rows stay comparable.
+async function writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, endIso, endAt, userData, canonicalRun = null }) {
     const startTime = session.startTime;
-    const timeString = vilniusHHMM(now);
+    const timeString = vilniusHHMM(endAt);
 
     if (session.type === 'break') {
         // Call and quick-work already key their ids on (uid + start) in BOTH engines, so those
@@ -2300,8 +2307,8 @@ async function writeSecondaryCloseRecords({ uid, userName, session, startMs, dur
             ? `sess_break_run_${canonicalRun.runId}`
             : `sess_break_${uid}_${startMs}`;
         await createIfAbsent(db.collection('break_sessions').doc(breakId), {
-            userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
-            createdAt: nowIso, completedAt: nowIso, isBreak: true,
+            userId: uid, userName, startTime, endTime: endIso, durationMinutes, date,
+            createdAt: nowIso, completedAt: endIso, isBreak: true,
             ...(canonicalRun
                 ? { runId: canonicalRun.runId, engineVersion: TIMER_ENGINE_VERSION }
                 : {}),
@@ -2318,13 +2325,13 @@ async function writeSecondaryCloseRecords({ uid, userName, session, startMs, dur
             status: 'confirmed', priority: DEFAULT_TASK_PRIORITY,
             assignedUserId: uid, assignedUserName: userName,
             createdBy: uid, creatorName: userName,
-            createdAt: nowIso, completedAt: nowIso, completed: true,
-            confirmedBy: uid, confirmedAt: nowIso,
+            createdAt: nowIso, completedAt: endIso, completed: true,
+            confirmedBy: uid, confirmedAt: endIso,
             manualMinutes: durationMinutes, isSystemTask: true,
         });
         await createIfAbsent(db.collection('work_sessions').doc(`sess_call_ws_${uid}_${startMs}`), {
             taskId: `call_${startMs}`, taskTitle: callTitle, contactType: null,
-            userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
+            userId: uid, userName, startTime, endTime: endIso, durationMinutes, date,
             createdAt: nowIso, isSystemTask: true,
         });
         return;
@@ -2346,14 +2353,14 @@ async function writeSecondaryCloseRecords({ uid, userName, session, startMs, dur
             status: isManager ? 'confirmed' : 'completed', priority: DEFAULT_TASK_PRIORITY,
             assignedUserId: uid, assignedUserName: userName,
             createdBy: uid, creatorName: userName,
-            createdAt: nowIso, completedAt: nowIso, completed: true,
-            confirmedBy: isManager ? uid : null, confirmedAt: isManager ? nowIso : null,
+            createdAt: nowIso, completedAt: endIso, completed: true,
+            confirmedBy: isManager ? uid : null, confirmedAt: isManager ? endIso : null,
             taskAuditor: routedManagerId, managerId: routedManagerId,
             manualMinutes: durationMinutes, isQuickWork: true, autoStopped, workSessionId: wsId,
         });
         await createIfAbsent(db.collection('work_sessions').doc(wsId), {
             taskId: `quick_${startMs}`, taskTitle: title,
-            userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
+            userId: uid, userName, startTime, endTime: endIso, durationMinutes, date,
             createdAt: nowIso, isQuickWork: true,
         });
     }
@@ -2377,10 +2384,6 @@ async function autoCloseForgottenSessions(scanErrors) {
     const now = new Date();
     const nowIso = now.toISOString();
     const nowMs = now.getTime();
-    // Work day, not calendar day — this net writes the same work_sessions/break_sessions rows the
-    // client writes, and the two must file identically or one closer's row lands in a day window
-    // the other's does not.
-    const date = currentWorkDay(now);
     let closed = 0;
     const samples = [];
     const audits = [];
@@ -2393,7 +2396,28 @@ async function autoCloseForgottenSessions(scanErrors) {
 
         const uid = docSnap.id;
         const startMs = new Date(session.startTime).getTime();
-        const durationMinutes = clampSecondaryMinutes((nowMs - startMs) / 60000);
+        // Credit only the PROVEN stretch. The client beats `activeSessionLastHeartbeat` once a minute
+        // for as long as a secondary session runs (useSessionHeartbeat), so the last beat is the last
+        // instant the app was demonstrably alive on it — everything after it is dead gap the worker
+        // did not spend on this session. Ending at the SCAN instant instead credited that gap, up to
+        // the full 16h ceiling, on nothing but the absence of a stop.
+        //
+        // It also disagreed with the other closer. useOrphanedSessionRecovery already finalizes an
+        // abandoned session at its last beat, and both closers write the SAME deterministic id — so a
+        // divergence here does not merely over-credit, it makes the credited duration depend on which
+        // closer happened to arrive first. No usable beat (pre-heartbeat data, or a session killed
+        // before its first) → fall back to the scan instant, exactly as before.
+        const beatMs = new Date(u.activeSessionLastHeartbeat || '').getTime();
+        const endMs = (Number.isFinite(beatMs) && beatMs >= startMs && beatMs <= nowMs) ? beatMs : nowMs;
+        const endAt = new Date(endMs);
+        const endIso = endAt.toISOString();
+        // Work day, not calendar day, and derived from the END of the credited stretch rather than
+        // from the scan: this net writes the same work_sessions/break_sessions rows the client writes,
+        // and the two must file identically or one closer's row lands in a day window the other's
+        // does not — which is exactly what happens when the beat is from yesterday and the scan is
+        // running today.
+        const date = currentWorkDay(endAt);
+        const durationMinutes = clampSecondaryMinutes((endMs - startMs) / 60000);
         const userName = u.displayName || 'Nežinomas';
 
         try {
@@ -2404,15 +2428,21 @@ async function autoCloseForgottenSessions(scanErrors) {
             // An UNREADABLE canonical record is not a legacy one. Choosing an engine on a guess picks
             // the ledger id, and the wrong id is what lets one physical interval be credited twice.
             // Leave this session for the next run; nothing here is time-critical.
+            //
+            // Recorded as a scan error, not merely logged: deferring is the right ACTION but it means
+            // this user's abandoned session was NOT closed, and a silent `continue` is indistinguishable
+            // from "nobody had one" — the scan would then publish complete:true / severity:'ok' while a
+            // forgotten timer kept running. Same standard the users-query failure above is held to.
             if (!probe.ok) {
                 logger.warn('autoCloseForgottenSessions deferred — canonical state unreadable', { uid });
+                noteScanError(scanErrors, `autoCloseForgottenSessions:probe:${uid}`, probe.error || new Error('canonical state unreadable'));
                 continue;
             }
             const canonicalRun = probe.run;
 
             // (1) Credit the clamped time as a record (sub-minute taps are discarded, as on the client).
             if (durationMinutes > MIN_LOGGED_SECONDARY_MINUTES) {
-                await writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData: u, canonicalRun });
+                await writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, endIso, endAt, userData: u, canonicalRun });
             }
             // (2) Clear the live flags so the session no longer hangs (and the client won't re-close it).
             // We deliberately do NOT touch breakState.dailyAccumulatedMinutes: it is a display-only
@@ -2420,15 +2450,40 @@ async function autoCloseForgottenSessions(scanErrors) {
             // abandoned break is almost always cross-day, so adding to "today's" total would be both
             // pointless (wiped on the worker's next open) and mis-attributed. The durable, report-read
             // truth is the break_sessions row written above.
-            const updates = { activeSession: null };
-            if (session.type === 'break') {
-                updates['breakState.isTakingBreak'] = false;
-            } else if (session.type === 'call') {
-                updates['callState.isCalling'] = false;
-            } else if (session.type === 'quickWork') {
-                updates['quickWorkState.isQuickWorking'] = false;
+            //
+            // TRANSACTIONAL, re-matched on the SAME (type + start instant) inside — for the same
+            // reason releaseCanonicalRun re-checks its own match. `snap` was read once at the top of
+            // the scan, so by the time this line runs the worker may have stopped that session and
+            // started a NEW one. A blind `update({activeSession: null})` would then null the
+            // projection of a session that is genuinely running: the worker's screen falls idle while
+            // active_sessions still claims the run, which is precisely the wedged state step (3)
+            // exists to prevent — and the credited row for the CURRENT run is never written, because
+            // the client's own stop can no longer find a session to close.
+            const cleared = await db.runTransaction(async (tx) => {
+                const fresh = await tx.get(docSnap.ref);
+                if (!fresh.exists) return false;
+                const live = resolveSecondarySession(fresh.data() || {});
+                if (!live || live.type !== session.type || live.startTime !== session.startTime) return false;
+                const updates = { activeSession: null };
+                if (session.type === 'break') {
+                    updates['breakState.isTakingBreak'] = false;
+                } else if (session.type === 'call') {
+                    updates['callState.isCalling'] = false;
+                } else if (session.type === 'quickWork') {
+                    updates['quickWorkState.isQuickWorking'] = false;
+                }
+                tx.update(docSnap.ref, updates);
+                return true;
+            });
+            // Losing that race is a clean no-op, not a fault: the only way the projection stops
+            // matching is that another closer (the client's orphan recovery, or an explicit stop)
+            // already ended this exact session — which means it also released the canonical record
+            // and notified the worker. Our credit write above landed on the same deterministic id and
+            // deduped. So stop here rather than release a run we no longer own and notify twice.
+            if (!cleared) {
+                logger.info('autoCloseForgottenSessions skipped — session changed during the scan', { uid, type: session.type });
+                continue;
             }
-            await docSnap.ref.update(updates);
 
             // (3) Retire the canonical record for the same run. Clearing users/{uid}.activeSession
             // alone would leave active_sessions still claiming an active break/call/quick-work, and

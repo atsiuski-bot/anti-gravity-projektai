@@ -91,6 +91,11 @@ export default function SessionEditModal({
     const [title, setTitle] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
+    // The correction landed on the canonical work_sessions row but its task counter could not be
+    // re-derived (the action layer reports that as `reconciled:false`). This is NOT a failed save —
+    // reports and pay are already right — so it must not read as an error; but closing on it as if
+    // everything succeeded is what let a permanently stale card total look like a clean correction.
+    const [staleNotice, setStaleNotice] = useState(false);
     const [confirmingDelete, setConfirmingDelete] = useState(false);
 
     const fieldId = useId();
@@ -100,6 +105,7 @@ export default function SessionEditModal({
     useEffect(() => {
         if (!open) return;
         setError(null);
+        setStaleNotice(false);
         setConfirmingDelete(false);
         setReason('');
         if (isCreate) {
@@ -157,6 +163,14 @@ export default function SessionEditModal({
 
     const liveError = complete && derived && !derived.ok ? ERROR_COPY[derived.error] : null;
 
+    // Acknowledging the partial outcome performs the close the clean path takes immediately — just
+    // after the admin has read the notice. `onSaved` cannot fire earlier: one parent implements it as
+    // "unmount the modal" (TaskDetailsModals), which would tear the notice down before it is seen.
+    const handleAcknowledge = () => {
+        onSaved?.();
+        onClose?.();
+    };
+
     const handleSave = async () => {
         setBusy(true);
         setError(null);
@@ -179,8 +193,10 @@ export default function SessionEditModal({
               });
         setBusy(false);
         if (result.ok) {
-            onSaved?.();
-            onClose?.();
+            // Hold the modal open on a partial outcome so the admin is told the card total may lag,
+            // instead of watching the same clean close a fully-reconciled save produces.
+            if (result.reconciled === false) setStaleNotice(true);
+            else handleAcknowledge();
         } else {
             setError(ERROR_COPY[result.error] || ERROR_COPY.write);
         }
@@ -194,12 +210,11 @@ export default function SessionEditModal({
             editor,
         });
         setBusy(false);
+        setConfirmingDelete(false);
         if (result.ok) {
-            setConfirmingDelete(false);
-            onSaved?.();
-            onClose?.();
+            if (result.reconciled === false) setStaleNotice(true);
+            else handleAcknowledge();
         } else {
-            setConfirmingDelete(false);
             setError(ERROR_COPY[result.error] || ERROR_COPY.write);
         }
     };
@@ -221,7 +236,10 @@ export default function SessionEditModal({
                 size="lg"
                 footer={
                     <div className="flex items-center gap-2">
-                        {!isCreate && (
+                        {/* Once the write has landed the only remaining action is to acknowledge the
+                            partial outcome — offering Save again would re-apply an edit that already
+                            succeeded, and Delete would act on a row the admin has just corrected. */}
+                        {!isCreate && !staleNotice && (
                             <Button
                                 variant="ghost"
                                 icon={Trash2}
@@ -232,12 +250,19 @@ export default function SessionEditModal({
                                 Ištrinti
                             </Button>
                         )}
-                        <Button variant="secondary" onClick={onClose} disabled={busy} className={isCreate ? 'ml-auto' : ''}>
-                            Atšaukti
+                        <Button
+                            variant={staleNotice ? 'primary' : 'secondary'}
+                            onClick={staleNotice ? handleAcknowledge : onClose}
+                            disabled={busy}
+                            className={isCreate || staleNotice ? 'ml-auto' : ''}
+                        >
+                            {staleNotice ? 'Uždaryti' : 'Atšaukti'}
                         </Button>
-                        <Button variant="primary" onClick={handleSave} disabled={!canSave} loading={busy}>
-                            {isCreate ? 'Pridėti' : 'Išsaugoti'}
-                        </Button>
+                        {!staleNotice && (
+                            <Button variant="primary" onClick={handleSave} disabled={!canSave} loading={busy}>
+                                {isCreate ? 'Pridėti' : 'Išsaugoti'}
+                            </Button>
+                        )}
                     </div>
                 }
             >
@@ -351,6 +376,20 @@ export default function SessionEditModal({
                             className={inputClass}
                         />
                     </div>
+
+                    {staleNotice && (
+                        <div
+                            role="status"
+                            className="flex items-start gap-2 rounded-control bg-feedback-warning-soft p-3 text-body text-feedback-warning-text"
+                        >
+                            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+                            <span>
+                                Pakeitimas išsaugotas — ataskaitos ir apmokamas laikas jau teisingi.
+                                Tačiau veiklos kortelės bendros sumos perskaičiuoti nepavyko, todėl ji
+                                kurį laiką gali rodyti seną skaičių.
+                            </span>
+                        </div>
+                    )}
 
                     {(liveError || error) && (
                         <div className="flex items-start gap-2 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">

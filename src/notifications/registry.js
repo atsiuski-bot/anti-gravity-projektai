@@ -206,7 +206,7 @@ export const NOTIFICATIONS = {
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis nebepriskirta jums', body: n.taskTitle || 'Gildija' }),
+        copy: (n) => ({ title: 'Užduotis nebepriskirta Jums', body: n.taskTitle || 'Gildija' }),
     },
     task_deleted: {
         category: 'info',

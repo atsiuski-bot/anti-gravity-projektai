@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useNavigation } from '../context/NavigationContext';
+import { getFlatTabs } from '../config/navTabs';
 import { hasPersistentCache } from '../firebase';
 import { ConnectionOfflineGlyph } from './icons/connectionGlyphs';
 import AppHeader from './AppHeader';
@@ -17,7 +19,18 @@ import TimerSyncNotice from './TimerSyncNotice';
 import OnboardingWelcome from './OnboardingWelcome';
 
 export default function Layout({ children }) {
-    const { userData, isTakingBreak, workStatus } = useAuth();
+    const { userData, userRole, isTakingBreak, workStatus } = useAuth();
+    const { activeTab } = useNavigation();
+
+    // The name of the view currently on screen, rendered as the page's ONE <h1> below.
+    //
+    // This is a single-route, tab-navigated app whose chrome deliberately carries no visible page
+    // title (the bottom bar / side rail already shows which tab is active), so no view rendered a
+    // heading at all: a screen-reader user jumping by heading landed on section titles with nothing
+    // above them saying WHICH screen they were on, and Reports' own headings started at <h3> under
+    // no ancestor at all. Derived from the SAME nav config the tab bar renders, so the spoken page
+    // name can never drift from the tab the worker actually tapped.
+    const pageTitle = getFlatTabs(userRole).find((t) => t.id === activeTab)?.label || 'Gildija';
 
     // The daily automation that used to run here is gone. Priority escalation moved to
     // escalateTaskPriorities and archiving to archiveFinishedTasks (05:30 Vilnius) — both scheduled
@@ -153,6 +166,11 @@ export default function Layout({ children }) {
                     <BatteryOptimizationNudge />
 
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
+                        {/* Visually hidden, not visible: the calm chrome intentionally shows no page
+                            title (DESIGN_SYSTEM §4-D), so this restores the missing document structure
+                            WITHOUT redesigning the surface. Not a live region — it is here to be FOUND
+                            (heading navigation / "what screen am I on"), not to interrupt. */}
+                        <h1 className="sr-only">{pageTitle}</h1>
                         <div className="relative z-10">
                             {/* Retroactive description for quick-work sessions ended on another
                                 device — a calm prompt that never collides with the shell above. */}

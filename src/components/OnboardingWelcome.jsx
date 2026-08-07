@@ -29,7 +29,7 @@ const WELCOME_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const STEPS = [
     {
         title: 'Jūsų užduotys',
-        body: 'Skiltyje „Veiklos" matysite jums priskirtas užduotis. Veiklą pradėkite paspaudę „Pradėti".',
+        body: 'Skiltyje „Veiklos" matysite Jums priskirtas užduotis. Veiklą pradėkite paspaudę „Pradėti".',
     },
     {
         title: 'Pertraukos ir skambučiai',

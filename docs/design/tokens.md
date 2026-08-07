@@ -80,7 +80,7 @@ very-low) so "more urgent = louder against the canvas" holds without glare.
 | `border.default` | gray-200 (`#E5E7EB`) | card/control borders, dividers |
 | `text.strong` | gray-900 (`#111827`) | headings, primary numbers |
 | `text.default` | gray-700 (`#374151`) | body |
-| `text.muted` | gray-500 (`#6B7280`) | meta — **only on white** (4.83:1 ✓); never on a colored shell |
+| `text.muted` | gray-600 (`#4B5563`) | meta — clears 4.5:1 on **all three** surfaces (6.4–7.0:1); never on a colored shell |
 
 ### Session colors (closed set — §4 of the design system)
 
@@ -90,7 +90,7 @@ secondary control). **All session-aware code reads this one map.**
 
 | Session | `shell` | `surface` | `accent` | `soft` (border/ring) | Label (LT) |
 |---|---|---|---|---|---|
-| `session.quickWork` | red-500 (`#EF4444`) | red-50 (`#FEF2F2`) | red-700 (`#B91C1C`) | red-200 (`#FECACA`) | "Greitas darbas" |
+| `session.quickWork` | red-600 (`#DC2626`) | red-50 (`#FEF2F2`) | red-700 (`#B91C1C`) | red-200 (`#FECACA`) | "Greitas darbas" |
 | `session.call` | blue-100 (`#DBEAFE`) | blue-50 (`#EFF6FF`) | blue-600 (`#2563EB`) | blue-200 (`#BFDBFE`) | "Skambutis" |
 | `session.break` | amber-100 (`#FEF3C7`) | amber-50 (`#FFFBEB`) | amber-700 (`#B45309`) | amber-200 (`#FDE68A`) | "Pertrauka" |
 | `session.task` | green-200 (`#BBF7D0`) | green-100 (`#DCFCE7`) | green-700 (`#15803D`) | green-200 (`#BBF7D0`) | "Vyksta darbas" |
@@ -145,7 +145,7 @@ and `platinum` a cool blue-slate, so the contrast-risk pair reads as two distinc
 
 | Token | Value | Use |
 |---|---|---|
-| `feedback.success` | green-600 (`#16A34A`) | success text/icon (on white; on tint use green-700 for ≥4.5:1) |
+| `feedback.success` | green-700 (`#15803D`) | success fill + text/icon. **Not** green-600: this is a FILL white text rides on (`Button variant="success"`), and green-600 gave white only 3.30:1 — green-700 is 5.02:1 |
 | `feedback.warning` | amber-500 (`#F59E0B`) | warnings |
 | `feedback.danger` | red-600 (`#DC2626`) | inline errors, destructive |
 | `feedback.info` | indigo-600 (`#4F46E5`) | informational |
@@ -346,10 +346,10 @@ extend: {
   colors: {
     brand:   { DEFAULT: '#4F46E5', hover: '#4338CA', soft: '#EEF2FF', ring: '#4F46E5' /* dark: #A5B4FC */ },
     surface: { base: '#F9FAFB', card: '#FFFFFF', sunken: '#F3F4F6' },
-    ink:     { strong: '#111827', DEFAULT: '#374151', muted: '#6B7280' }, // text-ink, -strong, -muted
+    ink:     { strong: '#111827', DEFAULT: '#374151', muted: '#4B5563' }, // text-ink, -strong, -muted
     line:    '#E5E7EB',                                                   // border-line
     session: {
-      quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C', soft: '#FECACA' },
+      quickWork: { shell: '#DC2626', surface: '#FEF2F2', accent: '#B91C1C', soft: '#FECACA' },
       call:      { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB', soft: '#BFDBFE' },
       break:     { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309', soft: '#FDE68A' },
       task:      { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D', soft: '#BBF7D0' },
@@ -361,7 +361,7 @@ extend: {
       gold:     { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A', label: 'var(--tier-gold-label)' },
       platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6', label: 'var(--tier-platinum-label)' },
     },
-    feedback: { success: '#16A34A', warning: '#F59E0B', danger: '#DC2626', info: '#4F46E5', offline: '#1E293B', scrim: 'rgb(0 0 0 / 0.5)' },
+    feedback: { success: '#15803D', warning: '#F59E0B', danger: '#DC2626', info: '#4F46E5', offline: '#1E293B', scrim: 'rgb(0 0 0 / 0.5)' },
   },
   fontSize: {
     caption: ['12px', '16px'], body: ['14px', '20px'], 'body-lg': ['16px', '24px'],
