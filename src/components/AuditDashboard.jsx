@@ -15,6 +15,7 @@ import EmptyState from './ui/EmptyState';
 import Select from './ui/Select';
 import { Spinner } from './ui/Loading';
 import { logError } from '../utils/errorLog';
+import { STATUS_LABELS } from '../utils/taskConstants';
 import { cn } from '../utils/cn';
 import { deriveIntegrityView } from './auditDashboard.helpers';
 
@@ -281,6 +282,10 @@ function FindingsSection({ title, findings, ui, checked }) {
 function IntegrityReportCard({ report, prominent }) {
     const counts = report.counts && typeof report.counts === 'object' ? report.counts : {};
     const drops = Array.isArray(report.drops) ? report.drops : [];
+    // Report-only measurement (added after the nets above), so older reports simply lack it.
+    const composition = report.taskComposition && typeof report.taskComposition === 'object'
+        ? report.taskComposition
+        : null;
     const {
         incomplete, scanErrors, anomalies, stopped, deferred, autoClosed, stale,
         creditFindings, creditChecked, hasCreditSection,
@@ -327,6 +332,36 @@ function IntegrityReportCard({ report, prominent }) {
                             <span className="font-semibold">{typeof n === 'number' ? n.toLocaleString('lt-LT') : '—'}</span>
                         </span>
                     ))}
+                </div>
+            )}
+
+            {/* Active-task composition. NOT a finding — it carries no tint and never colours the
+                severity pill — but it is the number that decides whether a long manager list is a
+                data-volume problem or an acceptance backlog. The caption states the reading rule so
+                the row is interpretable without going back to the code that produced it. */}
+            {composition && (
+                <div className="mt-3">
+                    <p className="text-caption font-semibold uppercase tracking-wide text-ink-muted">
+                        Aktyvių užduočių sudėtis
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                        {Object.entries(composition).map(([status, n]) => (
+                            <span
+                                key={status}
+                                className="inline-flex items-center gap-1.5 rounded-control border border-line bg-surface-sunken px-2 py-1 text-caption text-ink"
+                            >
+                                <span className="text-ink-muted">{STATUS_LABELS[status] || status}</span>
+                                <span className="font-semibold">
+                                    {typeof n === 'number' ? n.toLocaleString('lt-LT') : '—'}
+                                </span>
+                            </span>
+                        ))}
+                    </div>
+                    <p className="mt-1 text-caption text-ink-muted">
+                        Priimtos ir ištrintos užduotys kas naktį iškeliauja į archyvą, todėl šis sąrašas
+                        gali būti ilgas tik dėl nebaigto darbo. Didelis „Laukia priėmimo“ skaičius reiškia
+                        priėmimo eilę, o ne duomenų kiekį.
+                    </p>
                 </div>
             )}
 

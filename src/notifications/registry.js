@@ -43,6 +43,9 @@ const clamp = (text, max = 100) => String(text || '').replace(/\s+/g, ' ').trim(
 const TAB_TASKS = '/?tab=tasks';
 const TAB_CALENDAR = '/?tab=calendar';
 const TAB_PROFILE = '/?tab=profile';
+// Admin-only tab; the only notification that links here is the integrity alert, whose recipients
+// are admins by construction.
+const TAB_AUDIT = '/?tab=audit';
 
 /**
  * PUSH ACTION BUTTONS — the OS-level decision buttons on a background notification (ADR 0024).
@@ -432,6 +435,24 @@ export const NOTIFICATIONS = {
     },
 
     // ── System → admin / manager ─────────────────────────────────────────────────────────────────
+    // The nightly integrity scan's verdict, delivered. The scan already derives an honest severity
+    // (and refuses to call an INCOMPLETE run clean), but it only ever wrote that verdict into
+    // integrity_reports/{day} — so the whole safety net depended on an admin remembering to open the
+    // audit tab. This is its last mile. Deliberately NOT fired on every 'warning': a routine
+    // self-repair (a forgotten break the net closed) already notifies the worker it belongs to, and
+    // an alert that arrives every morning is an alert nobody reads. See the emitter for the split.
+    integrity_alert: {
+        category: 'action',
+        sound: 'alert',
+        push: true,
+        link: TAB_AUDIT,
+        copy: (n) => ({
+            title: n.severity === 'critical'
+                ? 'Duomenų vientisumas: kritinis įspėjimas'
+                : 'Duomenų vientisumas: reikia peržiūros',
+            body: n.day ? `Patikra ${n.day}` : 'Gildija',
+        }),
+    },
     account_approval: {
         category: 'action',
         sound: 'alert',

@@ -556,6 +556,8 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     // whitespace-clamp on userName (the only free-form field) on both client and server mirrors.
     backdated_time_logged: [{ userName: '  Jonas   Jonaitis ', day: '2026-06-20' }, { day: '2026-06-20' }, {}],
     account_approval: [{ targetUserName: 'Jonas Jonaitis' }, { targetUserEmail: 'j@x.lt' }, {}],
+    // Both severities (the title branches on it) plus the no-day fallback.
+    integrity_alert: [{ severity: 'critical', day: '2026-08-07' }, { severity: 'warning', day: '2026-08-07' }, {}],
     recurring_reassign: [{ taskTitle: 'Užduotis' }],
     // Both label-present branches (Skubus/Aukštas) and the missing-field fallbacks.
     task_priority_escalated: [{ taskTitle: 'Užduotis', priorityLabel: 'Skubus' }, { taskTitle: 'Užduotis', priorityLabel: 'Aukštas' }, { taskTitle: 'Užduotis' }, {}],

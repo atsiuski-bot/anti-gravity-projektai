@@ -159,6 +159,7 @@ const CATEGORY_BY_TYPE = {
     task_waiting: 'info',
     task_reverted: 'action',
     account_approval: 'action',
+    integrity_alert: 'action',
     recurring_reassign: 'action',
     new_comment: 'info',
     new_photo: 'info',
@@ -246,6 +247,14 @@ function copyForRequestNotification(n) {
         case 'account_approval':
             // System → admin: a new sign-up awaits approval. Body = the pending user's name/email.
             return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'Gildija' };
+        case 'integrity_alert':
+            // System → admin: the nightly integrity scan found something a human must look at.
+            return {
+                title: n.severity === 'critical'
+                    ? 'Duomenų vientisumas: kritinis įspėjimas'
+                    : 'Duomenų vientisumas: reikia peržiūros',
+                body: n.day ? `Patikra ${n.day}` : 'Gildija',
+            };
         case 'task_approved':
             // `edited` collapses approve+edit into one notice (mirror of the registry variant).
             return { title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: title };
@@ -361,9 +370,10 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     if (!n || !n.recipientId) return;
     const { title, body } = copyForRequestNotification(n);
     // Deep-link MIRROR of the registry: calendar decisions → the calendar, a badge → the profile,
-    // everything else → tasks.
+    // an integrity alert → the (admin-only) audit tab, everything else → tasks.
     const link = n.type === 'calendar_decision' ? '/?tab=calendar'
         : n.type === 'achievement' ? '/?tab=profile'
+        : n.type === 'integrity_alert' ? '/?tab=audit'
         : '/?tab=tasks';
     // OS-level decision buttons for this type, if it has any. FCM data values must be strings, so
     // they ride as JSON; the key is omitted entirely for the (majority) tap-only types, keeping the
@@ -1406,6 +1416,23 @@ exports.backfillTeamStamps = onCall(async (request) => {
 // Admin SDK writes here BYPASS firestore.rules entirely, so no rules change is needed for these
 // docs (the client-side create rule's provenance check does not apply to the admin SDK). Each doc
 // carries the target's uid/name/email so the card can act without an extra read, and starts unread.
+// Every ACTIVE admin, under both role spellings — the recipient set for a system→admin notice.
+//
+// Extracted rather than repeated: this encodes WHO counts as an admin and the rule that a BLOCKED
+// account is not a recipient (offboarding is the app's only such control, so a second copy of this
+// query that forgot `isDisabled` would quietly keep alerting an ex-employee). Both callers below
+// are system-authored notices; a third one gets the rule by construction.
+async function activeAdminUids(excludeUid = null) {
+    const uids = new Set();
+    for (const role of ['admin', 'Administratorius']) {
+        const snap = await db.collection('users').where('role', '==', role).get();
+        snap.forEach((d) => {
+            if (d.id !== excludeUid && d.data().isDisabled !== true) uids.add(d.id);
+        });
+    }
+    return [...uids];
+}
+
 exports.notifyAdminsOnPendingSignup = onDocumentCreated('users/{id}', async (event) => {
     const snap = event.data;
     if (!snap) return;
@@ -1415,15 +1442,9 @@ exports.notifyAdminsOnPendingSignup = onDocumentCreated('users/{id}', async (eve
 
     const targetUserId = event.params.id;
     try {
-        // Every active admin is a recipient. Both legacy role spellings are honored.
-        const adminUids = new Set();
-        for (const role of ['admin', 'Administratorius']) {
-            const adminsSnap = await db.collection('users').where('role', '==', role).get();
-            adminsSnap.forEach((d) => {
-                if (d.id !== targetUserId && d.data().isDisabled !== true) adminUids.add(d.id);
-            });
-        }
-        if (!adminUids.size) {
+        // Every active admin is a recipient (the pending user themself is excluded).
+        const adminUids = await activeAdminUids(targetUserId);
+        if (!adminUids.length) {
             logger.warn('notifyAdminsOnPendingSignup: no active admin to notify', { targetUserId });
             return;
         }
@@ -1431,7 +1452,7 @@ exports.notifyAdminsOnPendingSignup = onDocumentCreated('users/{id}', async (eve
         const nowIso = new Date().toISOString();
         const targetUserName = u.displayName || '';
         const targetUserEmail = u.email || '';
-        await Promise.all([...adminUids].map((adminUid) =>
+        await Promise.all(adminUids.map((adminUid) =>
             db.collection('request_notifications').add({
                 recipientId: adminUid,
                 type: 'account_approval',
@@ -1446,7 +1467,7 @@ exports.notifyAdminsOnPendingSignup = onDocumentCreated('users/{id}', async (eve
                 createdBy: 'system_account_approval',
             })
         ));
-        logger.info('notifyAdminsOnPendingSignup done', { targetUserId, admins: adminUids.size });
+        logger.info('notifyAdminsOnPendingSignup done', { targetUserId, admins: adminUids.length });
     } catch (err) {
         logger.error('notifyAdminsOnPendingSignup failed', { targetUserId, err: err.message });
     }
@@ -2630,6 +2651,39 @@ async function scanSessionDisagreements(scanErrors) {
     });
 }
 
+// Mirror of src/utils/taskConstants.js STATUS_LABELS — the closed set of task statuses.
+const TASK_STATUSES = ['pending', 'in-progress', 'completed', 'confirmed', 'unapproved', 'approved'];
+
+// Task-pipeline COMPOSITION — how the active tasks collection splits by status.
+//
+// Why this is worth a daily number: the manager's list subscribes to the whole collection, and it
+// was assumed that a large list is a scaling problem to be solved with paging and virtualization.
+// But archiveFinishedTasks sweeps every task that reached a terminal state on a previous work day,
+// so the active collection CANNOT be years of accumulated history. It can only be work that never
+// reached a terminal state — above all `completed`, which is deliberately never archived because it
+// is still waiting to be accepted. Those two readings call for completely different fixes (a query
+// budget vs. an acceptance backlog), and nothing measured which one is actually true.
+//
+// count() aggregations, so the cost does not grow with the backlog it is measuring. The total lives
+// in the volume canary already (counts.tasks), so only the split is computed here.
+//
+// A failed bucket is reported as null and deliberately NOT pushed into scanErrors: this is a
+// DIAGNOSTIC, not a control, and letting an unmeasured histogram flip the run to "incomplete" would
+// alert an admin about the ledger being unverified when the ledger was verified fine.
+async function scanTaskComposition() {
+    const byStatus = {};
+    for (const status of TASK_STATUSES) {
+        try {
+            const snap = await db.collection('tasks').where('status', '==', status).count().get();
+            byStatus[status] = snap.data().count;
+        } catch (err) {
+            logger.warn('scanTaskComposition bucket failed', { status, err: err.message });
+            byStatus[status] = null;
+        }
+    }
+    return byStatus;
+}
+
 // Surface (do NOT mutate) non-terminal tasks sitting unfinished beyond STALE_TASK_DAYS — the
 // backlog the data found (91 tasks >14d, oldest 'pending' 159d). Report-only: a manager decides to
 // finish, reassign, or drop them. createdAt is an ISO string, so the cutoff compares lexically.
@@ -2711,6 +2765,9 @@ exports.dailyIntegrityScan = onSchedule(
         //      still in flight. Report-only.
         const sessionDisagreements = await scanSessionDisagreements(scanErrors);
         const staleBacklog = await scanStaleTasks(scanErrors);
+        // (5) Report-only measurement — see scanTaskComposition for why the manager list's SIZE is
+        //     ambiguous without it. Never feeds the verdict.
+        const taskComposition = await scanTaskComposition();
 
         // COMPLETENESS IS PART OF THE VERDICT. Severity used to be derived purely from what the scan
         // FOUND, so a run whose reads had failed reported 'ok' — the one word an operator reads as
@@ -2741,7 +2798,8 @@ exports.dailyIntegrityScan = onSchedule(
             autoStoppedTimers,
             autoClosedSessions,
             sessionDisagreements,
-            staleBacklog
+            staleBacklog,
+            taskComposition
         };
 
         try {
@@ -2758,6 +2816,54 @@ exports.dailyIntegrityScan = onSchedule(
             await countsRef.set({ counts: measured, updatedAt: nowIso }, { merge: true });
         } catch (err) {
             logger.error('dailyIntegrityScan write failed', { err: err.message });
+        }
+
+        // THE LAST MILE. Everything above derives an honest verdict — including the refusal to call an
+        // INCOMPLETE run clean — and then wrote it to integrity_reports/{day}, where nothing reads it
+        // unless an admin happens to open the audit tab. A control nobody is told about is not a
+        // control, so the verdict that needs a human now leaves the building on the same bell+push
+        // path as every other notification.
+        //
+        // Deliberately NOT every 'warning'. That flag also rises for a net that WORKED — a forgotten
+        // break closed, a runaway timer stopped — and the worker it happened to is already notified
+        // individually. Alerting the admin every morning about successful self-repair is how you
+        // train someone to ignore the one morning it matters. The trigger is therefore the RESIDUE:
+        // a run that could not see everything, a volume drop, findings nothing repaired, and
+        // candidates the nets deliberately left running.
+        const needsHuman = critical || !complete ||
+            totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
+            creditIntegrity.orphan.orphans > 0 || creditIntegrity.suspicious.count > 0 ||
+            creditIntegrity.serverSpan.count > 0 || creditIntegrity.counterDrift.drifted > 0 ||
+            autoStoppedTimers.deferred > 0 || sessionDisagreements.count > 0;
+        if (needsHuman) {
+            try {
+                const admins = await activeAdminUids();
+                if (!admins.length) {
+                    logger.warn('dailyIntegrityScan: no active admin to alert', { day, severity: report.severity });
+                } else {
+                    // Deterministic id per (day + admin), created ONLY if absent. The push trigger is
+                    // onCreate, so a scheduler retry or a manual re-run of the same day updates
+                    // nothing and pushes nothing — exactly one alert per admin per night — and a
+                    // notice the admin already read is never silently marked unread again.
+                    await Promise.all(admins.map((uid) =>
+                        createIfAbsent(db.collection('request_notifications').doc(`integrity_${day}_${uid}`), {
+                            recipientId: uid,
+                            type: 'integrity_alert',
+                            category: 'action',
+                            severity: report.severity,
+                            day,
+                            isRead: false,
+                            createdAt: nowIso,
+                            createdBy: 'system_integrity_scan',
+                        })
+                    ));
+                    logger.info('dailyIntegrityScan alerted admins', { day, severity: report.severity, admins: admins.length });
+                }
+            } catch (err) {
+                // Never let the alert's failure look like a clean scan: the report is already written,
+                // but nobody was told, which is the exact failure mode this block exists to remove.
+                logger.error('dailyIntegrityScan alert failed — verdict written but NOT delivered', { day, err: err.message });
+            }
         }
 
         if (critical) {
