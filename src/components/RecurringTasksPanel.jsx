@@ -17,9 +17,9 @@ import {
     WEEKDAYS,
     defaultRecurrence,
     describeRecurrence,
-    nextOccurrence,
+    nextPendingOccurrence,
 } from '../utils/recurrence';
-import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils';
+import { getLithuanianDateString } from '../utils/timeUtils';
 import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import Select from './ui/Select';
@@ -50,24 +50,6 @@ const getTemplateSuggestionSources = (t) => [
     { value: t?.templateName || t?.data?.title, kind: 'task' },
     { value: t?.data?.tag, kind: 'tag' },
 ];
-
-/**
- * PURE: the next occurrence that has NOT been materialized yet — the first one a manager can still
- * cancel. `nextOccurrence` counts TODAY as an occurrence, but the scheduled generator already ran at
- * 05:00 Vilnius and wrote today's task (stamping `recurrence.lastGeneratedDate`). So "Praleisti kitą"
- * used to add TODAY to skipDates: the task for today exists and is untouched, and the occurrence the
- * manager meant to cancel — tomorrow's — still fired, while the row reported success. Once today has
- * been generated, start the scan at tomorrow so the "Kita:" preview and the skip act on the same,
- * still-cancellable day.
- *
- * Exported for unit testing and so both call sites read from one definition.
- */
-// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
-export function nextPendingOccurrence(recurrence, today = getLithuanianDateString()) {
-    if (!recurrence) return null;
-    const from = recurrence.lastGeneratedDate === today ? addDaysToDateString(today, 1) : today;
-    return nextOccurrence(recurrence, from);
-}
 
 // One template's recurrence editor + quick actions. Kept as a child so each row's draft/expander
 // state is local and editing one row never re-renders the others.

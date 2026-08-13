@@ -150,6 +150,30 @@ describe('describeRecurrence — Lithuanian summary', () => {
         expect(describeRecurrence({ active: true, freq: 'monthly', byMonthDay: 10 })).toBe('Kas mėnesį, 10 d.');
         expect(describeRecurrence({ active: false, freq: 'daily' })).toBe('Pristabdyta');
     });
+
+    // The worker-facing register (task preview): the days are spelled out, because "Pr, Pn" is the
+    // cadence editor's shorthand and a Meistras should not have to decode it to learn which day
+    // their job lands on.
+    it('spells the days out in the long form', () => {
+        expect(describeRecurrence({ active: true, freq: 'weekly', byWeekday: [1] }, { long: true }))
+            .toBe('Kas savaitę, pirmadieniais');
+        expect(describeRecurrence({ active: true, freq: 'weekly', byWeekday: [1, 5] }, { long: true }))
+            .toBe('Kas savaitę, pirmadieniais ir penktadieniais');
+        expect(describeRecurrence({ active: true, freq: 'weekly', byWeekday: [1, 3, 5] }, { long: true }))
+            .toBe('Kas savaitę, pirmadieniais, trečiadieniais ir penktadieniais');
+        expect(describeRecurrence({ active: true, freq: 'weekly', byWeekday: [2], interval: 2 }, { long: true }))
+            .toBe('Kas 2 savaites, antradieniais');
+        expect(describeRecurrence({ active: true, freq: 'weekly', byWeekday: [2], interval: 3 }, { long: true }))
+            .toBe('Kas 3 sav., antradieniais'); // no picker label for 3 → the dense cadence still reads
+    });
+
+    it('keeps the non-weekly cadences identical in both registers', () => {
+        expect(describeRecurrence({ active: true, freq: 'daily' }, { long: true })).toBe('Kasdien');
+        expect(describeRecurrence({ active: true, freq: 'monthly', byMonthDay: 10 }, { long: true })).toBe('Kas mėnesį, 10 d.');
+        // …except a paused rule, which must not collide with the timer status pill's "Pristabdyta"
+        // in the task preview, where both are on screen together.
+        expect(describeRecurrence({ active: false, freq: 'weekly', byWeekday: [1] }, { long: true })).toBe('Kartojimas pristabdytas');
+    });
 });
 
 describe('defaultRecurrence', () => {
