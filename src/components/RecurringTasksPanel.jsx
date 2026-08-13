@@ -24,11 +24,32 @@ import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
+import ListFilterBar from './ui/ListFilterBar';
 import { Spinner } from './ui/Loading';
 import TaskModal from './TaskModal';
+import { useListSearchFilter } from '../hooks/useListSearchFilter';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
 const INTERVAL_OPTIONS = RECURRENCE_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
+
+// How the shared search/filter hook reads a TEMPLATE, which is a task wrapped in a name rather
+// than a task itself. Module-level so they are stable memo dependencies inside the hook.
+// The template's own name outranks the task title it carries: that name is what a manager sees on
+// the row, so it is what they will type. `assignedWorkerId` is the legacy field the panel already
+// heals against, and both must resolve or the person pills would miss the older rows.
+const getTemplateAssigneeId = (t) => t?.data?.assignedUserId || t?.data?.assignedWorkerId || '';
+const getTemplateAssigneeName = (t) => t?.data?.assignedUserName || '';
+const getTemplateMatchFields = (t) => [
+    { text: t?.templateName, weight: 1.0 },
+    { text: t?.data?.title, weight: 0.95 },
+    { text: t?.category, weight: 0.85 },
+    { text: t?.data?.tag, weight: 0.85 },
+    { text: t?.data?.description, weight: 0.6 },
+];
+const getTemplateSuggestionSources = (t) => [
+    { value: t?.templateName || t?.data?.title, kind: 'task' },
+    { value: t?.data?.tag, kind: 'tag' },
+];
 
 /**
  * PURE: the next occurrence that has NOT been materialized yet — the first one a manager can still
@@ -423,6 +444,18 @@ export default function RecurringTasksPanel({ embedded = false }) {
 
     useEffect(() => { load(); }, [load]);
 
+    // Same search + filter-by-person controls as the sibling task sub-tabs, reading the template
+    // shape. The person here is the template's BAKED assignee — the meistras every future
+    // occurrence will be routed to — so filtering answers "what does this person get repeatedly?".
+    const templateFilter = useListSearchFilter(templates, {
+        users: activeUsers || [],
+        getUserId: getTemplateAssigneeId,
+        getUserName: getTemplateAssigneeName,
+        getMatchFields: getTemplateMatchFields,
+        getSuggestionSources: getTemplateSuggestionSources,
+    });
+    const visibleTemplates = templateFilter.filteredItems;
+
     const activeCount = templates.filter((t) => t.recurrence && t.recurrence.active !== false).length;
 
     const body = (
@@ -443,18 +476,34 @@ export default function RecurringTasksPanel({ embedded = false }) {
             )}
 
             {!loading && !error && templates.length > 0 && (
-                <ul className="space-y-2">
-                    {templates.map((t) => (
-                        <RecurringTemplateRow
-                            key={t.id}
-                            template={t}
-                            assignableUsers={assignableUsers}
-                            currentUser={currentUser}
-                            onChanged={load}
-                            onEdit={setEditingTemplate}
-                        />
-                    ))}
-                </ul>
+                <>
+                    <ListFilterBar
+                        assigneeOptions={templateFilter.assigneeOptions}
+                        filterUser={templateFilter.filterUser}
+                        onFilterUserChange={templateFilter.setFilterUser}
+                        searchText={templateFilter.searchText}
+                        onSearchChange={templateFilter.setSearchText}
+                        searchSuggestions={templateFilter.searchSuggestions}
+                        searchPlaceholder="Ieškoti šablonų…"
+                        searchLabel="Ieškoti šablonų"
+                    />
+                    {visibleTemplates.length === 0 ? (
+                        <p className="px-1 py-3 text-body text-ink-muted">Pagal pasirinktus filtrus šablonų nerasta.</p>
+                    ) : (
+                        <ul className="space-y-2">
+                            {visibleTemplates.map((t) => (
+                                <RecurringTemplateRow
+                                    key={t.id}
+                                    template={t}
+                                    assignableUsers={assignableUsers}
+                                    currentUser={currentUser}
+                                    onChanged={load}
+                                    onEdit={setEditingTemplate}
+                                />
+                            ))}
+                        </ul>
+                    )}
+                </>
             )}
 
             {/* Standard task dialog reused to edit the template's content. On close, reload so the

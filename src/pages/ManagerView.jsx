@@ -18,6 +18,7 @@ import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
 import FilterPills from '../components/ui/FilterPills';
+import ListFilterBar from '../components/ui/ListFilterBar';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -40,6 +41,7 @@ import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import EarningsModal from '../components/EarningsModal';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
+import { useListSearchFilter } from '../hooks/useListSearchFilter';
 import useFullBleed from '../hooks/useFullBleed';
 import { useRovingFocus } from '../hooks/useRovingFocus';
 import { scopeRoster } from '../utils/teamScope';
@@ -164,6 +166,12 @@ export default function ManagerView() {
         () => sortWorkerTasks(tasks.filter((t) => t.status === 'unapproved' && !t.isDeleted)),
         [tasks]
     );
+
+    // Search + filter-by-person for the approvals queue — the same pair of controls every other
+    // sub-tab now carries (useListSearchFilter). Deliberately applied to the RENDERED list only:
+    // the tab's pending badge keeps counting `pendingApprovalTasks`, so narrowing the view never
+    // makes the queue look shorter than it is.
+    const approvalsFilter = useListSearchFilter(pendingApprovalTasks, { users });
 
     // Tags that ACTUALLY occur on the team's tasks — the source for the immediate pill filter
     // (mobile). Never the static catalogue, so a tag with no tasks offers no dead filter; the
@@ -660,16 +668,34 @@ export default function ManagerView() {
                             <p className="text-body text-ink-muted">Nėra užduočių, laukiančių patvirtinimo.</p>
                         </div>
                     ) : (
-                        <div className="space-y-4">
-                            {pendingApprovalTasks.map(task => (
-                                <TaskCard
-                                    key={task.id}
-                                    task={task}
-                                    onEdit={() => handleEditTask(task)}
-                                    role="manager"
-                                />
-                            ))}
-                        </div>
+                        <>
+                            <ListFilterBar
+                                assigneeOptions={approvalsFilter.assigneeOptions}
+                                filterUser={approvalsFilter.filterUser}
+                                onFilterUserChange={approvalsFilter.setFilterUser}
+                                searchText={approvalsFilter.searchText}
+                                onSearchChange={approvalsFilter.setSearchText}
+                                searchSuggestions={approvalsFilter.searchSuggestions}
+                            />
+                            {approvalsFilter.filteredItems.length === 0 ? (
+                                /* The queue is not empty — the manager's own narrowing emptied it, so
+                                   say that instead of the "nothing to approve" copy above. */
+                                <div className="text-center py-12 bg-surface-card rounded-card shadow-sm border border-line">
+                                    <p className="text-body text-ink-muted">Pagal pasirinktus filtrus užduočių nerasta.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {approvalsFilter.filteredItems.map(task => (
+                                        <TaskCard
+                                            key={task.id}
+                                            task={task}
+                                            onEdit={() => handleEditTask(task)}
+                                            role="manager"
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 
