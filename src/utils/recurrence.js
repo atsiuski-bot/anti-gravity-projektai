@@ -23,15 +23,17 @@ export const RECURRENCE_INTERVALS = [
 ];
 
 // ISO weekday convention: 1=Mon … 7=Sun. The recurring roster is overwhelmingly "weekly on
-// Monday", so weekday selection is the core of the model.
+// Monday", so weekday selection is the core of the model. `plural` is the instrumental plural used
+// when a sentence names the days a rule fires on ("Kas savaitę, pirmadieniais"); `short` is the
+// dense form for the manager's cadence editor, where a 7-day picker has no room for full names.
 export const WEEKDAYS = [
-    { iso: 1, short: 'Pr', label: 'Pirmadienis' },
-    { iso: 2, short: 'An', label: 'Antradienis' },
-    { iso: 3, short: 'Tr', label: 'Trečiadienis' },
-    { iso: 4, short: 'Kt', label: 'Ketvirtadienis' },
-    { iso: 5, short: 'Pn', label: 'Penktadienis' },
-    { iso: 6, short: 'Št', label: 'Šeštadienis' },
-    { iso: 7, short: 'Sk', label: 'Sekmadienis' },
+    { iso: 1, short: 'Pr', label: 'Pirmadienis', plural: 'pirmadieniais' },
+    { iso: 2, short: 'An', label: 'Antradienis', plural: 'antradieniais' },
+    { iso: 3, short: 'Tr', label: 'Trečiadienis', plural: 'trečiadieniais' },
+    { iso: 4, short: 'Kt', label: 'Ketvirtadienis', plural: 'ketvirtadieniais' },
+    { iso: 5, short: 'Pn', label: 'Penktadienis', plural: 'penktadieniais' },
+    { iso: 6, short: 'Št', label: 'Šeštadienis', plural: 'šeštadieniais' },
+    { iso: 7, short: 'Sk', label: 'Sekmadienis', plural: 'sekmadieniais' },
 ];
 
 // ISO weekday (1=Mon…7=Sun) of a YYYY-MM-DD string, via UTC calendar arithmetic so it is
@@ -129,20 +131,57 @@ export function nextOccurrence(recurrence, fromDateStr = getLithuanianDateString
     return null;
 }
 
-// Lithuanian one-line summary of a recurrence for the management UI (formal register).
-export function describeRecurrence(recurrence) {
+/**
+ * PURE: the next occurrence that has NOT been materialized yet — the first one still ahead of the
+ * generator. `nextOccurrence` counts TODAY as an occurrence, but the scheduled job runs at 05:00
+ * Vilnius and stamps `recurrence.lastGeneratedDate` when it writes today's task. So once today has
+ * fired, "next" must start at tomorrow, or the manager's "Praleisti kitą" targets a day whose task
+ * already exists (an inert skip that still reports success) and the task preview's "Kita:" names a
+ * day that is already on the board.
+ */
+export function nextPendingOccurrence(recurrence, today = getLithuanianDateString()) {
+    if (!recurrence) return null;
+    const from = recurrence.lastGeneratedDate === today ? addDaysToDateString(today, 1) : today;
+    return nextOccurrence(recurrence, from);
+}
+
+// Lithuanian enumeration: "a, b ir c" — the final item joined with "ir", not a comma.
+function joinLithuanian(parts) {
+    if (parts.length <= 1) return parts.join('');
+    return `${parts.slice(0, -1).join(', ')} ir ${parts[parts.length - 1]}`;
+}
+
+/**
+ * Lithuanian one-line summary of a recurrence (formal register). One voice for every surface that
+ * has to say when work repeats.
+ *
+ * Two registers of the SAME sentence: the default dense form for the manager's template list
+ * ("Kas savaitę: Pr, Pn"), and `{ long: true }` for a worker-facing surface with room to spell the
+ * days out ("Kas savaitę, pirmadieniais ir penktadieniais") — the abbreviations are the cadence
+ * editor's shorthand and should not be the only way a Meistras learns which day their job lands on.
+ */
+export function describeRecurrence(recurrence, { long = false } = {}) {
     if (!recurrence) return '';
-    if (recurrence.active === false) return 'Pristabdyta';
+    // A paused RULE and a paused TIMER are different things, and the task preview shows both at
+    // once — a bare "Pristabdyta" there would sit beside the status pill's "Pristabdyta" and read
+    // as one claim. The long register therefore names what is paused.
+    if (recurrence.active === false) return long ? 'Kartojimas pristabdytas' : 'Pristabdyta';
     switch (recurrence.freq) {
         case 'daily':
             return 'Kasdien';
         case 'weekly': {
             const days = Array.isArray(recurrence.byWeekday) ? recurrence.byWeekday : [];
             const interval = Math.floor(Number(recurrence.interval) || 1);
-            const cadence = interval > 1 ? `Kas ${interval} sav.` : 'Kas savaitę';
+            // The long form reuses the interval picker's own labels ("Kas 2 savaites"), so the
+            // sentence reads the way the manager set it; the dense form keeps the "sav." shorthand.
+            const intervalLabel = RECURRENCE_INTERVALS.find((o) => o.value === interval)?.label;
+            const cadence = long
+                ? (intervalLabel || `Kas ${interval} sav.`)
+                : (interval > 1 ? `Kas ${interval} sav.` : 'Kas savaitę');
             if (!days.length) return cadence;
-            const names = WEEKDAYS.filter((w) => days.includes(w.iso)).map((w) => w.short);
-            return `${cadence}: ${names.join(', ')}`;
+            const picked = WEEKDAYS.filter((w) => days.includes(w.iso));
+            if (long) return `${cadence}, ${joinLithuanian(picked.map((w) => w.plural))}`;
+            return `${cadence}: ${picked.map((w) => w.short).join(', ')}`;
         }
         case 'monthly':
             return `Kas mėnesį, ${recurrence.byMonthDay || 1} d.`;

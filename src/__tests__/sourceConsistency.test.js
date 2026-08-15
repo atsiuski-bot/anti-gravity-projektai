@@ -65,6 +65,20 @@ const PROD_SOURCES = walk(SRC).filter((f) => !/\.test\.(js|jsx)$/.test(f) && !/_
  */
 const codeOnly = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
+/**
+ * Every production source, read and comment-stripped ONCE at module load.
+ *
+ * A source-scanning gate is I/O-bound, and its cost must not be charged to a per-test timeout meant
+ * for interactive assertions: the scans below used to re-read the whole tree inside each `it()`, so
+ * the same 250 files were opened five times over and, under a parallel full-suite run on Windows,
+ * that alone exceeded vitest's 5s default and failed the ship with a timeout rather than a verdict.
+ * Extracting at module scope is what sections 2 and 3 already do — the tests assert, they do not scan.
+ */
+const PROD_CODE = PROD_SOURCES.map((file) => ({
+  file: file.slice(ROOT.length + 1).replace(/\\/g, '/'),
+  code: codeOnly(readFileSync(file, 'utf8')),
+}));
+
 // =============================================================================================
 // 1. RECOVERY OWNERSHIP WIRING — which recovery net owns an orphaned run is a question about the
 //    ENGINE, so it cannot be answered before the rollout flag has RESOLVED. `!timerEngineEnabled`
@@ -84,31 +98,42 @@ describe('legacy recovery ownership wiring', () => {
   // Call sites only: a definition (`export function useX(`) is not a call.
   function callSites(hook) {
     const found = [];
-    for (const file of PROD_SOURCES) {
-      const text = codeOnly(readFileSync(file, 'utf8'));
+    for (const { file, code } of PROD_CODE) {
       const re = new RegExp(`(function\\s+)?\\b${hook}\\s*\\(([^)]*)\\)`, 'g');
       let m;
-      while ((m = re.exec(text)) !== null) {
+      while ((m = re.exec(code)) !== null) {
         if (m[1]) continue; // the hook's own declaration
-        found.push({ file: file.slice(ROOT.length + 1).replace(/\\/g, '/'), args: m[2] });
+        found.push({ file, args: m[2] });
       }
     }
     return found;
   }
 
+  const CALL_SITES = LEGACY_RECOVERY_HOOKS.map((hook) => ({ hook, sites: callSites(hook) }));
+
+  const DEFINITIONS = PROD_CODE.flatMap(({ file, code }) => {
+    const found = [];
+    const re = /const\s+legacyRecoveryOwns\s*=\s*([^;]+);/g;
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      found.push({ file, expr: m[1].replace(/\s+/g, ' ').trim() });
+    }
+    return found;
+  });
+
   it('found the recovery hook call sites (extraction sanity)', () => {
     // Guards the regex itself: if this ever reads empty, the assertion below would pass vacuously
     // and the gate would be silently disarmed — the exact class of failure this file exists for.
-    for (const hook of LEGACY_RECOVERY_HOOKS) {
-      expect(callSites(hook).length, `No call sites found for ${hook} — the extraction regex broke.`)
+    for (const { hook, sites } of CALL_SITES) {
+      expect(sites.length, `No call sites found for ${hook} — the extraction regex broke.`)
         .toBeGreaterThan(0);
     }
   });
 
   it('every legacy-recovery call site is gated on legacyRecoveryOwns, never on a raw flag', () => {
     const offenders = [];
-    for (const hook of LEGACY_RECOVERY_HOOKS) {
-      for (const { file, args } of callSites(hook)) {
+    for (const { hook, sites } of CALL_SITES) {
+      for (const { file, args } of sites) {
         const last = args.split(',').pop().trim();
         if (last !== 'legacyRecoveryOwns') {
           offenders.push(`${file}: ${hook}(… ${last}) — expected legacyRecoveryOwns`);
@@ -122,22 +147,10 @@ describe('legacy recovery ownership wiring', () => {
   });
 
   it('legacyRecoveryOwns means "resolved AND disabled" everywhere it is defined', () => {
-    const definitions = [];
-    for (const file of PROD_SOURCES) {
-      const text = codeOnly(readFileSync(file, 'utf8'));
-      const re = /const\s+legacyRecoveryOwns\s*=\s*([^;]+);/g;
-      let m;
-      while ((m = re.exec(text)) !== null) {
-        definitions.push({
-          file: file.slice(ROOT.length + 1).replace(/\\/g, '/'),
-          expr: m[1].replace(/\s+/g, ' ').trim(),
-        });
-      }
-    }
-    expect(definitions.length, 'No legacyRecoveryOwns definition found — the extraction regex broke.')
+    expect(DEFINITIONS.length, 'No legacyRecoveryOwns definition found — the extraction regex broke.')
       .toBeGreaterThan(0);
 
-    const wrong = definitions.filter((d) => d.expr !== 'timerEngineResolved && !timerEngineEnabled');
+    const wrong = DEFINITIONS.filter((d) => d.expr !== 'timerEngineResolved && !timerEngineEnabled');
     expect(
       wrong,
       `legacyRecoveryOwns must be \`timerEngineResolved && !timerEngineEnabled\`:\n${wrong

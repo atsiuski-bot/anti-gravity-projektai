@@ -17,57 +17,39 @@ import {
     WEEKDAYS,
     defaultRecurrence,
     describeRecurrence,
-    nextOccurrence,
+    nextPendingOccurrence,
 } from '../utils/recurrence';
-import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils';
+import { getLithuanianDateString } from '../utils/timeUtils';
 import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
+import ListFilterBar from './ui/ListFilterBar';
 import { Spinner } from './ui/Loading';
 import TaskModal from './TaskModal';
-import PeopleSearchBar from './task/PeopleSearchBar';
-import { usePeopleSearchFilter } from '../hooks/usePeopleSearchFilter';
+import { useListSearchFilter } from '../hooks/useListSearchFilter';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
 const INTERVAL_OPTIONS = RECURRENCE_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
 
-// Search/filter accessors for a TEMPLATE row. Module level = stable identity for the hook's memos.
-// A template is not a task: the meistras lives in the baked task `data` (assignedWorkerId is the
-// legacy spelling this panel already heals), and it stores no assignee NAME — so the person label
-// the hook resolved from the roster is what makes "Jonas" find his recurring jobs.
-const templatePersonId = (t) => t?.data?.assignedUserId || t?.data?.assignedWorkerId || '';
-const templatePersonName = (t) => t?.data?.assignedUserName || '';
-const templateMatchFields = (t, person) => [
+// How the shared search/filter hook reads a TEMPLATE, which is a task wrapped in a name rather
+// than a task itself. Module-level so they are stable memo dependencies inside the hook.
+// The template's own name outranks the task title it carries: that name is what a manager sees on
+// the row, so it is what they will type. `assignedWorkerId` is the legacy field the panel already
+// heals against, and both must resolve or the person pills would miss the older rows.
+const getTemplateAssigneeId = (t) => t?.data?.assignedUserId || t?.data?.assignedWorkerId || '';
+const getTemplateAssigneeName = (t) => t?.data?.assignedUserName || '';
+const getTemplateMatchFields = (t) => [
     { text: t?.templateName, weight: 1.0 },
-    { text: t?.data?.title, weight: 1.0 },
-    { text: person, weight: 0.9 },
+    { text: t?.data?.title, weight: 0.95 },
+    { text: t?.category, weight: 0.85 },
     { text: t?.data?.tag, weight: 0.85 },
     { text: t?.data?.description, weight: 0.6 },
 ];
-const templateSuggestionSources = (t, person) => [
+const getTemplateSuggestionSources = (t) => [
     { value: t?.templateName || t?.data?.title, kind: 'task' },
-    { value: person, kind: 'worker' },
     { value: t?.data?.tag, kind: 'tag' },
 ];
-
-/**
- * PURE: the next occurrence that has NOT been materialized yet — the first one a manager can still
- * cancel. `nextOccurrence` counts TODAY as an occurrence, but the scheduled generator already ran at
- * 05:00 Vilnius and wrote today's task (stamping `recurrence.lastGeneratedDate`). So "Praleisti kitą"
- * used to add TODAY to skipDates: the task for today exists and is untouched, and the occurrence the
- * manager meant to cancel — tomorrow's — still fired, while the row reported success. Once today has
- * been generated, start the scan at tomorrow so the "Kita:" preview and the skip act on the same,
- * still-cancellable day.
- *
- * Exported for unit testing and so both call sites read from one definition.
- */
-// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
-export function nextPendingOccurrence(recurrence, today = getLithuanianDateString()) {
-    if (!recurrence) return null;
-    const from = recurrence.lastGeneratedDate === today ? addDaysToDateString(today, 1) : today;
-    return nextOccurrence(recurrence, from);
-}
 
 // One template's recurrence editor + quick actions. Kept as a child so each row's draft/expander
 // state is local and editing one row never re-renders the others.
@@ -424,23 +406,10 @@ export default function RecurringTasksPanel({ embedded = false }) {
     // The template currently open in the standard task dialog (template-edit mode), or null.
     const [editingTemplate, setEditingTemplate] = useState(null);
 
-    const roster = useMemo(
-        () => scopeRoster(activeUsers || [], userData, currentUser?.uid),
-        [activeUsers, userData, currentUser?.uid]
-    );
-    const assignableUsers = useMemo(
-        () => roster.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) || u.email })),
-        [roster]
-    );
-
-    // Same search + filter-by-person pair as the sibling Komandos veiklos sub-tabs, over templates.
-    const templatesFilter = usePeopleSearchFilter(templates, {
-        users: roster,
-        getPersonId: templatePersonId,
-        getPersonName: templatePersonName,
-        getMatchFields: templateMatchFields,
-        getSuggestionSources: templateSuggestionSources,
-    });
+    const assignableUsers = useMemo(() => {
+        const roster = scopeRoster(activeUsers || [], userData, currentUser?.uid);
+        return roster.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) || u.email }));
+    }, [activeUsers, userData, currentUser?.uid]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -456,6 +425,18 @@ export default function RecurringTasksPanel({ embedded = false }) {
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    // Same search + filter-by-person controls as the sibling task sub-tabs, reading the template
+    // shape. The person here is the template's BAKED assignee — the meistras every future
+    // occurrence will be routed to — so filtering answers "what does this person get repeatedly?".
+    const templateFilter = useListSearchFilter(templates, {
+        users: activeUsers || [],
+        getUserId: getTemplateAssigneeId,
+        getUserName: getTemplateAssigneeName,
+        getMatchFields: getTemplateMatchFields,
+        getSuggestionSources: getTemplateSuggestionSources,
+    });
+    const visibleTemplates = templateFilter.filteredItems;
 
     const activeCount = templates.filter((t) => t.recurrence && t.recurrence.active !== false).length;
 
@@ -478,24 +459,21 @@ export default function RecurringTasksPanel({ embedded = false }) {
 
             {!loading && !error && templates.length > 0 && (
                 <>
-                    <PeopleSearchBar
-                        people={templatesFilter.people}
-                        filterUser={templatesFilter.filterUser}
-                        onFilterUser={templatesFilter.setFilterUser}
-                        searchText={templatesFilter.searchText}
-                        onSearchText={templatesFilter.setSearchText}
-                        suggestions={templatesFilter.suggestions}
+                    <ListFilterBar
+                        assigneeOptions={templateFilter.assigneeOptions}
+                        filterUser={templateFilter.filterUser}
+                        onFilterUserChange={templateFilter.setFilterUser}
+                        searchText={templateFilter.searchText}
+                        onSearchChange={templateFilter.setSearchText}
+                        searchSuggestions={templateFilter.searchSuggestions}
                         searchPlaceholder="Ieškoti šablonų…"
-                        searchLabel="Ieškoti pasikartojančių veiklų"
-                        className="px-1"
+                        searchLabel="Ieškoti šablonų"
                     />
-                    {templatesFilter.filtered.length === 0 ? (
-                        <p className="px-1 py-3 text-body text-ink-muted">
-                            Pagal paiešką ar pasirinktą meistrą šablonų nerasta.
-                        </p>
+                    {visibleTemplates.length === 0 ? (
+                        <p className="px-1 py-3 text-body text-ink-muted">Pagal pasirinktus filtrus šablonų nerasta.</p>
                     ) : (
                         <ul className="space-y-2">
-                            {templatesFilter.filtered.map((t) => (
+                            {visibleTemplates.map((t) => (
                                 <RecurringTemplateRow
                                     key={t.id}
                                     template={t}

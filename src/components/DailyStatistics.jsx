@@ -35,12 +35,8 @@ import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
 import BackdateTimeModal from './BackdateTimeModal';
-import PeopleSearchBar from './task/PeopleSearchBar';
-import { usePeopleSearchFilter } from '../hooks/usePeopleSearchFilter';
-
-// Stable empty pool for the surfaces that carry no approval filter — a fresh [] each render would
-// make the filter hook's memos churn for no reason.
-const EMPTY_APPROVAL_POOL = [];
+import ListFilterBar from './ui/ListFilterBar';
+import { useListSearchFilter } from '../hooks/useListSearchFilter';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', approvalPhase = 'pending', showTestUsers = false, periodSummaryAbove = false, onShiftPeriod = null }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
@@ -588,19 +584,31 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         })
         : null;
 
-    // Search + filter-by-person for the two approval surfaces (Pridavimas / Istorija) — the same
-    // pair the team task list carries, so a manager narrows every Komandos veiklos sub-tab the same
-    // way. The POOL is everything this surface can show, so the pills name every meistras with a
-    // row here even after a search; each rendered section is then narrowed through `apply` so one
-    // control governs "šiandien" and "anksčiau" identically. Off on the hours/full surfaces, which
-    // keep their raw lists (an empty pool leaves the hook inert — hooks still run unconditionally).
-    const approvalPool = view === 'approval'
-        ? (displayAcceptedAll || [...displayTodayPending, ...displayEarlierPending])
-        : EMPTY_APPROVAL_POOL;
-    const approvalFilter = usePeopleSearchFilter(approvalPool, { users });
-    const acceptedRows = displayAcceptedAll === null ? null : approvalFilter.apply(displayAcceptedAll);
-    const todayPendingRows = view === 'approval' ? approvalFilter.apply(displayTodayPending) : displayTodayPending;
-    const earlierPendingRows = view === 'approval' ? approvalFilter.apply(displayEarlierPending) : displayEarlierPending;
+    // Search + filter-by-person for the two approval surfaces (Pridavimas / Istorija), through the
+    // same hook + control bar every other manager sub-tab uses. The control state is shared across
+    // this surface's lists — Pridavimas renders "today" and "earlier" as two tables, and one pair of
+    // controls must narrow both — so the hook is seeded with their union and each table is narrowed
+    // through `apply`. Inert on the hours/full surfaces: no bar is rendered there, so the state
+    // stays empty and `apply` returns each list untouched.
+    const approvalItems = useMemo(
+        () => (view === 'approval'
+            ? (displayAcceptedAll ?? [...displayTodayPending, ...displayEarlierPending])
+            : []),
+        [view, displayAcceptedAll, displayTodayPending, displayEarlierPending]
+    );
+    // Istorija shows TWO lists — the just-accepted tasks here and the archive (TaskHistory) below —
+    // and one control bar governs both. The archive reports which people its current window holds
+    // so the pill row can offer someone whose only rows are already archived.
+    const isSharedHistoryFilter = view === 'approval' && approvalPhase === 'accepted' && !embedded;
+    const [archivePeople, setArchivePeople] = useState([]);
+    const handleArchivePeople = useCallback((people) => setArchivePeople(people), []);
+    const approvalFilter = useListSearchFilter(approvalItems, {
+        users,
+        extraAssignees: isSharedHistoryFilter ? archivePeople : undefined,
+    });
+    const narrowedTodayPending = approvalFilter.apply(displayTodayPending);
+    const narrowedEarlierPending = approvalFilter.apply(displayEarlierPending);
+    const narrowedAcceptedAll = displayAcceptedAll === null ? null : approvalFilter.apply(displayAcceptedAll);
 
     // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
     // resolved against each user's isTest flag — applied to every session/timeline source below.
@@ -1774,26 +1782,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 by default, the history archive collapsed). */}
             {view !== 'hours' && (
               <>
-            {/* One filter strip for the whole approval surface: assignee pills + type-ahead search,
-                the same pair the team task list carries. Only shown once there is something to
-                narrow. */}
-            {view === 'approval' && approvalPool.length > 0 && (
-                <PeopleSearchBar
-                    people={approvalFilter.people}
+            {/* Person pills + type-ahead search over this surface's task lists. Only on the
+                approval surfaces, and only once they hold something — the hours/full report has its
+                own period + worker controls, and an empty tab must not be fronted by dead ones. On
+                Istorija the archive below counts as "something", or an empty live list would leave
+                its rows with no search at all (this bar replaced the archive's own field). */}
+            {view === 'approval' && (approvalItems.length > 0 || archivePeople.length > 0) && (
+                <ListFilterBar
+                    assigneeOptions={approvalFilter.assigneeOptions}
                     filterUser={approvalFilter.filterUser}
-                    onFilterUser={approvalFilter.setFilterUser}
+                    onFilterUserChange={approvalFilter.setFilterUser}
                     searchText={approvalFilter.searchText}
-                    onSearchText={approvalFilter.setSearchText}
-                    suggestions={approvalFilter.suggestions}
-                    searchPlaceholder="Ieškoti užduočių…"
-                    searchLabel={approvalPhase === 'accepted' ? 'Ieškoti priimtų užduočių' : 'Ieškoti priduodamų užduočių'}
+                    onSearchChange={approvalFilter.setSearchText}
+                    searchSuggestions={approvalFilter.searchSuggestions}
                 />
             )}
 
-            {acceptedRows !== null ? (
-                acceptedRows.length > 0 ? (
+            {narrowedAcceptedAll !== null ? (
+                narrowedAcceptedAll.length > 0 && (
                     <TaskListTable
-                        tasks={acceptedRows}
+                        tasks={narrowedAcceptedAll}
                         title="Priimtos užduotys"
                         viewMode={viewMode}
                         onToggleConfirm={handleToggleConfirm}
@@ -1803,18 +1811,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         userRole={userRole}
                         currentUser={currentUser}
                     />
-                ) : approvalFilter.isFiltering && (
-                    /* Filtered down to nothing — say so, or the tab would look empty for no
-                       visible reason (the archive browser below keeps its own separate search). */
-                    <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
-                        Pagal paiešką ar pasirinktą meistrą priimtų užduočių nerasta.
-                    </div>
                 )
             ) : (
                 <>
-                    {todayPendingRows.length > 0 && (
+                    {narrowedTodayPending.length > 0 && (
                         <TaskListTable
-                            tasks={todayPendingRows}
+                            tasks={narrowedTodayPending}
                             title={
                                 view === 'approval'
                                     ? 'Užbaigta šiandien, laukia priėmimo'
@@ -1832,9 +1834,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         />
                     )}
 
-                    {earlierPendingRows.length > 0 && (
+                    {narrowedEarlierPending.length > 0 && (
                         <TaskListTable
-                            tasks={earlierPendingRows}
+                            tasks={narrowedEarlierPending}
                             title="Atliktos užduotys, laukiančios priėmimo"
                             viewMode={viewMode}
                             onToggleConfirm={handleToggleConfirm}
@@ -1846,6 +1848,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         />
                     )}
                 </>
+            )}
+
+            {/* Narrowed to nothing. Distinct from the "genuinely empty" notice below — the tab DOES
+                hold tasks, the manager's own pill/search choice hid them all — so the copy points at
+                the filters rather than claiming there is nothing to accept. Suppressed on Istorija,
+                where the same query may still be matching rows in the archive panel below: a "nothing
+                found" box directly above a list of hits would contradict itself. */}
+            {view === 'approval' && !isSharedHistoryFilter && approvalItems.length > 0 && approvalFilter.isNarrowed
+                && narrowedTodayPending.length === 0 && narrowedEarlierPending.length === 0
+                && (narrowedAcceptedAll?.length ?? 0) === 0 && (
+                <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
+                    Pagal pasirinktus filtrus užduočių nerasta.
+                </div>
             )}
 
             {/* Full task-history browser (the archived, already-accepted tasks). Omitted in the
@@ -1860,6 +1875,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         users={users}
                         canExport={canExport}
                         approvalManagerUid={applyApprovalFilter ? currentUser?.uid : null}
+                        sharedFilter={isSharedHistoryFilter
+                            ? { searchText: approvalFilter.searchText, userId: approvalFilter.filterUser || 'all' }
+                            : null}
+                        onPeopleChange={isSharedHistoryFilter ? handleArchivePeople : null}
                     />
                 </div>
             )}
@@ -1870,16 +1889,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 so a second box here is redundant — suppress it. Also keep it for the embedded
                 calendar drill-down, which has no TaskHistory of its own. */}
             {(view === 'approval' && approvalPhase !== 'accepted'
-                ? (todayPendingRows.length === 0 && earlierPendingRows.length === 0)
+                ? (shownTodayTasks.length === 0 && shownEarlierTasks.length === 0)
                 : (embedded && todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0)
             ) && (
                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                     {view === 'approval'
-                        // An active filter is the reason the list is empty — say that instead of
-                        // "nothing to accept", which would read as a false all-clear.
-                        ? (approvalFilter.isFiltering
-                            ? 'Pagal paiešką ar pasirinktą meistrą užduočių nerasta.'
-                            : 'Šiuo metu nėra užduočių, kurias turėtumėte priimti.')
+                        ? 'Šiuo metu nėra užduočių, kurias turėtumėte priimti.'
                         : (isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.')}
                 </div>
             )}

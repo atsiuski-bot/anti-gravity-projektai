@@ -1,23 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-// The panel is a React surface with Firebase-backed collaborators; only the PURE skip-target
-// decision is under test here, so the module graph is neutralised the same way the taskActions /
-// useOrphanedTaskRecovery suites do it. Everything below is a stub — nothing renders.
-vi.mock('../firebase', () => ({ db: {}, auth: {}, functions: {} }));
-vi.mock('firebase/firestore', () => ({}));
-vi.mock('firebase/functions', () => ({ httpsCallable: vi.fn(), getFunctions: vi.fn() }));
-vi.mock('../context/AuthContext', () => ({ useAuth: () => ({}) }));
-vi.mock('../context/UsersContext', () => ({ useUsers: () => ({ activeUsers: [] }) }));
-vi.mock('../utils/taskActions', () => ({
-    getTaskTemplates: vi.fn(),
-    setTemplateRecurrence: vi.fn(),
-    setTemplateAssignee: vi.fn(),
-    createManagerTask: vi.fn(),
-}));
-vi.mock('../utils/recurringActions', () => ({ runRecurringNow: vi.fn() }));
-vi.mock('./TaskModal', () => ({ default: () => null }));
-
-import { nextPendingOccurrence } from './RecurringTasksPanel';
+// The predicate behind the panel's "Praleisti kitą" (and the task preview's "Kita:" line) lives in
+// the pure recurrence model, so this suite imports it directly — no Firebase/React module graph to
+// neutralise. The scenarios below are the panel's, which is why they stay in this file.
+import { nextPendingOccurrence } from '../utils/recurrence';
 
 // A daily rule: every day fires, so the difference between "today" and "the next day a manager can
 // still cancel" is exactly what this predicate decides.
