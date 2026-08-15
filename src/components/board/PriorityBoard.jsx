@@ -102,7 +102,7 @@ function BoardColumn({ priority, taskIds, tasksById, onEdit }) {
     const accent = getPriorityColor(priority);
     return (
         <section
-            className="flex min-w-[16rem] flex-1 basis-0 flex-col rounded-card border border-line bg-surface-sunken/60"
+            className="flex min-w-[17.5rem] max-w-[26rem] flex-1 basis-0 flex-col rounded-card border border-line bg-surface-sunken/60"
             aria-label={`${getPriorityLabel(priority)} prioritetas`}
         >
             {/* Header: a priority-coloured accent bar + label + live count. */}
@@ -311,7 +311,7 @@ export default function PriorityBoard({ tasks, onEditTask }) {
                 onDragEnd={handleDragEnd}
                 onDragCancel={handleDragCancel}
             >
-                <div className="flex gap-3 overflow-x-auto pb-2">
+                <div className="flex gap-3 overflow-x-auto pb-2 2xl:justify-center">
                     {BOARD_COLUMNS.map((priority) => (
                         <BoardColumn
                             key={priority}

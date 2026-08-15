@@ -1,6 +1,8 @@
 import { useEffect, useState, lazy, Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { getFlatTabs } from '../config/navTabs';
 import ActiveSessionReadout from './ActiveSessionReadout';
 import NotificationBell from './NotificationBell';
 import Avatar from './ui/Avatar';
@@ -76,7 +78,8 @@ function SessionPill({ sessionType, session, taskTitle, taskId, onTask }) {
 }
 
 /**
- * AppHeader — the calm top bar (DESIGN_SYSTEM §9). Left: the brand mark when idle, swapped for the
+ * AppHeader — the calm top bar (DESIGN_SYSTEM §9). Left: the brand mark when idle on mobile,
+ * contextual view title on desktop (where SideRail already hosts the brand mark), swapped for the
  * active-session pill the moment a session runs (the pill can carry a task title, so it claims the
  * scarce mobile width and the logo steps aside). Right: the notification bell (+ unread badge) and
  * the avatar (profile entry).
@@ -85,10 +88,13 @@ function SessionPill({ sessionType, session, taskTitle, taskId, onTask }) {
  * canvas. Sticky so the bell and active session are always reachable from any tab.
  */
 export default function AppHeader({ sessionType, session }) {
-    const { currentUser, userData } = useAuth();
+    const { currentUser, userData, userRole } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
+    const isDesktop = useMediaQuery('(min-width: 1024px)');
     const [showActiveWork, setShowActiveWork] = useState(false);
     const [activeTask, setActiveTask] = useState(null);
+
+    const pageTitle = getFlatTabs(userRole).find((t) => t.id === activeTab)?.label || (activeTab === 'profile' ? 'Profilis' : 'Gildija');
 
     // The pill answers "what is running"; opening it answers "and what exactly is that" — the task's
     // own card, or the session card for a break/call/quick work. Wrapped in a button rather than made
@@ -118,6 +124,10 @@ export default function AppHeader({ sessionType, session }) {
                             onTask={setActiveTask}
                         />
                     </button>
+                ) : isDesktop ? (
+                    <span className="text-body font-bold text-ink-strong truncate" aria-hidden="true">
+                        {pageTitle}
+                    </span>
                 ) : (
                     <BrandMark size="sm" />
                 )}

@@ -26,9 +26,30 @@ import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
 import { Spinner } from './ui/Loading';
 import TaskModal from './TaskModal';
+import PeopleSearchBar from './task/PeopleSearchBar';
+import { usePeopleSearchFilter } from '../hooks/usePeopleSearchFilter';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
 const INTERVAL_OPTIONS = RECURRENCE_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
+
+// Search/filter accessors for a TEMPLATE row. Module level = stable identity for the hook's memos.
+// A template is not a task: the meistras lives in the baked task `data` (assignedWorkerId is the
+// legacy spelling this panel already heals), and it stores no assignee NAME — so the person label
+// the hook resolved from the roster is what makes "Jonas" find his recurring jobs.
+const templatePersonId = (t) => t?.data?.assignedUserId || t?.data?.assignedWorkerId || '';
+const templatePersonName = (t) => t?.data?.assignedUserName || '';
+const templateMatchFields = (t, person) => [
+    { text: t?.templateName, weight: 1.0 },
+    { text: t?.data?.title, weight: 1.0 },
+    { text: person, weight: 0.9 },
+    { text: t?.data?.tag, weight: 0.85 },
+    { text: t?.data?.description, weight: 0.6 },
+];
+const templateSuggestionSources = (t, person) => [
+    { value: t?.templateName || t?.data?.title, kind: 'task' },
+    { value: person, kind: 'worker' },
+    { value: t?.data?.tag, kind: 'tag' },
+];
 
 /**
  * PURE: the next occurrence that has NOT been materialized yet — the first one a manager can still
@@ -403,10 +424,23 @@ export default function RecurringTasksPanel({ embedded = false }) {
     // The template currently open in the standard task dialog (template-edit mode), or null.
     const [editingTemplate, setEditingTemplate] = useState(null);
 
-    const assignableUsers = useMemo(() => {
-        const roster = scopeRoster(activeUsers || [], userData, currentUser?.uid);
-        return roster.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) || u.email }));
-    }, [activeUsers, userData, currentUser?.uid]);
+    const roster = useMemo(
+        () => scopeRoster(activeUsers || [], userData, currentUser?.uid),
+        [activeUsers, userData, currentUser?.uid]
+    );
+    const assignableUsers = useMemo(
+        () => roster.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) || u.email })),
+        [roster]
+    );
+
+    // Same search + filter-by-person pair as the sibling Komandos veiklos sub-tabs, over templates.
+    const templatesFilter = usePeopleSearchFilter(templates, {
+        users: roster,
+        getPersonId: templatePersonId,
+        getPersonName: templatePersonName,
+        getMatchFields: templateMatchFields,
+        getSuggestionSources: templateSuggestionSources,
+    });
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -443,18 +477,37 @@ export default function RecurringTasksPanel({ embedded = false }) {
             )}
 
             {!loading && !error && templates.length > 0 && (
-                <ul className="space-y-2">
-                    {templates.map((t) => (
-                        <RecurringTemplateRow
-                            key={t.id}
-                            template={t}
-                            assignableUsers={assignableUsers}
-                            currentUser={currentUser}
-                            onChanged={load}
-                            onEdit={setEditingTemplate}
-                        />
-                    ))}
-                </ul>
+                <>
+                    <PeopleSearchBar
+                        people={templatesFilter.people}
+                        filterUser={templatesFilter.filterUser}
+                        onFilterUser={templatesFilter.setFilterUser}
+                        searchText={templatesFilter.searchText}
+                        onSearchText={templatesFilter.setSearchText}
+                        suggestions={templatesFilter.suggestions}
+                        searchPlaceholder="Ieškoti šablonų…"
+                        searchLabel="Ieškoti pasikartojančių veiklų"
+                        className="px-1"
+                    />
+                    {templatesFilter.filtered.length === 0 ? (
+                        <p className="px-1 py-3 text-body text-ink-muted">
+                            Pagal paiešką ar pasirinktą meistrą šablonų nerasta.
+                        </p>
+                    ) : (
+                        <ul className="space-y-2">
+                            {templatesFilter.filtered.map((t) => (
+                                <RecurringTemplateRow
+                                    key={t.id}
+                                    template={t}
+                                    assignableUsers={assignableUsers}
+                                    currentUser={currentUser}
+                                    onChanged={load}
+                                    onEdit={setEditingTemplate}
+                                />
+                            ))}
+                        </ul>
+                    )}
+                </>
             )}
 
             {/* Standard task dialog reused to edit the template's content. On close, reload so the
