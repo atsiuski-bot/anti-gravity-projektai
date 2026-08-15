@@ -23,6 +23,7 @@ import UserChip from './UserChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
 import TaskFlagBadges from './task/TaskFlagBadges';
+import SessionTypeIcon from './SessionTypeIcon';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
@@ -327,13 +328,14 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     // scoped or SENIOR manager's OWN task, assigned to them by someone else, matches none of them, so
     // offering the button there produced a permission-denied and a generic "bandykite dar kartą"
     // toast, leaving the task stuck in "Laukia priėmimo" forever. Show it only when it can land.
-    const maySignOff = canSignOffTask({ task, currentUser, userData });
+    const maySignOff = signoffOnly || canSignOffTask({ task, currentUser, userData });
     const canConfirm = canConfirmTask({ task, role, userRole }) && maySignOff;
     const canApprove = canApproveTask({ task, role, userRole });
     // The coordinator's closing door for a Meistras's still-open task (the timer's own "Užbaigti" is
     // assignment-only, so without this the task had no way out of the active list but the worker's).
     const canFinishForOther = canFinishForAssignee({ task, currentUser, userData, role, userRole });
     const canRevert = canRevertTask({ task, role, userRole });
+    const sessionType = task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : null);
 
     // Footer actions, data-driven so the SAME list feeds both the visible (adaptive) row and the
     // hidden measuring mirror. Order: revert → approve/confirm → edit → delete, so the
@@ -424,12 +426,13 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                                     // keyboard/switch user actually lands on, and §2 does not trade target
                                     // size for density. `items-center` on the row keeps the glyph aligned
                                     // to the now-taller title instead of floating at the top.
-                                    "flex min-h-touch flex-1 min-w-0 items-center rounded text-left text-body font-bold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring",
+                                    "flex min-h-touch flex-1 min-w-0 items-center gap-1.5 rounded text-left text-body font-bold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring",
                                     task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong",
                                     taskStatus === 'unapproved' ? "bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}
                             >
-                                {task.title}
+                                {sessionType && <SessionTypeIcon type={sessionType} className="h-4 w-4 shrink-0" />}
+                                <span className="min-w-0 flex-1 break-words">{task.title}</span>
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </button>
                         </div>

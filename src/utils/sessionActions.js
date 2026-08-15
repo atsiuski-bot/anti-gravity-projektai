@@ -848,7 +848,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         // canReadOwnedTask) before the teamManagerIds stamp lands.
         const routedManagerId = isManager
             ? null
-            : (session.auditorManagerId || userData.defaultManager || null);
+            : (session.auditorManagerId || userData.defaultManager || (Array.isArray(userData.teamManagerIds) && userData.teamManagerIds[0]) || (Array.isArray(userData.seniorManagerIds) && userData.seniorManagerIds[0]) || null);
 
         // Pre-generate the task and work_session refs so they can cross-reference by ID. The
         // session keeps its synthetic `quick_` taskId (other views infer quick-work from that

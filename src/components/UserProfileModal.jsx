@@ -23,6 +23,7 @@ import { Spinner } from './ui/Loading';
 import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 import { getLithuanianDateString } from '../utils/timeUtils';
+import SessionTypeIcon from './SessionTypeIcon';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 import { useRovingFocus } from '../hooks/useRovingFocus';
 
@@ -151,8 +152,14 @@ function ReassignTaskRow({ task, checked, onToggle }) {
                 className="mt-0.5 h-5 w-5 shrink-0 rounded border-line text-brand focus:ring-brand-ring"
             />
             <span className="min-w-0 flex-1">
-                <span className="block truncate text-body font-medium text-ink-strong">
-                    {task.title || 'Be pavadinimo'}
+                <span className="flex items-center gap-1.5 truncate text-body font-medium text-ink-strong">
+                    {(task.isSystemTask || task.isQuickWork) && (
+                        <SessionTypeIcon
+                            type={task.isSystemTask ? 'call' : 'quickWork'}
+                            className="h-4 w-4 shrink-0"
+                        />
+                    )}
+                    <span className="truncate">{task.title || 'Be pavadinimo'}</span>
                 </span>
                 {deadlineDay && (
                     <span className="mt-0.5 block text-caption text-ink-muted">Terminas: {deadlineDay}</span>

@@ -359,6 +359,7 @@ export default function TaskDetailModal({
             <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-4">
                 <div className="flex min-w-0 items-start gap-2">
                     {StatusGlyph && <StatusGlyph className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                    {typeIcon && <SessionTypeIcon type={typeIcon} className="mt-0.5 h-5 w-5 flex-shrink-0" />}
                     <h2 id={titleId} className="text-h3 font-bold leading-snug text-ink-strong">{task.title}</h2>
                 </div>
                 <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-1" />

@@ -2,6 +2,7 @@ import AssigneeChip from './AssigneeChip';
 import PriorityBadge from './PriorityBadge';
 import TaskStatusIcon from './TaskStatusIcon';
 import TaskFlagBadges from './TaskFlagBadges';
+import SessionTypeIcon from '../SessionTypeIcon';
 
 /**
  * TaskRow — the ONE dense desktop "task row" shared by the report/history tables
@@ -57,6 +58,12 @@ export default function TaskRow({
             <td className="px-2 py-2 align-top">
                 <div className="flex items-start gap-1.5">
                     <TaskStatusIcon task={task} size="sm" decorative className="mt-0.5" />
+                    {(task?.isSystemTask || task?.isQuickWork) && (
+                        <SessionTypeIcon
+                            type={task.isSystemTask ? 'call' : 'quickWork'}
+                            className="mt-0.5 h-4 w-4 shrink-0"
+                        />
+                    )}
                     <div className="min-w-0 flex-1">
                         {titleCell}
                         {/* Worker attention flags — render only on still-active tasks (the helper drops

@@ -1090,7 +1090,7 @@ function quickWorkLogWrites({
     const manager = isManagerRole(userData?.role);
     const routedManagerId = manager
         ? null
-        : (auditorManagerId || userData?.defaultManager || null);
+        : (auditorManagerId || userData?.defaultManager || (Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds[0]) || (Array.isArray(userData?.seniorManagerIds) && userData.seniorManagerIds[0]) || null);
     const taskId = `sess_qw_task_${userId}_${startMs}`;
     const sessionId = `sess_qw_ws_${userId}_${startMs}`;
 
