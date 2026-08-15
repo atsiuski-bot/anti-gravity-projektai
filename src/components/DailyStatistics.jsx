@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getWorkDayString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getWorkDayString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, mergeContinuousSessions, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { validateSelfReduction, reduceOwnWorkSession, validateOwnStartCorrection, correctOwnSessionStart } from '../utils/sessionEditActions';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
@@ -38,6 +38,46 @@ import BackdateTimeModal from './BackdateTimeModal';
 import ListFilterBar from './ui/ListFilterBar';
 import { useListSearchFilter } from '../hooks/useListSearchFilter';
 
+// One uninterrupted stretch is shown as ONE row (mergeContinuousSessions), but the ledger rows
+// behind it are what the session editors act on. Expanding a block keeps the block itself — it
+// carries the toggle — and lays its raw segments out underneath, marked so the row renderers can
+// set them back visually. Every other row passes through untouched.
+//
+// `rowKey` exists because a block INHERITS its first segment's id (it is that document's row,
+// extended), so an opened block and its own first segment would otherwise render under the same
+// React key. The id itself must stay untouched — it is the document the session editor writes to.
+const expandStretches = (items, openIds) => items.flatMap((item) => (
+    item.segments && openIds.has(item.id)
+        ? [
+            item,
+            ...item.segments.map((segment) => ({
+                ...segment,
+                isStretchSegment: true,
+                rowKey: `segment-${segment.id}`,
+            })),
+        ]
+        : [item]
+));
+
+// Toggle label for a folded block. Deliberately "Rodyti atkarpas (4)" rather than "4 atkarpos":
+// the Lithuanian plural changes with the last digit (2 atkarpos / 11 atkarpų / 21 atkarpa), and a
+// count inside brackets stays correct for every value.
+const StretchToggle = ({ item, open, onToggle, className }) => (
+    <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onToggle(item.id); }}
+        aria-expanded={open}
+        className={clsx(
+            'mt-0.5 inline-flex min-h-touch items-center gap-1 rounded-control text-caption font-medium text-ink-muted',
+            'hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
+            className
+        )}
+    >
+        {open ? <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />}
+        {open ? 'Slėpti atkarpas' : `Rodyti atkarpas (${item.segments.length})`}
+    </button>
+);
+
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', approvalPhase = 'pending', showTestUsers = false, periodSummaryAbove = false, onShiftPeriod = null }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
@@ -60,6 +100,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const [sessionEditTarget, setSessionEditTarget] = useState(null);
     const openEditSession = (item, targetUser, dayTotal) => setSessionEditTarget({ mode: 'edit', session: item, targetUser, dayTotal });
     const openCreateSession = (targetUser, dayTotal) => setSessionEditTarget({ mode: 'create', session: null, targetUser, dayTotal });
+
+    // Which folded stretches the viewer has opened (by the block's id). A folded block spans several
+    // ledger documents, so no editor may act on it directly — opening it is how the segments, and
+    // the affordances that belong to them, are reached.
+    const [openStretches, setOpenStretches] = useState(() => new Set());
+    const toggleStretch = useCallback((id) => setOpenStretches((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    }), []);
 
     // Worker self-service: correct one of MY OWN logged-time rows. The direction decides who settles
     // it — a SHORTER session applies immediately (a timer left running is the common case, and giving
@@ -97,11 +147,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         resolveUserId(item) === currentUser?.uid &&
         item.createdByAdmin === currentUser?.uid;
 
+    // `segments` marks a FOLDED block — one stretch shown as one row, but several stored documents.
+    // A correction has to name the row it changes, so it is offered on the segments inside, never
+    // on the block itself.
     const canReportRow = (item) =>
         !isManagerRole(userRole) &&
         item.type === 'session' &&
         !item.isActive &&
         !item.isManualAdjustment &&
+        !item.segments &&
         resolveUserId(item) === currentUser?.uid;
 
     // Self-service gap-fill: a worker granted canBackdateTime, looking at THEIR OWN day, may turn a
@@ -855,27 +909,47 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // Sort by start time
         const sortedItems = items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
+        // Fold the ledger rows of one uninterrupted stretch back into a single block. The engine
+        // files a row per RUN, and boot recovery closes + re-anchors the run on every app re-open,
+        // so a task nobody paused arrives here as a chain of abutting rows (see
+        // mergeContinuousSessions). Only safe within ONE worker's rows, so it is applied on the
+        // single-user timeline here and again on the per-worker slice the drill-down modal gets —
+        // the fold is idempotent, so the second pass is a no-op on rows already folded.
+        const stretched = selectedUserId !== 'all'
+            ? mergeContinuousSessions(sortedItems)
+            : sortedItems;
+
         // Inject inactive gaps for individual mode. Skipped in range mode — an overnight gap
         // between one day's last session and the next day's first would render as a giant,
         // meaningless "Neaktyvus" block spanning the hours nobody works. The shared helper
         // measures each gap from the running-max end time (merge-intervals), so a short session
         // nested inside a longer one does NOT invent a phantom "Neaktyvus" band — matching the
         // (previously divergent) Reports.jsx behavior.
-        if (!isRange && selectedUserId !== 'all' && sortedItems.length > 0) {
-             return injectInactiveGaps(sortedItems);
+        if (!isRange && selectedUserId !== 'all' && stretched.length > 0) {
+             return injectInactiveGaps(stretched);
         }
 
-        return sortedItems;
+        return stretched;
         // eslint-disable-next-line react-hooks/exhaustive-deps -- finishedTasks changes already propagate via manualTasks; preserving current timing
     }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId, isRange]);
+
+    // The rows actually rendered: the timeline with every OPENED folded block expanded back into
+    // its segments. A folded block is several ledger documents shown as one, so it is never itself
+    // editable — this disclosure is what keeps the per-row correction affordances one tap away.
+    const timelineRows = useMemo(
+        () => expandStretches(combinedTimelineItems, openStretches),
+        [combinedTimelineItems, openStretches]
+    );
 
     // Candidate tasks to attach a gap-fill to: the real task sessions immediately before/after the
     // hole (deduped; breaks, calls and quick-work excluded — they aren't assignable tasks). Empty ⇒
     // nothing sensible to attach to ⇒ the "Buvau darbe" affordance is hidden for that gap.
+    // Indexed against the RENDERED rows, so an opened folded block cannot shift the neighbours a
+    // "Neaktyvus" band reads its candidate tasks from.
     const gapTaskOptions = (idx) => {
         const opts = [];
         const seen = new Set();
-        for (const n of [combinedTimelineItems[idx - 1], combinedTimelineItems[idx + 1]]) {
+        for (const n of [timelineRows[idx - 1], timelineRows[idx + 1]]) {
             if (!n || n.type !== 'session' || n.isSystemTask || n.isQuickWork) continue;
             if (!n.taskId || seen.has(n.taskId)) continue;
             seen.add(n.taskId);
@@ -1636,13 +1710,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         )}
                         {/* Mobile: timeline as a card list — never a horizontal table on a phone (§9) */}
                         <ul className="divide-y divide-line md:hidden">
-                            {combinedTimelineItems.map((item, idx) => {
+                            {timelineRows.map((item, idx) => {
                                 // Real, finished work sessions are editable; legacy synthetic delta rows
-                                // (isManualAdjustment) and live sessions are not.
-                                const canEditRow = (canEditSessions || ownsAuthoredManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                // (isManualAdjustment), live sessions and folded blocks are not.
+                                const canEditRow = (canEditSessions || ownsAuthoredManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment && !item.segments;
                                 const reportable = canReportRow(item);
                                 return (
-                                <li key={item.id || idx} className="flex items-center justify-between gap-3 p-4">
+                                <li key={item.rowKey || item.id || idx} className={clsx('flex items-center justify-between gap-3 p-4', item.isStretchSegment && 'bg-surface-sunken/40 pl-10')}>
                                     <div className="min-w-0">
                                         <p className="font-mono text-caption text-ink-muted">
                                             {formatTime(item.startTime)} – {formatTime(item.endTime)}
@@ -1664,6 +1738,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                             )}
                                         </div>
                                         <SessionEditedBadge item={item} />
+                                        {item.segments && (
+                                            <StretchToggle item={item} open={openStretches.has(item.id)} onToggle={toggleStretch} />
+                                        )}
                                     </div>
                                     <div className="flex items-center gap-1 whitespace-nowrap">
                                         <span className={clsx(
@@ -1704,12 +1781,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
-                                {combinedTimelineItems.map((item, idx) => {
-                                    const canEditRow = (canEditSessions || ownsAuthoredManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                {timelineRows.map((item, idx) => {
+                                    const canEditRow = (canEditSessions || ownsAuthoredManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment && !item.segments;
                                     const reportable = canReportRow(item);
                                     return (
-                                    <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
-                                        <td className="px-4 py-3 font-mono text-ink-muted w-24">
+                                    <tr key={item.rowKey || item.id || idx} className={clsx(
+                                        'text-xs hover:bg-surface-sunken border-b border-line last:border-0',
+                                        item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted',
+                                        item.isStretchSegment && 'bg-surface-sunken/40'
+                                    )}>
+                                        <td className={clsx('px-4 py-3 font-mono text-ink-muted w-24', item.isStretchSegment && 'pl-10')}>
                                             {formatTime(item.startTime)} - {formatTime(item.endTime)}
                                         </td>
                                         <td className="px-4 py-3 font-medium flex-grow truncate">
@@ -1727,6 +1808,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                 </span>
                                             )}
                                             <SessionEditedBadge item={item} />
+                                            {item.segments && (
+                                                <StretchToggle item={item} open={openStretches.has(item.id)} onToggle={toggleStretch} className="ml-5" />
+                                            )}
                                         </td>
                                         <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-feedback-warning' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
                                             <span className="inline-flex items-center justify-end gap-1">
@@ -2279,10 +2363,21 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     // One chronological timeline — work segments and breaks interleaved in the order they
     // happened (items arrive sorted by startTime); inactive gaps are not shown. The header
     // totals cover the whole shown span, so the per-row breaks need no separate summary.
-    const timeline = items.filter(i => i.type !== 'inactive');
+    //
+    // The fold runs here rather than only upstream because these items are the per-worker SLICE of
+    // a team timeline, where another person's row can sit between two halves of one stretch. On a
+    // single-user timeline the rows arrive already folded and this pass changes nothing (the fold
+    // is idempotent). Totals are unaffected either way: a block's duration is its segments' sum.
+    const timeline = mergeContinuousSessions(items.filter(i => i.type !== 'inactive'));
     const workMinutes = (rows) => rows.filter(i => i.type !== 'break').reduce((a, i) => a + (i.duration || 0), 0);
     const dayWorkMinutes = workMinutes(timeline);
     const dayBreakMinutes = timeline.filter(i => i.type === 'break').reduce((a, i) => a + (i.duration || 0), 0);
+    const [openStretches, setOpenStretches] = useState(() => new Set());
+    const toggleStretch = (id) => setOpenStretches((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+    });
 
     // Group rows by work-day so a multi-day period report reads as a stack of days, each opened
     // by its own "begins here" divider. Items are already start-time sorted, so days come out
@@ -2364,10 +2459,11 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
 
         // Real, finished work sessions are editable here too (the team-report drill-down is the
         // natural admin entry); the edit control sits OUTSIDE the clickable card so it is never a
-        // button nested in a button. Legacy synthetic delta rows and live sessions stay read-only.
-        const canEditRow = (canEditSessions || canEditOwnManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+        // button nested in a button. Legacy synthetic delta rows, live sessions and folded blocks
+        // (several documents behind one row) stay read-only.
+        const canEditRow = (canEditSessions || canEditOwnManualRow(item)) && item.type === 'session' && !item.isActive && !item.isManualAdjustment && !item.segments;
         return (
-            <li key={item.id || idx}>
+            <li key={item.rowKey || item.id || idx} className={clsx(item.isStretchSegment && 'pl-6')}>
                 <div className="flex items-stretch gap-1">
                     <div className="min-w-0 flex-1">
                         {task ? (
@@ -2385,6 +2481,14 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                             </div>
                         )}
                         <SessionEditedBadge item={item} className="px-3 pb-1" />
+                        {item.segments && (
+                            <StretchToggle
+                                item={item}
+                                open={openStretches.has(item.id)}
+                                onToggle={toggleStretch}
+                                className="px-3"
+                            />
+                        )}
                     </div>
                     {canEditRow && (
                         <IconButton
@@ -2435,7 +2539,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                                     </div>
                                 )}
                                 <ul className="space-y-2">
-                                    {group.items.map((item, idx) => renderRow(item, idx))}
+                                    {expandStretches(group.items, openStretches).map((item, idx) => renderRow(item, idx))}
                                 </ul>
                             </div>
                         ))}

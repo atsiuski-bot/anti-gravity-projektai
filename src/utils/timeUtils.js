@@ -586,6 +586,98 @@ export const isCreditableUntrackedGap = (from, to) => {
  * @param {string} timeStr - Vilnius local time, "HH:MM" (24h).
  * @returns {string|null} UTC ISO string, or null if either part is malformed.
  */
+// A timeline row that may be folded into the stretch around it: a real, finished timer/ledger row
+// for a known task. Everything excluded here is excluded because a human must still see it on its
+// own — a LIVE row (it is still growing), an admin-EDITED row (SessionEditedBadge describes exactly
+// ONE stored document), and a legacy delta adjustment (a bare number, with no real interval to abut).
+const isFoldableSession = (item) =>
+    !!item
+    && item.type === 'session'
+    && !item.isActive
+    && !item.edited
+    && !item.isManualAdjustment
+    && !!item.taskId;
+
+// Do these two rows describe ONE stretch the worker never interrupted? Same task, same worker, same
+// work day, and the second one opens where the first one closed (within the seam tolerance, which
+// mirrors injectInactiveGaps' own "a hole this small is not a hole" threshold — a seam we refuse to
+// draw a Neaktyvus band for must not split the block either).
+const continuesStretch = (prev, next, maxSeamMinutes) => {
+    if (!isFoldableSession(prev) || !isFoldableSession(next)) return false;
+    if (prev.taskId !== next.taskId) return false;
+    if ((prev.userId || null) !== (next.userId || null)) return false;
+    // Never fold across the work-day boundary: the day is the filing unit every total groups by.
+    if ((prev.date || null) !== (next.date || null)) return false;
+    const closed = Date.parse(prev.endTime);
+    const opened = Date.parse(next.startTime);
+    if (!Number.isFinite(closed) || !Number.isFinite(opened)) return false;
+    const seamMinutes = (opened - closed) / 60000;
+    return seamMinutes >= 0 && seamMinutes <= maxSeamMinutes;
+};
+
+const foldStretch = (segments) => {
+    const folded = {
+        ...segments[0],
+        endTime: segments[segments.length - 1].endTime,
+        duration: segments.reduce((sum, s) => sum + (Number(s.duration) || 0), 0),
+        segments,
+    };
+    // The raw stored minutes belong to ONE document; carrying the first segment's copy onto a row
+    // that spans several would hand the session editor a false "original" to snapshot.
+    delete folded.durationMinutes;
+    return folded;
+};
+
+/**
+ * Fold the consecutive ledger rows of ONE uninterrupted stretch of work back into a single
+ * timeline row.
+ *
+ * WHY a stretch nobody paused arrives here in pieces: the timer engine models every interruption
+ * as CLOSE-AND-REOPEN, and boot recovery (ADR 0027) does the same on every app re-open — it closes
+ * the run so the worked minutes are filed, then re-anchors a fresh run so the worker never has to
+ * press start again. A phone that discards the backgrounded PWA therefore mints a new ledger row on
+ * every return to the app, plus a credited `isRecoveredGap` row for the stretch the foreground-only
+ * heartbeat could not witness. The ledger is CORRECT — the segments tile the interval exactly and no
+ * minute is credited twice — but the timeline read as a series of pauses that never happened.
+ *
+ * So this fold is presentation-only and deliberately narrow (see continuesStretch): it re-joins what
+ * the app itself split, and never what a person did. The merged row keeps the FIRST segment's
+ * identity and carries `segments` (the raw rows, in order) so the per-row editors stay reachable
+ * behind a disclosure — a folded row is never itself editable, because it is several documents.
+ *
+ * @param {Array} sortedItems - timeline items, ascending by startTime.
+ * @param {number} [maxSeamMinutes=1] - largest seam between two rows still treated as continuous.
+ * @returns {Array} the items with each continuous stretch folded into one `segments`-carrying row.
+ */
+export const mergeContinuousSessions = (sortedItems, maxSeamMinutes = 1) => {
+    if (!Array.isArray(sortedItems) || sortedItems.length < 2) return sortedItems || [];
+
+    const out = [];
+    let stretch = null; // raw segments of the stretch currently being folded
+
+    const flush = () => {
+        if (!stretch) return;
+        out.push(stretch.length === 1 ? stretch[0] : foldStretch(stretch));
+        stretch = null;
+    };
+
+    for (const item of sortedItems) {
+        if (stretch && continuesStretch(stretch[stretch.length - 1], item, maxSeamMinutes)) {
+            stretch.push(item);
+            continue;
+        }
+        flush();
+        if (isFoldableSession(item)) {
+            stretch = [item];
+        } else {
+            out.push(item);
+        }
+    }
+    flush();
+
+    return out;
+};
+
 /**
  * Inject "Neaktyvus" (inactive) gap markers between the activity items of a single-user
  * timeline. A gap is the wall-clock hole where NO timer was running — it is derived here,

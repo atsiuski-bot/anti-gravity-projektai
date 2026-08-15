@@ -18,6 +18,7 @@ import {
     vilniusWallClockToISO,
     relativeDeadline,
     injectInactiveGaps,
+    mergeContinuousSessions,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -517,6 +518,102 @@ describe('injectInactiveGaps (derived "Neaktyvus" bands)', () => {
         expect(injectInactiveGaps([])).toEqual([]);
         const one = [item('a', '2026-07-03T08:00:00.000Z', '2026-07-03T08:10:00.000Z')];
         expect(gaps(injectInactiveGaps(one))).toHaveLength(0);
+    });
+});
+
+describe('mergeContinuousSessions (one unpaused stretch = one row)', () => {
+    // A ledger row as the timeline builds it. Defaults describe the ordinary case: a finished
+    // timer row for one task, owned by one worker, filed on one work day.
+    const seg = (id, startTime, endTime, extra = {}) => ({
+        id,
+        type: 'session',
+        taskId: 'T1',
+        userId: 'U1',
+        date: '2026-08-15',
+        startTime,
+        endTime,
+        duration: (Date.parse(endTime) - Date.parse(startTime)) / 60000,
+        durationMinutes: (Date.parse(endTime) - Date.parse(startTime)) / 60000,
+        ...extra,
+    });
+
+    // The production case this exists for (Jogilė, 2026-08-15): one continuous stretch on one task,
+    // split into four abutting rows by two app re-opens — a recovery close at 13:01:54, a second at
+    // 13:29:17 whose unwitnessed tail was credited as an isRecoveredGap row, and the final pause.
+    it('folds the segments a boot recovery split into one block, preserving the credited total', () => {
+        const out = mergeContinuousSessions([
+            seg('r1', '2026-08-15T10:01:45.800Z', '2026-08-15T10:01:54.334Z'),
+            seg('r2', '2026-08-15T10:01:54.334Z', '2026-08-15T10:06:44.503Z'),
+            seg('gap', '2026-08-15T10:06:44.503Z', '2026-08-15T10:29:17.102Z', {
+                isManualSession: true,
+                isRecoveredGap: true,
+            }),
+            seg('r3', '2026-08-15T10:29:17.102Z', '2026-08-15T11:20:02.504Z'),
+        ]);
+
+        expect(out).toHaveLength(1);
+        expect(out[0]).toMatchObject({
+            id: 'r1',
+            startTime: '2026-08-15T10:01:45.800Z',
+            endTime: '2026-08-15T11:20:02.504Z',
+        });
+        expect(out[0].duration).toBeCloseTo(78.278, 3);
+        expect(out[0].segments.map((s) => s.id)).toEqual(['r1', 'r2', 'gap', 'r3']);
+        // The stored single-row minutes must not survive onto a row spanning four documents.
+        expect(out[0].durationMinutes).toBeUndefined();
+    });
+
+    it('leaves a real break in the middle as two separate blocks', () => {
+        const out = mergeContinuousSessions([
+            seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z'),
+            seg('b', '2026-08-15T09:30:00.000Z', '2026-08-15T10:00:00.000Z'),
+        ]);
+        expect(out.map((x) => x.id)).toEqual(['a', 'b']);
+        expect(out.every((x) => !x.segments)).toBe(true);
+    });
+
+    it('never folds across tasks, workers, work days, or a non-session row', () => {
+        const base = seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z');
+        const abutting = (extra) => seg('b', '2026-08-15T09:00:00.000Z', '2026-08-15T09:30:00.000Z', extra);
+
+        expect(mergeContinuousSessions([base, abutting({ taskId: 'T2' })])).toHaveLength(2);
+        expect(mergeContinuousSessions([base, abutting({ userId: 'U2' })])).toHaveLength(2);
+        expect(mergeContinuousSessions([base, abutting({ date: '2026-08-16' })])).toHaveLength(2);
+        expect(mergeContinuousSessions([base, abutting({ type: 'break' })])).toHaveLength(2);
+    });
+
+    it('keeps a live, an edited and a legacy-adjustment row visible on their own', () => {
+        const base = seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z');
+        const abutting = (extra) => seg('b', '2026-08-15T09:00:00.000Z', '2026-08-15T09:30:00.000Z', extra);
+
+        expect(mergeContinuousSessions([base, abutting({ isActive: true })])).toHaveLength(2);
+        expect(mergeContinuousSessions([base, abutting({ edited: true })])).toHaveLength(2);
+        expect(mergeContinuousSessions([base, abutting({ isManualAdjustment: true })])).toHaveLength(2);
+        // …and an edited FIRST row is not swallowed by the one after it either.
+        expect(mergeContinuousSessions([{ ...base, edited: true }, abutting()])).toHaveLength(2);
+    });
+
+    it('absorbs a sub-minute seam but not a real one', () => {
+        const base = seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z');
+        // 45s seam — below the threshold injectInactiveGaps also refuses to call a hole.
+        const tight = seg('b', '2026-08-15T09:00:45.000Z', '2026-08-15T09:30:00.000Z');
+        const loose = seg('c', '2026-08-15T09:02:00.000Z', '2026-08-15T09:30:00.000Z');
+        expect(mergeContinuousSessions([base, tight])).toHaveLength(1);
+        expect(mergeContinuousSessions([base, loose])).toHaveLength(2);
+    });
+
+    it('is idempotent and passes short lists through untouched', () => {
+        expect(mergeContinuousSessions([])).toEqual([]);
+        const one = [seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z')];
+        expect(mergeContinuousSessions(one)).toEqual(one);
+
+        const folded = mergeContinuousSessions([
+            seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z'),
+            seg('b', '2026-08-15T09:00:00.000Z', '2026-08-15T09:30:00.000Z'),
+        ]);
+        const twice = mergeContinuousSessions(folded);
+        expect(twice).toHaveLength(1);
+        expect(twice[0].segments.map((s) => s.id)).toEqual(['a', 'b']);
     });
 });
 

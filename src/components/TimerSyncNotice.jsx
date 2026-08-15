@@ -33,6 +33,23 @@ const KIND_LABELS = {
 
 const kindLabel = (kind) => KIND_LABELS[kind] || 'Laikmačio veiksmas';
 
+// How long a command may sit unsettled before the worker is told it is waiting.
+//
+// EVERY timer action goes through the outbox: it is written as `queued`, then settled by the
+// Firestore batch a few hundred milliseconds later. Announcing the queue immediately meant every
+// ordinary online tap on Pradėti/Pristabdyti flashed a "waiting for connection" banner for that
+// fraction of a second — and, because the banner was a block in the content flow, the whole feed
+// jumped down and back as it came and went. Nothing was wrong; the worker was watching the app
+// talk to itself. A round trip that has NOT completed within this window is a genuinely different
+// event — a dead or crawling connection — and that is the only one worth a word.
+const QUEUED_GRACE_MS = 5000;
+
+const queuedAgeMs = (command, nowMs) => {
+    const stamped = Date.parse(command?.updatedAt || command?.issuedAt || '');
+    // An unparseable stamp must not hide the notice forever — treat it as already ripe.
+    return Number.isFinite(stamped) ? nowMs - stamped : Number.POSITIVE_INFINITY;
+};
+
 // Commands that only OPEN a run. A rejected one lost no time — the timer simply never started, and
 // telling the worker their time was not credited sends them hunting for minutes that never existed.
 // Everything else CLOSES a run, where "this stretch was not credited" is the accurate warning.
@@ -134,6 +151,25 @@ export default function TimerSyncNotice() {
         [commands]
     );
 
+    // `now` exists so the grace window can EXPIRE without anything else happening: a command that
+    // stays queued emits no further outbox event, so without a timer the notice would never appear
+    // for the offline worker it is actually for. One timeout, armed for the moment the oldest
+    // still-young command ripens — not a polling interval.
+    const [now, setNow] = useState(() => Date.now());
+    const unsettled = useMemo(
+        () => queued.filter((c) => queuedAgeMs(c, now) >= QUEUED_GRACE_MS),
+        [queued, now]
+    );
+
+    useEffect(() => {
+        const waits = queued
+            .map((c) => QUEUED_GRACE_MS - queuedAgeMs(c, Date.now()))
+            .filter((ms) => ms > 0);
+        if (!waits.length) return undefined;
+        const timer = setTimeout(() => setNow(Date.now()), Math.min(...waits));
+        return () => clearTimeout(timer);
+    }, [queued, now]);
+
     const acknowledge = async (command) => {
         try {
             await updateTimerCommandStatus(command.commandId, 'acknowledged');
@@ -142,7 +178,7 @@ export default function TimerSyncNotice() {
         }
     };
 
-    if (!uid || (!failed.length && !queued.length)) return null;
+    if (!uid || (!failed.length && !unsettled.length)) return null;
 
     return (
         <>
@@ -187,14 +223,24 @@ export default function TimerSyncNotice() {
                 </section>
             )}
 
-            {queued.length > 0 && (
+            {unsettled.length > 0 && (
+                <div
+                    // Pinned OVER the page, never inserted into it. As a block in the content flow
+                    // this pushed every card below it down the moment it appeared and back up when
+                    // it went — the feed visibly jolting under the worker's thumb for the length of
+                    // one round trip. An overlay says the same thing and moves nothing. It clears
+                    // the bottom dock on mobile (navclear, the token that exists for exactly this)
+                    // and sits low on desktop, where the dock is a side rail instead. Pointer
+                    // events pass through: it must never swallow a tap meant for the card beneath.
+                    className="pointer-events-none fixed inset-x-0 bottom-0 z-toast px-4 pb-navclear lg:pb-6"
+                >
                 <section
                     // Polite, not assertive: queued work is normal field operation, so it is
                     // announced without interrupting whatever the worker is doing.
                     role="status"
                     aria-live="polite"
                     aria-label="Laukiantys laikmačio veiksmai"
-                    className="mb-4 rounded-card border border-line bg-surface-sunken p-3"
+                    className="mx-auto max-w-3xl rounded-card border border-line bg-surface-card p-3 shadow-lg"
                 >
                     <p className="flex items-start gap-2 text-caption text-ink-muted">
                         <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -207,11 +253,12 @@ export default function TimerSyncNotice() {
                             fallback is in play, not even that holds — closing the app drops it. */}
                         <span>
                             {hasPersistentCache
-                                ? `Išsaugota telefone ir laukia ryšio (${queued.length}). Išsiųsime, kai atsiras internetas, ir pranešime, jei nepavyktų.`
-                                : `Laukia ryšio (${queued.length}). DĖMESIO: šiame įrenginyje neveikia atmintis neprisijungus — neuždarykite programos, kol neatsiras internetas, kitaip veiksmas dings.`}
+                                ? `Išsaugota telefone ir laukia ryšio (${unsettled.length}). Išsiųsime, kai atsiras internetas, ir pranešime, jei nepavyktų.`
+                                : `Laukia ryšio (${unsettled.length}). DĖMESIO: šiame įrenginyje neveikia atmintis neprisijungus — neuždarykite programos, kol neatsiras internetas, kitaip veiksmas dings.`}
                         </span>
                     </p>
                 </section>
+                </div>
             )}
         </>
     );
