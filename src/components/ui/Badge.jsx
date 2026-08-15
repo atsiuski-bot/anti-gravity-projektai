@@ -1,4 +1,5 @@
 import { cn } from '../../utils/cn';
+import guildBadgeAtlas from '../../assets/badges/guild-badges-atlas.webp';
 import bunnyBadgeAtlas from '../../assets/badges/zivile-bunny-badges-atlas.webp';
 
 /**
@@ -25,7 +26,7 @@ import bunnyBadgeAtlas from '../../assets/badges/zivile-bunny-badges-atlas.webp'
  *
  * @param {'bronze'|'silver'|'gold'|'platinum'} tier
  * @param {string} name - the badge name (e.g. "Pabaigiu, ką pradedu")
- * @param {React.ComponentType<{className?: string}>} [icon] - the badge glyph
+ * @param {React.ComponentType<{className?: string}>} [icon] - the badge glyph fallback
  * @param {'sm'|'md'} [size]
  * @param {boolean} [locked] - render the neutral not-yet-earned state
  */
@@ -61,7 +62,7 @@ const MEDALLION_SIZE = {
     md: 'h-12 w-12',
 };
 
-const BUNNY_ATLAS_POSITIONS = {
+const ATLAS_POSITIONS = {
     follow_through: '0% 0%',
     steady_rhythm: '50% 0%',
     on_estimate: '100% 0%',
@@ -76,6 +77,8 @@ const BUNNY_ATLAS_POSITIONS = {
 export default function Badge({ tier = 'bronze', name, icon: Icon, badgeKey, bunnyTheme = false, size = 'md', locked = false, className }) {
     const t = TIERS[tier] || TIERS.bronze;
     const filledPips = locked ? 0 : t.order;
+    const hasAtlasIcon = Boolean(badgeKey && ATLAS_POSITIONS[badgeKey]);
+    const atlasSrc = bunnyTheme ? bunnyBadgeAtlas : guildBadgeAtlas;
 
     return (
         <div
@@ -90,17 +93,17 @@ export default function Badge({ tier = 'bronze', name, icon: Icon, badgeKey, bun
             <div
                 aria-hidden="true"
                 className={cn(
-                    'flex items-center justify-center rounded-full ring-2',
+                    'flex items-center justify-center rounded-full ring-2 overflow-hidden',
                     MEDALLION_SIZE[size] || MEDALLION_SIZE.md,
                     locked ? 'bg-surface-sunken text-ink-muted ring-line' : t.medallion
                 )}
             >
-                {bunnyTheme && BUNNY_ATLAS_POSITIONS[badgeKey] ? (
+                {hasAtlasIcon ? (
                     <span
                         className={cn('h-full w-full rounded-full bg-cover', locked && 'grayscale opacity-40')}
                         style={{
-                            backgroundImage: `url(${bunnyBadgeAtlas})`,
-                            backgroundPosition: BUNNY_ATLAS_POSITIONS[badgeKey],
+                            backgroundImage: `url(${atlasSrc})`,
+                            backgroundPosition: ATLAS_POSITIONS[badgeKey],
                             backgroundSize: '300% 300%',
                         }}
                     />
