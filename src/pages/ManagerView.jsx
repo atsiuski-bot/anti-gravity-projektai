@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3, LayoutGrid } from 'lucide-react';
+import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3, LayoutGrid, ClipboardList } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import IconButton from '../components/ui/IconButton';
+import Button from '../components/ui/Button';
+import EmptyState from '../components/ui/EmptyState';
 import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
@@ -18,6 +20,7 @@ import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
 import FilterPills from '../components/ui/FilterPills';
+import ListFilterBar from '../components/ui/ListFilterBar';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -40,6 +43,7 @@ import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import EarningsModal from '../components/EarningsModal';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
+import { useListSearchFilter } from '../hooks/useListSearchFilter';
 import useFullBleed from '../hooks/useFullBleed';
 import { useRovingFocus } from '../hooks/useRovingFocus';
 import { scopeRoster } from '../utils/teamScope';
@@ -164,6 +168,12 @@ export default function ManagerView() {
         () => sortWorkerTasks(tasks.filter((t) => t.status === 'unapproved' && !t.isDeleted)),
         [tasks]
     );
+
+    // Search + filter-by-person for the approvals queue — the same pair of controls every other
+    // sub-tab now carries (useListSearchFilter). Deliberately applied to the RENDERED list only:
+    // the tab's pending badge keeps counting `pendingApprovalTasks`, so narrowing the view never
+    // makes the queue look shorter than it is.
+    const approvalsFilter = useListSearchFilter(pendingApprovalTasks, { users });
 
     // Tags that ACTUALLY occur on the team's tasks — the source for the immediate pill filter
     // (mobile). Never the static catalogue, so a tag with no tasks offers no dead filter; the
@@ -336,7 +346,7 @@ export default function ManagerView() {
                 {/* The single-line quick-add bar was removed; its AI draft-fill now lives in the
                     "Nauja veikla" modal (TaskModal), beside the title. */}
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-                    <div className="min-w-0 md:flex-1">
+                    <div className="relative min-w-0 md:flex-1">
                         {/* Mobile: a horizontally scrollable strip (no-scrollbar) so all four
                             sub-tabs keep their natural width and full labels instead of being
                             squeezed equal with flex-1 — the row swipes sideways when it overflows
@@ -474,6 +484,11 @@ export default function ManagerView() {
                                 <span className="hidden sm:inline">Pasikartojančios užduotys</span>
                             </button>
                         </div>
+                        {/* Mobile scroll-edge fade indicator: hints that more sub-tabs are reachable by swiping */}
+                        <div
+                            className="pointer-events-none absolute right-0 top-0 bottom-0 w-8 rounded-r-control bg-gradient-to-l from-surface-sunken to-transparent sm:hidden"
+                            aria-hidden="true"
+                        />
                     </div>
 
                     {/* Užduočių sąrašas toolbar lifted onto the tab row (desktop only) and split
@@ -577,7 +592,46 @@ export default function ManagerView() {
                     />
                 </div>
 
-                {viewMode === 'mobile' ? (
+                {sortedTasks.length === 0 ? (
+                    <div className="bg-surface-card rounded-card shadow-sm border border-line p-6">
+                        <EmptyState
+                            icon={ClipboardList}
+                            title={
+                                filterUser || filterPriority || filterTag || filterStatus || searchText.trim()
+                                    ? "Pagal pasirinktus filtrus užduočių nerasta"
+                                    : "Užduočių sąrašas tuščias"
+                            }
+                            description={
+                                filterUser || filterPriority || filterTag || filterStatus || searchText.trim()
+                                    ? "Nė viena komandos užduotis neatitinka pasirinktų filtrų ar paieškos frazės."
+                                    : "Komandoje šiuo metu nėra aktyvių užduočių. Galite sukurti naują užduotį mygtuku žemiau."
+                            }
+                            action={
+                                filterUser || filterPriority || filterTag || filterStatus || searchText.trim() ? (
+                                    <Button
+                                        variant="secondary"
+                                        onClick={() => {
+                                            setFilterUser('');
+                                            setFilterPriority('');
+                                            setFilterTag('');
+                                            setFilterStatus('');
+                                            setSearchText('');
+                                        }}
+                                    >
+                                        Išvalyti visus filtrus
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="primary"
+                                        onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
+                                    >
+                                        Sukurti užduotį
+                                    </Button>
+                                )
+                            }
+                        />
+                    </div>
+                ) : viewMode === 'mobile' ? (
                     reorderActive ? (
                         /* Mobile → press-and-hold (long-press) a card to reorder it. The drag engine
                            is lazy-loaded, so @dnd-kit only loads here, never in the worker bundle. */
@@ -660,16 +714,34 @@ export default function ManagerView() {
                             <p className="text-body text-ink-muted">Nėra užduočių, laukiančių patvirtinimo.</p>
                         </div>
                     ) : (
-                        <div className="space-y-4">
-                            {pendingApprovalTasks.map(task => (
-                                <TaskCard
-                                    key={task.id}
-                                    task={task}
-                                    onEdit={() => handleEditTask(task)}
-                                    role="manager"
-                                />
-                            ))}
-                        </div>
+                        <>
+                            <ListFilterBar
+                                assigneeOptions={approvalsFilter.assigneeOptions}
+                                filterUser={approvalsFilter.filterUser}
+                                onFilterUserChange={approvalsFilter.setFilterUser}
+                                searchText={approvalsFilter.searchText}
+                                onSearchChange={approvalsFilter.setSearchText}
+                                searchSuggestions={approvalsFilter.searchSuggestions}
+                            />
+                            {approvalsFilter.filteredItems.length === 0 ? (
+                                /* The queue is not empty — the manager's own narrowing emptied it, so
+                                   say that instead of the "nothing to approve" copy above. */
+                                <div className="text-center py-12 bg-surface-card rounded-card shadow-sm border border-line">
+                                    <p className="text-body text-ink-muted">Pagal pasirinktus filtrus užduočių nerasta.</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {approvalsFilter.filteredItems.map(task => (
+                                        <TaskCard
+                                            key={task.id}
+                                            task={task}
+                                            onEdit={() => handleEditTask(task)}
+                                            role="manager"
+                                        />
+                                    ))}
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 

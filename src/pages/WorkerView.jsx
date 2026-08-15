@@ -405,15 +405,31 @@ export default function WorkerView() {
                     <div className="rounded-card border border-line bg-surface-card shadow-sm">
                         <EmptyState
                             icon={ClipboardList}
-                            title="Kol kas užduočių nėra"
-                            description="Kai koordinatorius priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą veiklą ar skambutį mygtukais apačioje."
+                            title={filterTag || debouncedSearch.trim() ? "Pagal pasirinktus filtrus užduočių nerasta" : "Kol kas užduočių nėra"}
+                            description={
+                                filterTag || debouncedSearch.trim()
+                                    ? "Nė viena užduotis neatitinka pasirinktos žymos ar paieškos frazės."
+                                    : "Kai koordinatorius priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą veiklą ar skambutį mygtukais apačioje."
+                            }
                             action={
-                                <Button
-                                    variant="primary"
-                                    onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
-                                >
-                                    Sukurti užduotį
-                                </Button>
+                                filterTag || debouncedSearch.trim() ? (
+                                    <Button
+                                        variant="secondary"
+                                        onClick={() => {
+                                            setFilterTag('');
+                                            setSearchText('');
+                                        }}
+                                    >
+                                        Išvalyti filtrus
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        variant="primary"
+                                        onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
+                                    >
+                                        Sukurti užduotį
+                                    </Button>
+                                )
                             }
                         />
                     </div>

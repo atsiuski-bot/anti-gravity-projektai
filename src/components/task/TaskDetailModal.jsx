@@ -22,6 +22,7 @@ import TaskFlagToggles from './TaskFlagToggles';
 import DeletedBadge from './DeletedBadge';
 import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
+import TaskRecurrenceInfo from './TaskRecurrenceInfo';
 import SessionTypeIcon from '../SessionTypeIcon';
 import UserChip from '../UserChip';
 import { deriveTaskStatus } from '../../utils/taskStatus';
@@ -397,6 +398,12 @@ export default function TaskDetailModal({
                     </div>
 
                     <TimeChangedWarning task={task} />
+
+                    {/* Recurring work — the cadence behind THIS instance (how often it repeats and
+                        which day it lands on), read from the template that generated it. Sits with
+                        the schedule facts, right under the deadline. Renders nothing for an
+                        ordinary one-off task. */}
+                    <TaskRecurrenceInfo task={task} />
 
                     {/* Row 2 — planned vs spent time; time-adjust shown only to managers who can edit.
                         Also renders for a trusted worker (canBackdate) even with no time yet, so the

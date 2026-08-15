@@ -54,8 +54,9 @@
     "workbox-precaching": "^7.4.1",
     "workbox-routing": "^7.4.1"
   },
+  "//overrides": "undici reaches us only through @firebase/* as their NODE fetch path — the browser bundle uses native fetch, so this is build/test exposure, not shipped exposure. Every new undici advisory makes npm propose the firebase v10->v12 major instead; BUMP THIS FLOOR first. It clears the whole @firebase/* advisory cluster in one line, without a two-major SDK migration on a live app.",
   "overrides": {
-    "undici": "^6.27.0"
+    "undici": "^6.28.0"
   },
   "//browserslist": "Pins the support floor EXPLICITLY (was implicit before). autoprefixer reads this for CSS prefixing; vite.config.js build.target mirrors it for JS. Floor ~= the audience's oldest realistic devices (field-worker phones / older iPhones). Bump deliberately, not by accident.",
   "browserslist": [

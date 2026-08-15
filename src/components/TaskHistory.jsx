@@ -104,7 +104,19 @@ export const escapeCSV = (str) => {
 // report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
 // expose a self-export. Only the manager team report opts in — the "Veiklos ataskaita" sub-tab
 // of "Kom. kalendorius" (formerly the standalone "Kom. ataskaitos" tab).
-export default function TaskHistory({ userId, users = [], canExport = false, approvalManagerUid = null }) {
+/**
+ * `sharedFilter` hands the free-text search and the Meistras choice to the PARENT: the Istorija tab
+ * shows two lists — the live just-accepted tasks above and this archive below — and two search
+ * fields on one screen is two answers to one question. When it is set, this panel drops its own
+ * search box and Meistras dropdown and reads both from the object ({ searchText, userId }), so the
+ * single control at the top of the tab narrows both lists at once. Its remaining filters (period,
+ * žyma, būsena, rūšiavimas) are archive-specific and stay here.
+ *
+ * `onPeopleChange` is the return leg: it reports the distinct assignees present in the archive
+ * WINDOW (before the Meistras narrowing) so the parent's pill row can offer someone whose only rows
+ * are archived — and so the row does not collapse to one pill the moment a person is selected.
+ */
+export default function TaskHistory({ userId, users = [], canExport = false, approvalManagerUid = null, sharedFilter = null, onPeopleChange = null }) {
     const { userRole, currentUser, userData } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);
     // The team report (manager, userId='all') keeps the full filter set; the *personal* history
@@ -142,17 +154,26 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     // live lists. Date/user/tag/status narrow the server+client result set first; search reorders
     // and filters what remains.
     const [searchText, setSearchText] = useState('');
+
+    // When the parent owns these two (Istorija's single control bar), the local state is inert and
+    // every read below goes through these. Same debounce either way, so typing feels identical.
+    const isSharedFilter = !!sharedFilter;
+    const searchValue = isSharedFilter ? (sharedFilter.searchText || '') : searchText;
+    const userValue = isSharedFilter ? (sharedFilter.userId || 'all') : filterUser;
+
     const [debouncedSearch, setDebouncedSearch] = useState('');
     useEffect(() => {
-        const handle = setTimeout(() => setDebouncedSearch(searchText), 200);
+        const handle = setTimeout(() => setDebouncedSearch(searchValue), 200);
         return () => clearTimeout(handle);
-    }, [searchText]);
+    }, [searchValue]);
 
     const [historyOpen, setHistoryOpen] = useState(false);
     // Date range lives behind a single field; tapping it opens the from/to pickers in a popover.
     const [dateRangeOpen, setDateRangeOpen] = useState(false);
     const dateRangeRef = useRef(null);
     const defaultDates = useRef({ from: '', to: '' });
+    // Last people-set pushed to `onPeopleChange`, so an unchanged snapshot stays silent.
+    const lastPeopleKey = useRef(null);
 
     useEffect(() => {
         if (!dateRangeOpen) return undefined;
@@ -203,12 +224,13 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
         // Determine effective user ID to query
         // If explicit 'userId' prop is passed (e.g. from Worker view), use it.
-        // If 'userId' prop is 'all' (Manager view), use the local 'filterUser' state.
+        // If 'userId' prop is 'all' (Manager view), use the chosen meistras — this panel's own
+        // dropdown, or the parent's pill row when the filter is shared (see `sharedFilter`).
         let targetUserId = 'all';
         if (userId && userId !== 'all') {
             targetUserId = userId; // Worker view or specific user prop
         } else {
-            targetUserId = filterUser; // Manager view dropdown selection
+            targetUserId = userValue; // Manager view: own dropdown, or the parent's shared pill row
         }
 
         let q;
@@ -250,12 +272,11 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
             // Client-side filtering for Tag (Firestore limitation on multiple inequality/array-contains with inequalities)
             // And any other refinement
-            const filteredTasks = Array.from(byId.values()).filter(task => {
+            const inWindow = Array.from(byId.values()).filter(task => {
                 // The vadovas supplement carries no archivedAt range (single-field equality, no
                 // composite index), so bound it to the selected window here; base rows are already
                 // server-bounded and pass trivially.
                 if (task.archivedAt && (task.archivedAt < startIso || task.archivedAt >= endIso)) return false;
-                if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
                 // Approval surface: restrict the archive to this manager's tasks — ones they own
                 // as vadovas (managerId), or whose worker they manage. "Managers of the doer" comes
@@ -272,6 +293,31 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 }
                 return true;
             });
+
+            // Report the people in the window BEFORE narrowing to one of them — otherwise the
+            // parent's pill row would collapse to the selected person and there would be no way
+            // back to a different one. Only pushed when the set actually changes, so a snapshot
+            // that shifts no names costs the parent no re-render.
+            if (onPeopleChange) {
+                const people = [];
+                const seenIds = new Set();
+                for (const t of inWindow) {
+                    const id = t.assignedUserId;
+                    if (!id || id === 'unknown' || seenIds.has(id)) continue;
+                    seenIds.add(id);
+                    people.push({ id, name: t.assignedUserName || '' });
+                }
+                people.sort((a, b) => a.id.localeCompare(b.id));
+                const key = people.map((p) => `${p.id}|${p.name}`).join(',');
+                if (key !== lastPeopleKey.current) {
+                    lastPeopleKey.current = key;
+                    onPeopleChange(people);
+                }
+            }
+
+            const filteredTasks = targetUserId === 'all'
+                ? inWindow
+                : inWindow.filter((task) => task.assignedUserId === targetUserId);
 
             // Sort manually ensuring robust timestamp handling
             const sortedTasks = filteredTasks.sort((a, b) => {
@@ -339,7 +385,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
         return () => { unsubscribe(); unsubVadovas(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
-    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid]);
+    }, [dateFrom, dateTo, userValue, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid, onPeopleChange]);
 
     // Status narrowing runs on the client over the fetched archive — the same three buckets the
     // status sort already recognises (Atlikta / Priimta / Ištrinta). 'all' is a pass-through so the
@@ -366,9 +412,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     // Type-ahead completions drawn from what is actually in view (after status narrowing), so the
     // dropdown only ever offers titles / meistras / žyma that exist in the current archive window.
     const searchSuggestions = useMemo(() => {
-        if (!searchText.trim()) return [];
-        return buildTaskSuggestions(statusFilteredTasks, searchText, getTaskSuggestionSources);
-    }, [statusFilteredTasks, searchText]);
+        if (!searchValue.trim()) return [];
+        return buildTaskSuggestions(statusFilteredTasks, searchValue, getTaskSuggestionSources);
+    }, [statusFilteredTasks, searchValue]);
 
     const handleExport = async () => {
         try {
@@ -599,13 +645,15 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         setSearchText('');
     };
 
+    // "Išvalyti filtrus" only ever clears what THIS panel owns, so search/meistras count towards it
+    // only while they are ours. Under a shared control they are cleared from the bar above, and
+    // offering a reset here that visibly does nothing would read as a broken button.
     const hasNonDefaultFilters =
         dateFrom !== defaultDates.current.from ||
         dateTo !== defaultDates.current.to ||
-        filterUser !== 'all' ||
         filterTag !== 'all' ||
         filterStatus !== 'all' ||
-        searchText.trim() !== '';
+        (!isSharedFilter && (filterUser !== 'all' || searchText.trim() !== ''));
 
 
     // Archive-surface props for the shared TaskCard (mobile): the SAME card the active lists use,
@@ -736,7 +784,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 {/* Free-text search — team report only (the personal history stays pared down to the
                     date range). Reuses the canonical type-ahead SearchBox so it matches the active
                     lists; matching/ranking runs client-side over the fetched archive. */}
-                {!isPersonal && (
+                {!isPersonal && !isSharedFilter && (
                 <div className="flex flex-col gap-1 min-w-[200px] flex-1 sm:max-w-xs">
                     <label className={FILTER_LABEL_CLASS}>Paieška</label>
                     <SearchBox
@@ -801,8 +849,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     )}
                 </div>
 
-                {/* User Filter (Manager Only) */}
-                {(isManagerOrAdmin && userId === 'all') && (
+                {/* User Filter (Manager Only) — replaced by the parent's pill row under a shared control. */}
+                {(isManagerOrAdmin && userId === 'all' && !isSharedFilter) && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
                         <label className={FILTER_LABEL_CLASS}>Meistras</label>
                         <Select
