@@ -33,6 +33,7 @@ import PlanVerdictChips from './PlanVerdictChips';
 import { uploadAttachments, withThumbs, padThumbs, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
 import { notifyMany } from '../../utils/notify';
 import { logError } from '../../utils/errorLog';
+import { hapticTap } from '../../utils/haptics';
 import { preventEnterSubmit } from '../../utils/formUtils';
 
 /**
@@ -319,6 +320,7 @@ export default function TaskDetailModal({
     // both of which the rules permit for this actor.
     const onToggleChecklistItem = async (itemId) => {
         if (!canTickChecklist || togglingItemId) return;
+        hapticTap();
         setTogglingItemId(itemId);
         setError('');
         try {

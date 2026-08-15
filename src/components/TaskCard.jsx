@@ -397,7 +397,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
             <div
                 onClick={openDetail}
                 className={clsx(
-                    "rounded-card border-2 shadow-sm p-3 mb-2 cursor-pointer transition-shadow duration-base",
+                    "rounded-card border-2 shadow-sm p-3 mb-2 cursor-pointer transition-all duration-base hover:shadow-md active:scale-[0.995]",
                     isRunning ? "bg-session-task-surface border-session-task-shell ring-2 ring-session-task-accent"
                         : parkedUnder ? clsx("bg-session-task-surface ring-2", parkedUnder.softBorder, parkedUnder.accentRing)
                         : flagTint

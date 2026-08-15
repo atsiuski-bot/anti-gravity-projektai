@@ -21,6 +21,7 @@ import {
     planSecondaryStart,
 } from '../utils/timerTransitionPlan';
 import { logError } from '../utils/errorLog';
+import { hapticTap } from '../utils/haptics';
 import { getSessionColors } from '../utils/sessionColors';
 import { CALL_CONTACT_TYPES } from '../utils/callContacts';
 import Modal from './ui/Modal';
@@ -478,6 +479,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     const handleDiscardCall = useCallback(() => finishCall({ discard: true }), [finishCall]);
 
     const handleToggleCall = async () => {
+        hapticTap();
         if (!currentUser || isDisabled) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;

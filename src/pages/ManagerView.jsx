@@ -544,7 +544,7 @@ export default function ManagerView() {
                     id="team-active-panel"
                     role="tabpanel"
                     aria-labelledby="team-active-tab"
-                    className={cn(teamTasksSubTab !== 'active' && 'hidden')}
+                    className={cn(teamTasksSubTab !== 'active' ? 'hidden' : 'animate-in fade-in duration-150')}
                 >
                     <ActiveWorkSessions embedded />
                 </div>
@@ -554,7 +554,7 @@ export default function ManagerView() {
                     id="team-list-panel"
                     role="tabpanel"
                     aria-labelledby="team-list-tab"
-                    className={cn(teamTasksSubTab !== 'list' && 'hidden')}
+                    className={cn(teamTasksSubTab !== 'list' ? 'hidden' : 'animate-in fade-in duration-150')}
                 >
                 {/* Assignee filter pills — immediate (no dropdown), single-select by VYKDYTOJAS, shown
                     on BOTH mobile and desktop above the list. Only workers with an active task in this
@@ -694,7 +694,7 @@ export default function ManagerView() {
                     id="team-recurring-panel"
                     role="tabpanel"
                     aria-labelledby="team-recurring-tab"
-                    className={cn(teamTasksSubTab !== 'recurring' && 'hidden')}
+                    className={cn(teamTasksSubTab !== 'recurring' ? 'hidden' : 'animate-in fade-in duration-150')}
                 >
                     <RecurringTasksPanel embedded />
                 </div>
@@ -707,7 +707,7 @@ export default function ManagerView() {
                     id="team-approvals-panel"
                     role="tabpanel"
                     aria-labelledby="team-approvals-tab"
-                    className={cn(teamTasksSubTab !== 'approvals' && 'hidden')}
+                    className={cn(teamTasksSubTab !== 'approvals' ? 'hidden' : 'animate-in fade-in duration-150')}
                 >
                     {pendingApprovalTasks.length === 0 ? (
                         <div className="text-center py-12 bg-surface-card rounded-card shadow-sm border border-line">
@@ -751,7 +751,7 @@ export default function ManagerView() {
                     internal switcher is suppressed. Conditionally MOUNTED (not display:none) so the
                     listeners attach only on first visit, matching the calendar tabs' lazy intent. */}
                 {teamTasksSubTab === 'signoff' && (
-                    <div id="team-signoff-panel" role="tabpanel" aria-labelledby="team-signoff-tab">
+                    <div id="team-signoff-panel" role="tabpanel" aria-labelledby="team-signoff-tab" className="animate-in fade-in duration-150">
                         <ErrorBoundary boundaryName="manager:team-signoff">
                             <React.Suspense fallback={<Spinner />}>
                                 <Reports users={reportRoster} canExport views={['approval']} />
@@ -764,7 +764,7 @@ export default function ManagerView() {
                     plus the archived browser. Same single-view Reports trick as Pridavimas, with the
                     'history' view. */}
                 {teamTasksSubTab === 'signoffHistory' && (
-                    <div id="team-signoff-history-panel" role="tabpanel" aria-labelledby="team-signoff-history-tab">
+                    <div id="team-signoff-history-panel" role="tabpanel" aria-labelledby="team-signoff-history-tab" className="animate-in fade-in duration-150">
                         <ErrorBoundary boundaryName="manager:team-signoff-history">
                             <React.Suspense fallback={<Spinner />}>
                                 <Reports users={reportRoster} canExport views={['history']} />
@@ -904,7 +904,7 @@ export default function ManagerView() {
                         geometry at mount, so it must mount into a laid-out container — switching away
                         and back remounts it correctly, and the history listener only runs on its tab. */}
                     {teamCalendarSubTab === 'calendar' && (
-                        <>
+                        <div className="animate-in fade-in duration-150">
                             {/* Komandos veiklos (Savaitės): the weekly planned-vs-worked summary moved
                                 here from Kom. veiklos — it belongs beside the calendar it summarises. */}
                             <CombinedHoursSummary />
@@ -913,15 +913,17 @@ export default function ManagerView() {
                                     <AllUsersCalendar />
                                 </React.Suspense>
                             </ErrorBoundary>
-                        </>
+                        </div>
                     )}
 
                     {teamCalendarSubTab === 'history' && (
-                        <ErrorBoundary boundaryName="manager:team-calendar-history">
-                            <React.Suspense fallback={<Spinner />}>
-                                <CalendarChangeHistory users={reportRoster} />
-                            </React.Suspense>
-                        </ErrorBoundary>
+                        <div className="animate-in fade-in duration-150">
+                            <ErrorBoundary boundaryName="manager:team-calendar-history">
+                                <React.Suspense fallback={<Spinner />}>
+                                    <CalendarChangeHistory users={reportRoster} />
+                                </React.Suspense>
+                            </ErrorBoundary>
+                        </div>
                     )}
 
                     {/* Veiklos ataskaita — the work-hours report, lifted out of the retired
@@ -929,11 +931,13 @@ export default function ManagerView() {
                         measures against. Shared Reports component constrained to its single
                         'report' view (switcher suppressed); export stays with it (canExport). */}
                     {teamCalendarSubTab === 'report' && (
-                        <ErrorBoundary boundaryName="manager:team-report">
-                            <React.Suspense fallback={<Spinner />}>
-                                <Reports users={reportRoster} canExport views={['report']} />
-                            </React.Suspense>
-                        </ErrorBoundary>
+                        <div className="animate-in fade-in duration-150">
+                            <ErrorBoundary boundaryName="manager:team-report">
+                                <React.Suspense fallback={<Spinner />}>
+                                    <Reports users={reportRoster} canExport views={['report']} />
+                                </React.Suspense>
+                            </ErrorBoundary>
+                        </div>
                     )}
                 </div>
             )}

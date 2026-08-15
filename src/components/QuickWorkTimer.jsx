@@ -28,6 +28,7 @@ import {
     planSecondaryStart,
 } from '../utils/timerTransitionPlan';
 import { logError } from '../utils/errorLog';
+import { hapticTap } from '../utils/haptics';
 import { notify } from '../utils/notify';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
@@ -529,6 +530,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     // There is deliberately NO cross-component event for this.
 
     const handleStartQuickWork = async () => {
+        hapticTap();
         if (!currentUser || isDisabled) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
@@ -577,6 +579,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     };
 
     const handleStopQuickWork = async () => {
+        hapticTap();
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
 

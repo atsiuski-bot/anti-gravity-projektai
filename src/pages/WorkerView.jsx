@@ -468,7 +468,7 @@ export default function WorkerView() {
                 on the active tab keeps it mounting into a laid-out container (and finally honours
                 the lazy-load intent: the chunk streams in on first visit, not eagerly while hidden). */}
             {activeTab === 'calendar' && (
-                <div className="w-full">
+                <div className="w-full animate-in fade-in duration-150">
                     <ErrorBoundary boundaryName="worker:calendar">
                         <React.Suspense fallback={<Spinner />}>
                             <WorkPlanner />
@@ -479,14 +479,16 @@ export default function WorkerView() {
 
             {/* Team Calendar Tab — same react-big-calendar mount-measurement constraint. */}
             {activeTab === 'team-calendar' && (
-                <ErrorBoundary boundaryName="worker:team-calendar">
-                    <React.Suspense fallback={<Spinner />}>
-                        <AllUsersCalendar />
-                    </React.Suspense>
-                </ErrorBoundary>
+                <div className="w-full animate-in fade-in duration-150">
+                    <ErrorBoundary boundaryName="worker:team-calendar">
+                        <React.Suspense fallback={<Spinner />}>
+                            <AllUsersCalendar />
+                        </React.Suspense>
+                    </ErrorBoundary>
+                </div>
             )}
 
-            <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
+            <div className={activeTab === 'reports' ? 'block animate-in fade-in duration-150' : 'hidden'}>
                 <ErrorBoundary boundaryName="worker:reports" resetKeys={[activeTab]}>
                     <React.Suspense fallback={<Spinner />}>
                         <Reports users={reportUsers} />

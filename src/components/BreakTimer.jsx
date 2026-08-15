@@ -18,6 +18,7 @@ import {
     planBreakStart,
 } from '../utils/timerTransitionPlan';
 import { logError } from '../utils/errorLog';
+import { hapticTap } from '../utils/haptics';
 import SessionToggleButton from './ui/SessionToggleButton';
 import { COMMIT_CONFIRM_TIMEOUT_MS } from './taskTimerSafety';
 
@@ -179,6 +180,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
     };
 
     const handleToggleBreak = async () => {
+        hapticTap();
         if (!currentUser || isDisabled) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;

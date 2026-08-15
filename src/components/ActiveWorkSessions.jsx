@@ -474,8 +474,11 @@ const ActiveSessionRow = React.memo(({ session, canEnd = false, onEnd }) => {
     return (
         <div className={`p-3 rounded-card flex flex-col gap-2 shadow-sm transition-all ${session.colorClass} ${isStale ? 'opacity-70 ring-1 ring-feedback-warning' : ''}`}>
             <div className="flex items-center justify-between">
-                <div className="flex-shrink-0">
+                <div className="flex-shrink-0 relative">
                     <SessionTypeIcon type={session.type} className="w-5 h-5" />
+                    {!isStale && (
+                        <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-feedback-success wz-pulse-soft" aria-hidden="true" />
+                    )}
                 </div>
                 <div className="min-w-0 flex-1 ml-3">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -502,7 +505,7 @@ const ActiveSessionRow = React.memo(({ session, canEnd = false, onEnd }) => {
                         {hasBudget && <span> · planas {plannedTime}</span>}
                     </div>
                 </div>
-                <span className={`font-mono font-bold text-body-lg ml-4 whitespace-nowrap ${isOver ? 'text-feedback-danger' : ''}`}>
+                <span className={`font-mono font-bold text-body-lg ml-4 whitespace-nowrap ${isOver ? 'text-feedback-danger' : ''} ${!isStale ? 'wz-tick' : ''}`}>
                     {durationStr}
                 </span>
                 {canEnd && isStale && (

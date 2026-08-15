@@ -30,6 +30,7 @@ import {
     checklistFinishWarning,
     canUndoOwnFinish,
 } from './taskTimerSafety';
+import { hapticTap, hapticSuccess } from '../utils/haptics';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 
@@ -343,6 +344,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
     const handleStart = async (e) => {
         e.stopPropagation();
+        hapticTap();
         if (isSecondarySessionActive) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
@@ -391,6 +393,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
     const handlePause = async (e) => {
         e.stopPropagation();
+        hapticTap();
         if (!task.timerStartedAt) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
@@ -426,6 +429,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
     const handleResume = async (e) => {
         e.stopPropagation();
+        hapticTap();
         if (isSecondarySessionActive) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
@@ -611,6 +615,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     };
 
     const performFinish = async () => {
+        hapticSuccess();
         setFinishing(true);
         try {
             if (engineUnresolved(setFinishError)) return;

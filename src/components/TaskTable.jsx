@@ -700,7 +700,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                             const commentCount = task.comments?.length || 0;
                             const checklist = task.checklist && task.checklist.length > 0 ? getChecklistProgress(task.checklist) : null;
                             const rowClassName = clsx(
-                                "cursor-pointer transition hover:brightness-[0.97]",
+                                "cursor-pointer transition duration-base hover:brightness-[0.97] hover:shadow-sm",
                                 getStatusStyle(task)
                             );
                             const cells = (

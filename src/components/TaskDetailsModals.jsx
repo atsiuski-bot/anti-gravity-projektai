@@ -8,6 +8,7 @@ import { preventEnterSubmit } from '../utils/formUtils';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { formatTime } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
+import { hapticTap } from '../utils/haptics';
 import { useAuth } from '../context/AuthContext';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
@@ -282,7 +283,12 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
                             <li key={item.id} className="flex items-stretch gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => canToggle && onToggle?.(item.id)}
+                                    onClick={() => {
+                                        if (canToggle) {
+                                            hapticTap();
+                                            onToggle?.(item.id);
+                                        }
+                                    }}
                                     disabled={!canToggle}
                                     aria-pressed={!!item.done}
                                     className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
