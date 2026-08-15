@@ -10,9 +10,10 @@ import CallTimer from './CallTimer';
 import QuickWorkTimer from './QuickWorkTimer';
 import Modal from './ui/Modal';
 import { cn } from '../utils/cn';
+import { hapticTap } from '../utils/haptics';
 
 const navItemBase =
-    'flex flex-col items-center justify-center rounded-control transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-inset';
+    'flex flex-col items-center justify-center rounded-control transition-all duration-base active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-inset';
 
 const BottomNavigation = () => {
     const { userRole, currentUser } = useAuth();
@@ -43,6 +44,7 @@ const BottomNavigation = () => {
     const showCreateButton = (userRole === 'worker') || isManagerRole(userRole);
 
     const handleTab = (id) => {
+        hapticTap();
         setActiveTab(id);
         setMoreOpen(false);
     };

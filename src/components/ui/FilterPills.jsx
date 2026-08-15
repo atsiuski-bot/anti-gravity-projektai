@@ -1,21 +1,26 @@
 import { cn } from '../../utils/cn';
 import UserChip from '../UserChip';
+import { hapticTap } from '../../utils/haptics';
 
 // One filter pill — a toggle shown immediately (no dropdown). The active one is brand-filled,
 // the rest are bordered chips. 44px min target (touch, DESIGN_SYSTEM §9) with a visible focus ring;
 // `aria-pressed` carries the on/off state for assistive tech.
 function Pill({ active, onClick, children, compactStart }) {
+    const handleClick = (e) => {
+        hapticTap();
+        onClick?.(e);
+    };
     return (
         <button
             type="button"
-            onClick={onClick}
+            onClick={handleClick}
             aria-pressed={active}
             className={cn(
-                'inline-flex min-h-touch items-center rounded-full text-body font-medium transition',
+                'inline-flex min-h-touch items-center rounded-full text-body font-medium transition duration-base active:scale-95',
                 compactStart ? 'pl-1.5 pr-4' : 'px-4',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                 active
-                    ? 'bg-brand text-white'
+                    ? 'bg-brand text-white shadow-sm'
                     : 'border border-line bg-surface-card text-ink hover:bg-surface-sunken'
             )}
         >

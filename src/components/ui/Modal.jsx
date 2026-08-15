@@ -105,8 +105,8 @@ export default function Modal({
                     // `-[…dvh…]` shape, so a named token would silently escape the guard that makes
                     // sure this cap has a `vh` twin for engines below Safari 15.4.
                     'max-h-[calc(100dvh-9rem-env(safe-area-inset-bottom))] sm:max-h-[calc(100dvh-10rem-env(safe-area-inset-bottom))] lg:max-h-[90dvh] focus:outline-none',
-                    // Card settles in (fade + slight zoom) as the scrim fades behind it.
-                    'animate-in fade-in zoom-in-95',
+                    // Card settles in (fade + slight zoom + subtle mobile bottom rise) as the scrim fades behind it.
+                    'animate-in fade-in zoom-in-95 slide-in-from-bottom-2 sm:slide-in-from-bottom-0',
                     SIZES[size] || SIZES.md,
                     className
                 )}

@@ -27,10 +27,14 @@ export default function Dashboard() {
             }>
                 {/* Keep the role view MOUNTED while on the profile page (its data listeners and
                     cached scroll survive), just visually hidden — so returning is instant. */}
-                <div className={showProfile ? 'hidden' : undefined}>
+                <div className={showProfile ? 'hidden' : 'animate-in fade-in duration-200'}>
                     {isManagerRole(userRole) ? <ManagerView /> : <WorkerView />}
                 </div>
-                {showProfile && <ProfilePage />}
+                {showProfile && (
+                    <div className="animate-in fade-in duration-200">
+                        <ProfilePage />
+                    </div>
+                )}
             </React.Suspense>
         </>
     );

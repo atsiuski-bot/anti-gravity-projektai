@@ -54,7 +54,7 @@ export default function CompletedTodayDisclosure({ tasks }) {
                     </span>
                     <ChevronDown
                         className={cn(
-                            'h-5 w-5 shrink-0 text-ink-muted transition-transform',
+                            'h-5 w-5 shrink-0 text-ink-muted transition-transform duration-base',
                             expanded && 'rotate-180'
                         )}
                         aria-hidden="true"
@@ -62,7 +62,7 @@ export default function CompletedTodayDisclosure({ tasks }) {
                 </button>
             </h3>
             {expanded && (
-                <ul id="completed-today-panel" className="m-0 list-none border-t border-line p-0">
+                <ul id="completed-today-panel" className="m-0 list-none border-t border-line p-0 animate-in fade-in slide-in-from-top-2 duration-150">
                     {tasks.map((task) => {
                         const type = sessionTypeOf(task);
                         const minutes = calculateCurrentTotalMinutes(task);

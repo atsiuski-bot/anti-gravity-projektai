@@ -31,6 +31,7 @@ import { getSessionColors } from '../utils/sessionColors';
 import { isSecondarySessionType, pausedTaskInStack } from '../utils/sessionNesting';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 import { useUndoableAction } from '../hooks/useUndoableAction';
+import { hapticSuccess } from '../utils/haptics';
 
 /**
  * DEADLINE_TONE — colour for the relative-deadline chip (icon + text together). The tone comes
@@ -218,6 +219,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
         const wasCompleted = prevCompletedRef.current;
         prevCompletedRef.current = task.completed;
         if (!wasCompleted && task.completed) {
+            hapticSuccess();
             setJustCompleted(true);
             const t = setTimeout(() => setJustCompleted(false), 1500);
             return () => clearTimeout(t);

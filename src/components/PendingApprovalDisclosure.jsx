@@ -39,7 +39,7 @@ export default function PendingApprovalDisclosure({ tasks, onEdit, role = 'worke
                     </span>
                     <ChevronDown
                         className={cn(
-                            'h-5 w-5 shrink-0 text-ink-muted transition-transform',
+                            'h-5 w-5 shrink-0 text-ink-muted transition-transform duration-base',
                             expanded && 'rotate-180'
                         )}
                         aria-hidden="true"
@@ -47,7 +47,7 @@ export default function PendingApprovalDisclosure({ tasks, onEdit, role = 'worke
                 </button>
             </h3>
             {expanded && (
-                <div id="pending-approval-panel" className="space-y-4 border-t border-line p-3">
+                <div id="pending-approval-panel" className="space-y-4 border-t border-line p-3 animate-in fade-in slide-in-from-top-2 duration-150">
                     {tasks.map((task) => (
                         <TaskCard
                             key={task.id}
