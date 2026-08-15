@@ -494,12 +494,18 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); openDetail(task); }}
                                         className={clsx(
-                                            'block w-full text-left text-body font-semibold break-words rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
+                                            'flex items-center gap-1.5 w-full text-left text-body font-semibold break-words rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                                             task.isDeleted ? 'text-ink-muted line-through' : task.completed ? 'text-ink' : 'text-ink-strong'
                                         )}
                                     >
                                         {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
-                                        {task.title}
+                                        {(task.isSystemTask || task.isQuickWork) && (
+                                            <SessionTypeIcon
+                                                type={task.isSystemTask ? 'call' : 'quickWork'}
+                                                className="h-4 w-4 shrink-0"
+                                            />
+                                        )}
+                                        <span className="min-w-0 flex-1 break-words">{task.title}</span>
                                         {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </button>
                                     {(task.managerName || task.creatorName) && (
@@ -722,6 +728,12 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                                 not only in the far-right "Būsena" column. Decorative here: that
                                                 column's pill already carries the labelled status for screen readers. */}
                                             <TaskStatusIcon task={task} isRunning={isTaskRunning(task)} size="sm" decorative className="mt-0.5" />
+                                            {(task.isSystemTask || task.isQuickWork) && (
+                                                <SessionTypeIcon
+                                                    type={task.isSystemTask ? 'call' : 'quickWork'}
+                                                    className="mt-0.5 h-4 w-4 shrink-0"
+                                                />
+                                            )}
                                             <span className="min-w-0 flex-1 break-words">
                                                 {task.title}
                                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
