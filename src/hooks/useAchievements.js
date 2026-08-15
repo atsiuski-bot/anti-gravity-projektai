@@ -17,6 +17,7 @@ export const STAT_FIELD_BY_KEY = {
     on_estimate: 'onEstimate',
     plans_ahead: 'planAheadWeeks',
     on_time_start: 'punctualDays',
+    improves_own_time: 'improvedOwnTime',
     approved_craft: 'confirmedTasks',
     thorough: 'thorough',
     hard_tasks: 'hardTasks',

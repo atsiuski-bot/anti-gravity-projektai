@@ -855,10 +855,10 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     onClick: () => undoFinish({ preFinishTimerMinutes, sessionDocRef })
                 });
                 try { SoundManager.playQuickTaskSound(); } catch { /* audio is best-effort */ }
-                // Post-finish, invite a work-end proof photo (skippable) for the worker's OWN task.
-                // WorkerView renders CompletionPhotoModal. The earnings popup (gross/net), shown only
-                // when a pay rate is set, is CHAINED after that modal closes so the two never stack —
-                // we hand the showEarnings flag + minutes along rather than firing 'task-earnings' here.
+                // Post-finish, open the completion summary (WorkerView renders
+                // TaskCompletionSummaryModal): plan verdict, earnings, and the skippable work-end
+                // photo prompt in ONE card. `showEarnings` is now consumed only by ManagerView, which
+                // still gates its (photo-less) copy of the card on a pay rate being set.
                 window.dispatchEvent(new CustomEvent('request-completion-photo', {
                     detail: { task, totalMinutes, showEarnings: hasPayRate(userData?.payRate) }
                 }));

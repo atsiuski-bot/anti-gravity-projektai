@@ -40,7 +40,7 @@ import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
-import EarningsModal from '../components/EarningsModal';
+import TaskCompletionSummaryModal from '../components/TaskCompletionSummaryModal';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
 import { useListSearchFilter } from '../hooks/useListSearchFilter';
@@ -1001,13 +1001,13 @@ export default function ManagerView() {
                 />
             )}
 
-            {/* Post-completion earnings popup — gross (with tax) first, net (take-home) beside it */}
+            {/* Post-completion summary — plan verdict first, earnings below it. No photo prompt: the
+                work-end proof photo stays a worker-side affordance. */}
             {earnings && (
-                <EarningsModal
-                    open
-                    onClose={() => setEarnings(null)}
+                <TaskCompletionSummaryModal
                     task={earnings.task}
                     totalMinutes={earnings.totalMinutes}
+                    onClose={() => setEarnings(null)}
                 />
             )}
         </div>

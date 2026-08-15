@@ -72,16 +72,16 @@ function formatMetric(value, kind) {
 }
 
 // Period earnings, computed MONTH-AWARE because the net rate is marginal over CUMULATIVE monthly
-// hours (mirrors EarningsModal). A window crossing a month boundary is split per calendar month;
+// hours (mirrors EarningsBreakdown). A window crossing a month boundary is split per calendar month;
 // for the start month the pre-period hours seed the tier walk, later months start at zero. A naive
 // period-sum would silently misprice the tier — so we never do that.
 //
 // TARIFF: a meistras may carry SEVERAL named pay rates and the manager picks one per task
-// (`task.payRateId`), which EarningsModal already honours. Pricing the whole period off
+// (`task.payRateId`), which EarningsBreakdown already honours. Pricing the whole period off
 // `payRate.tiers` (the DEFAULT tariff) billed every hour of a multi-tariff worker at their cheapest
 // rate — so the payroll CSV and the worker's own app showed different money for identical work.
 // Each in-window session is therefore priced with the tier table of ITS task, walked in date order
-// on the month's shared cumulative-hours counter (exactly how EarningsModal stacks one finished task
+// on the month's shared cumulative-hours counter (exactly how EarningsBreakdown stacks one finished task
 // on top of the month so far). For a single-tariff worker this is arithmetically identical to the
 // old single walk — marginal pricing over contiguous slices is additive — so nothing moves for them.
 //
@@ -90,7 +90,7 @@ function formatMetric(value, kind) {
 // allowLarge here: a legacy isManualAdjustment row over 16h, or a negative correction, is bounded
 // to [0, 16h] before it can seed or be priced — otherwise earnings would over-pay (un-clamped
 // magnitude) or under-price (a negative prior-month row lowering the cumulative tier seed), and
-// disagree with both the report's own hours total and the worker-facing EarningsModal.
+// disagree with both the report's own hours total and the worker-facing EarningsBreakdown.
 function computePeriodEarnings(workSessions, window, payRate, taskPayRateIds = {}) {
     const { startStr, endStr } = window;
     const monthFloor = firstOfMonthStr(startStr);
@@ -120,7 +120,7 @@ function computePeriodEarnings(workSessions, window, payRate, taskPayRateIds = {
     let net = 0;
     for (const m of Object.keys(inPeriod)) {
         // Chronological so the cumulative position of each priced slice is deterministic and
-        // matches the order the work was actually done (and billed in EarningsModal).
+        // matches the order the work was actually done (and billed in EarningsBreakdown).
         const slices = inPeriod[m].sort((a, b) =>
             a.date === b.date ? String(a.startTime).localeCompare(String(b.startTime)) : a.date < b.date ? -1 : 1
         );
@@ -455,7 +455,7 @@ export function renderReportJSON(report) {
 // (see computePeriodEarnings), so a per-day price would mis-tier and read as fact. Workers without
 // a pay rate, or whose window earns nothing, leave both money cells blank — same null policy as
 // buildReport. The earnings figure uses the analysis 16h clamp (no allowLarge) and prices only
-// work_sessions, so it can differ from the "Veikla" total above; it mirrors what EarningsModal
+// work_sessions, so it can differ from the "Veikla" total above; it mirrors what EarningsBreakdown
 // showed the worker, including the per-task tariff.
 export function renderTimesheetCSV(workers, window, { includeEarnings = false } = {}) {
     const escape = (str) => {

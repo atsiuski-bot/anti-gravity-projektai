@@ -29,6 +29,7 @@ import { deriveTaskStatus } from '../../utils/taskStatus';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, relativeDeadline } from '../../utils/timeUtils';
 import { getChecklistProgress, toggleChecklistItem } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
+import PlanVerdictChips from './PlanVerdictChips';
 import { uploadAttachments, withThumbs, padThumbs, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
 import { notifyMany } from '../../utils/notify';
 import { logError } from '../../utils/errorLog';
@@ -446,6 +447,13 @@ export default function TaskDetailModal({
                             )}
                         </div>
                     )}
+
+                    {/* Row 2b — how the finished run landed, straight under the planned-vs-spent row.
+                        Server-authored (functions applyPlanVerdict), so it is the same number for
+                        every reader; absent on tasks completed before that function shipped. This is
+                        where a manager reviewing finished work can see there is something worth
+                        saying — see PlanVerdictChips. */}
+                    <PlanVerdictChips verdict={task.planVerdict} />
 
                     {/* Row 3 — who does the work and who manages it (one chip when they're the same) */}
                     {(task.assignedUserName || (showManagerLine && managerName)) && (

@@ -1,4 +1,4 @@
-import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame, AlarmClock, Camera } from 'lucide-react';
+import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame, AlarmClock, Camera, Gauge } from 'lucide-react';
 
 /**
  * Client-side badge presentation. The awarded doc (users/{uid}/achievements/{key}) carries the
@@ -11,6 +11,7 @@ export const BADGE_ICONS = {
     on_estimate: Target,          // R3 — lands within the estimate
     plans_ahead: CalendarClock,   // R4 — plans the week ahead
     on_time_start: AlarmClock,    // R6 — starts near the planned shift
+    improves_own_time: Gauge,     // R7 — beats their own baseline on the same recurring job
     approved_craft: ShieldCheck,  // Q1 — work a manager accepted
     thorough: ListChecks,         // Q2 — completes the full checklist
     hard_tasks: Flame,            // Q4 — takes the high-priority work
@@ -75,6 +76,16 @@ export const BADGE_CATALOG = [
         unit: 'dienos laiku',
         description: 'Skiriamas už dienas, kai veiklą pradedate netoli suplanuoto veiklos laiko pradžios.',
         thresholds: [10, 60, 280, 650],
+    },
+    {
+        key: 'improves_own_time',
+        name: 'Pagerina savo laiką',
+        unit: 'pagerinti pasikartojantys darbai',
+        // Copy rule: describes what HAPPENED, never sets a target. WORKZ pays by the hour, so the
+        // app must never ask anyone to hurry — this badge notices an improvement, it does not
+        // request one. Comparison is always against the person's own past, never a colleague's.
+        description: 'Skiriamas, kai pasikartojantį darbą atliekate greičiau, nei jį atlikdavote anksčiau patys.',
+        thresholds: [2, 8, 25, 60],
     },
     // Quality
     {

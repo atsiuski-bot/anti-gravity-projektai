@@ -569,6 +569,19 @@ const BADGES = {
     on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [10, 80, 450, 1100] },             // R3
     plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [3, 15, 60, 150] },       // R4 (high-water weeks, ~52/yr ceiling)
     on_time_start: { name: 'Pradeda laiku', stat: 'punctualDays', thresholds: [10, 60, 280, 650] },     // R6 (planned vs actual start)
+    // R7 — the ONLY badge that is RELATIVE rather than a volume count.
+    //
+    // Every other ladder here counts QUANTITY (tasks, days, confirmations), so a worker who gets
+    // faster climbs them more SLOWLY — and, because WORKZ pays by the hour on rising monthly tiers,
+    // they also earn less that month. Recognition built purely on volume therefore penalises exactly
+    // the people it is meant to honour. This one counts times a worker beat their OWN median on the
+    // SAME recurring job — a measure a faster pace cannot depress.
+    //
+    // THRESHOLDS ARE PROVISIONAL. Unlike the 2026-06-26 recalibration, these were NOT fitted to
+    // production data (the event is rare by construction: it needs >=3 prior runs of one template and
+    // a >=15% gain). Re-fit them against real counts before treating any tier as meaningful — an
+    // earned tier is permanent and cannot be walked back.
+    improves_own_time: { name: 'Pagerina savo laiką', stat: 'improvedOwnTime', thresholds: [2, 8, 25, 60] },
     // Quality
     approved_craft: { name: 'Priimta veikla', stat: 'confirmedTasks', thresholds: [5, 75, 600, 1800] },     // Q1
     thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [2, 10, 40, 120] },                         // Q2 (no baseline — checklists ~unused)
@@ -750,8 +763,134 @@ function photoCount(value) {
     return Array.isArray(value) ? value.length : 0;
 }
 
+// --- PLAN-PERFORMANCE MIRROR (start) -------------------------------------------------------
+// Hand-copied MIRROR of src/utils/planPerformance.js. Kept in lockstep by firebaseConsistency.test.js,
+// which slices this block out and runs it against the client copy. Self-contained on purpose (no
+// closure references) so that slice can execute standalone.
+//
+// The client computes the same verdict for the finish summary — it may use fuzzy title matching there,
+// because that is only a sentence on a screen. THIS copy is the one that grants a PERMANENT badge, so
+// it only ever compares runs of the same recurring template (an exact lineage key). Recognition never
+// rests on a guess about which jobs are "the same".
+const PLAN_MIN_PRIOR_INSTANCES = 3;
+const PLAN_MIN_IMPROVEMENT_RATIO = 0.15;
+const PLAN_MIN_COMPARABLE_MINUTES = 30;
+
+function planPositiveMinutes(values) {
+    return (Array.isArray(values) ? values : [])
+        .map((v) => Number(v))
+        .filter((v) => Number.isFinite(v) && v > 0);
+}
+
+function planMedianMinutes(values) {
+    const nums = planPositiveMinutes(values).sort((a, b) => a - b);
+    if (nums.length === 0) return null;
+    const mid = Math.floor(nums.length / 2);
+    return nums.length % 2 === 1 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+}
+
+function planBandFor(actualMinutes, estimatedMinutes) {
+    const actual = Number(actualMinutes);
+    const estimated = Number(estimatedMinutes);
+    if (!Number.isFinite(actual) || actual < 0) return null;
+    if (!Number.isFinite(estimated) || estimated <= 0) return null;
+    const percentOfPlan = Math.round((actual / estimated) * 100);
+    return { percentOfPlan, band: percentOfPlan > 100 ? 'over' : 'on_plan' };
+}
+
+function planImprovementVerdict(actualMinutes, priorMinutes) {
+    const actual = Number(actualMinutes);
+    if (!Number.isFinite(actual) || actual <= 0) return null;
+    const priors = planPositiveMinutes(priorMinutes);
+    if (priors.length < PLAN_MIN_PRIOR_INSTANCES) return null;
+    const baselineMinutes = planMedianMinutes(priors);
+    if (baselineMinutes === null || baselineMinutes < PLAN_MIN_COMPARABLE_MINUTES) return null;
+    const ratioFaster = (baselineMinutes - actual) / baselineMinutes;
+    if (ratioFaster < PLAN_MIN_IMPROVEMENT_RATIO) return null;
+    return {
+        baselineMinutes,
+        percentFaster: Math.round(ratioFaster * 100),
+        priorCount: priors.length
+    };
+}
+
+function buildTaskPlanVerdict(input) {
+    const opts = input || {};
+    const plan = planBandFor(opts.actualMinutes, opts.estimatedMinutes);
+    return {
+        actualMinutes: Number.isFinite(Number(opts.actualMinutes)) ? Number(opts.actualMinutes) : null,
+        percentOfPlan: plan ? plan.percentOfPlan : null,
+        band: plan ? plan.band : null,
+        improvement: planImprovementVerdict(opts.actualMinutes, opts.priorMinutes || [])
+    };
+}
+// --- PLAN-PERFORMANCE MIRROR (end) ---------------------------------------------------------
+
+// Minutes a FINISHED task banked. Unlike runningTaskMinutes there is no live stretch to add: a
+// completed task's time is already credited into manual + timer + adjustments.
+function completedTaskMinutes(task) {
+    let total = (Number(task.manualMinutes) || 0) + (Number(task.timerMinutes) || 0);
+    if (Array.isArray(task.timeAdjustments)) {
+        for (const adj of task.timeAdjustments) total += Number(adj && adj.durationMinutes) || 0;
+    }
+    return total;
+}
+
+/**
+ * Judge a just-finished task against its plan and against the worker's own past runs of the SAME
+ * recurring job, then (a) denormalise the verdict onto the task and (b) award the improvement badge.
+ *
+ * The verdict is written to the task doc rather than recomputed per viewer so manager surfaces can
+ * render it with no extra query — and so the number a manager sees is server-authored, not something
+ * a client asserted about its own performance.
+ *
+ * Writing to the task from a task-update trigger is safe here: the re-fired event cannot satisfy any
+ * of the three edges in onTaskFinishedBadge (before.completed is already true), so it returns
+ * immediately and nothing loops.
+ */
+async function applyPlanVerdict(uid, taskId, task) {
+    // Quick-work is a one-tap log, not a job with a plan or a comparable history.
+    if (task.isQuickWork === true) return;
+    const actualMinutes = completedTaskMinutes(task);
+    if (!(actualMinutes > 0)) return;
+
+    // Baseline over the EXACT recurring lineage only — see the mirror note above.
+    const priorMinutes = [];
+    if (task.sourceTemplateId) {
+        try {
+            const snap = await db.collection('tasks')
+                .where('assignedUserId', '==', uid)
+                .where('sourceTemplateId', '==', task.sourceTemplateId)
+                .where('completed', '==', true)
+                .get();
+            snap.forEach((d) => {
+                if (d.id === taskId) return;             // never compare a run against itself
+                const prior = d.data();
+                if (prior.status === 'deleted') return;
+                const minutes = completedTaskMinutes(prior);
+                if (minutes > 0) priorMinutes.push(minutes);
+            });
+        } catch (err) {
+            // A failed baseline read must not cost the worker the plan half of their verdict.
+            logger.error('applyPlanVerdict baseline read failed', { uid, taskId, err: err.message });
+        }
+    }
+
+    const verdict = buildTaskPlanVerdict({
+        actualMinutes,
+        estimatedMinutes: taskEstimateMinutes(task),
+        priorMinutes
+    });
+
+    // merge:true — this trigger owns exactly one field on a doc many writers share.
+    await db.collection('tasks').doc(taskId).set({ planVerdict: verdict }, { merge: true });
+
+    if (verdict.improvement) await bumpAndGrant(uid, 'improves_own_time', taskId);
+}
+
 // Task-finish badges. Three independent edges on a task update:
-//   • completed false→true                 → R1 follow_through (NOT quick-work), R3 on_estimate, Q2 thorough, Q4 hard_tasks
+//   • completed false→true                 → R1 follow_through (NOT quick-work), R3 on_estimate, Q2 thorough, Q4 hard_tasks,
+//                                             R7 improves_own_time + the denormalised planVerdict
 //   • status →'confirmed'                   → Q1 approved_craft (a manager accepted the worker's work)
 //   • completionPhotoUrls empty→non-empty   → A1 documented (the worker attached a work-end proof photo)
 // The edges are independent (a manager finishing sets completed+confirmed at once; the proof photo
@@ -786,6 +925,10 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
             if (hasEstimate(after) && after.timeLimitReached !== true) await bumpAndGrant(uid, 'on_estimate', taskId);
             if (checklistAllDone(after.checklist)) await bumpAndGrant(uid, 'thorough', taskId);
             if (isHighPriority(after.priority)) await bumpAndGrant(uid, 'hard_tasks', taskId);
+            // Stamp the plan verdict on the task (for the manager's view) and award R7 when this run
+            // beat the worker's own baseline for the same recurring job. Keyed by task id like every
+            // other bump, so a return-and-refinish cycle counts once.
+            await applyPlanVerdict(uid, taskId, after);
         }
         // Q1 counts a MANAGER sign-off — not a worker (in a manager role) confirming their own task.
         if (justConfirmed && after.confirmedBy && after.confirmedBy !== uid) {

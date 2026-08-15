@@ -1,7 +1,13 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
-import { parseTimeStringToMinutes } from '../utils/timeUtils';
+import {
+    parseTimeStringToMinutes,
+    formatMinutesToTimeString,
+    calculateCurrentTotalMinutes,
+    sanitizeReportMinutes,
+} from '../utils/timeUtils';
+import { medianMinutes, MIN_PRIOR_INSTANCES } from '../utils/planPerformance';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
 
 /**
@@ -33,6 +39,81 @@ const titleWords = (s) => normTitle(s).split(/[\s,/:;.\-_]+/).filter((w) => w.le
 // A usable estimated-time string is one the canonical parser accepts as a positive duration —
 // this filters out the legacy free-text junk ("1 val" parses, "" / garbage does not).
 const isUsableTime = (t) => !!t && parseTimeStringToMinutes(t) > 0;
+
+/**
+ * Round a measured duration to a value a human would actually type as an estimate. A raw median of
+ * 187.5 min reads as a suspiciously precise "3h 8m"; nobody plans in that granularity, and an
+ * odd-looking suggestion is one the manager overrides on reflex. Five-minute steps under an hour,
+ * quarter-hours above it. Exported for the unit test.
+ */
+export const roundSuggestedMinutes = (minutes) => {
+    const m = Number(minutes);
+    if (!Number.isFinite(m) || m <= 0) return 0;
+    const step = m < 60 ? 5 : 15;
+    return Math.max(step, Math.round(m / step) * step);
+};
+
+/**
+ * The time to pre-fill for a title — measured reality first, past guesses only as a fallback.
+ *
+ * WHY this changed: it used to return the most COMMON PAST ESTIMATE for similar work, which meant
+ * estimates were derived from estimates with no measurement anywhere in the loop. A job estimated
+ * wrongly once stayed wrong forever, and every "% of plan" verdict built on top of it was measuring
+ * the distance to a number somebody typed from memory. Suggesting the MEDIAN ACTUAL closes the loop:
+ * each completed run makes the next plan more honest.
+ *
+ * The old behaviour is kept as the fallback, because a brand-new kind of work has no actuals yet and
+ * a remembered guess beats an empty field. The same MIN_PRIOR_INSTANCES floor as the finish
+ * summary's comparison applies — below three completed runs a median is not a measurement.
+ *
+ * Pure and exported so the decision is unit-testable without a React renderer.
+ *
+ * @param {{title: string, estimatedTime: string, actualMinutes: number, completed: boolean}[]} history
+ * @param {string} title
+ * @returns {string} a time string the estimate parser accepts, or '' when history has nothing
+ */
+export const pickSuggestedTime = (history, title) => {
+    const key = normTitle(title);
+    if (!key) return '';
+
+    const qWords = new Set(titleWords(title));
+    const exact = history.filter((r) => normTitle(r.title) === key);
+    // Exact title matches are the most trustworthy set; fall back to keyword overlap so a
+    // re-phrased repeat of the same job still finds its own history.
+    let matches = exact;
+    if (matches.length === 0 && qWords.size > 0) {
+        matches = history.filter((r) => titleWords(r.title).some((w) => qWords.has(w)));
+    }
+
+    const actuals = matches
+        .filter((r) => r.completed && Number(r.actualMinutes) > 0)
+        .map((r) => Number(r.actualMinutes));
+    if (actuals.length >= MIN_PRIOR_INSTANCES) {
+        const rounded = roundSuggestedMinutes(medianMinutes(actuals));
+        if (rounded > 0) return formatMinutesToTimeString(rounded);
+    }
+
+    // --- Fallback: the old estimate-derived answer, unchanged. ---
+    if (exact.length) {
+        const t = mostCommonTime(exact);
+        if (t) return t;
+    }
+    if (qWords.size === 0) return '';
+    let bestRow = null;
+    let bestScore = 0;
+    for (const r of history) {
+        if (!isUsableTime(r.estimatedTime)) continue;
+        let score = 0;
+        for (const w of titleWords(r.title)) {
+            if (qWords.has(w)) score++;
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            bestRow = r;
+        }
+    }
+    return bestScore > 0 && bestRow ? bestRow.estimatedTime.trim() : '';
+};
 
 // Pick the most frequent valid estimated-time across a set of history rows.
 const mostCommonTime = (rows) => {
@@ -73,6 +154,11 @@ export default function useTaskSuggestions({ uid, enabled }) {
                             title: t.title || '',
                             estimatedTime: t.estimatedTime || '',
                             createdAt: t.createdAt || '',
+                            // What the work actually TOOK — the measurement that closes the estimate
+                            // loop. Clamped by the same 16h ceiling the reports use, so one junk row
+                            // cannot be counted as a valid prior instance.
+                            completed: t.completed === true,
+                            actualMinutes: sanitizeReportMinutes(calculateCurrentTotalMinutes(t)),
                         };
                     })
                     .filter((r) => r.title.trim());
@@ -116,36 +202,10 @@ export default function useTaskSuggestions({ uid, enabled }) {
         return [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
     }, [history]);
 
-    // Typical time for a title: an exact (normalised) match wins; otherwise the time of the
-    // best keyword-overlap past task. Returns '' when history has nothing relevant.
+    // Typical time for a title — the median of what the same work ACTUALLY took, falling back to
+    // the old estimate-derived guess when there are too few completed runs. See pickSuggestedTime.
     const suggestTimeForTitle = useCallback(
-        (title) => {
-            const key = normTitle(title);
-            if (!key) return '';
-
-            const exact = history.filter((r) => normTitle(r.title) === key);
-            if (exact.length) {
-                const t = mostCommonTime(exact);
-                if (t) return t;
-            }
-
-            const qWords = new Set(titleWords(title));
-            if (qWords.size === 0) return '';
-            let bestRow = null;
-            let bestScore = 0;
-            for (const r of history) {
-                if (!isUsableTime(r.estimatedTime)) continue;
-                let score = 0;
-                for (const w of titleWords(r.title)) {
-                    if (qWords.has(w)) score++;
-                }
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestRow = r;
-                }
-            }
-            return bestScore > 0 && bestRow ? bestRow.estimatedTime.trim() : '';
-        },
+        (title) => pickSuggestedTime(history, title),
         [history]
     );
 

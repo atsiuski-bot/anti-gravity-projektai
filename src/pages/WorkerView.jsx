@@ -35,8 +35,7 @@ import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
-import EarningsModal from '../components/EarningsModal';
-import CompletionPhotoModal from '../components/CompletionPhotoModal';
+import TaskCompletionSummaryModal from '../components/TaskCompletionSummaryModal';
 
 import { useNavigation } from '../context/NavigationContext';
 import { lazyWithRecovery } from '../utils/appUpdate';
@@ -79,12 +78,10 @@ export default function WorkerView() {
     const [minuteTick, setMinuteTick] = useState(0);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
-    // Post-completion earnings popup payload ({ task, totalMinutes }). No longer set from an event
-    // directly — it is chained AFTER the completion-photo prompt closes, so the two never stack.
-    const [earnings, setEarnings] = useState(null);
-    // Post-finish work-end photo prompt payload ({ task, totalMinutes, showEarnings }), set by the
-    // 'request-completion-photo' event from both finish doors (timer "Užbaigti" + the limit popup).
-    const [completionPhoto, setCompletionPhoto] = useState(null);
+    // Post-finish summary payload ({ task, totalMinutes }), set by the 'request-completion-photo'
+    // event from both finish doors (timer "Užbaigti" + the limit popup). One card now carries the
+    // plan verdict, the earnings and the work-end photo prompt, so there is nothing left to chain.
+    const [completionSummary, setCompletionSummary] = useState(null);
 
     const [error, setError] = useState(null);
 
@@ -204,15 +201,14 @@ export default function WorkerView() {
         };
         window.addEventListener('open-task-modal', handleOpenTaskModal);
 
-        // After a worker finishes their OWN task (either finish door), prompt for a work-end proof
-        // photo. The earnings breakdown — when a pay rate is set — rides along as showEarnings and is
-        // shown only once this modal closes (chained in the modal's onClose), never stacked over it.
+        // After a worker finishes their OWN task (either finish door), show the completion summary:
+        // how the run landed against its plan, what it earned, and the skippable work-end photo
+        // prompt — one card, so nothing stacks and nothing has to be chained behind anything else.
         const handleCompletionPhoto = (e) => {
             if (e?.detail?.task) {
-                setCompletionPhoto({
+                setCompletionSummary({
                     task: e.detail.task,
                     totalMinutes: e.detail.totalMinutes,
-                    showEarnings: !!e.detail.showEarnings,
                 });
             }
         };
@@ -526,28 +522,15 @@ export default function WorkerView() {
                 />
             )}
 
-            {/* Post-finish work-end photo prompt (skippable). On close, chain the earnings popup when
-                a pay rate was set, so the two never stack. */}
-            {completionPhoto && (
-                <CompletionPhotoModal
-                    task={completionPhoto.task}
-                    onClose={() => {
-                        const pending = completionPhoto;
-                        setCompletionPhoto(null);
-                        if (pending?.showEarnings && pending.task) {
-                            setEarnings({ task: pending.task, totalMinutes: pending.totalMinutes });
-                        }
-                    }}
-                />
-            )}
-
-            {/* Post-completion earnings popup — gross (with tax) first, net (take-home) beside it */}
-            {earnings && (
-                <EarningsModal
-                    open
-                    onClose={() => setEarnings(null)}
-                    task={earnings.task}
-                    totalMinutes={earnings.totalMinutes}
+            {/* Post-finish summary — ONE card in the order fact → plan → money → photo. Replaces the
+                old photo-prompt-then-earnings chain; the money block hides itself when no pay rate
+                is set, so the flag that used to gate it is no longer needed here. */}
+            {completionSummary && (
+                <TaskCompletionSummaryModal
+                    task={completionSummary.task}
+                    totalMinutes={completionSummary.totalMinutes}
+                    withPhoto
+                    onClose={() => setCompletionSummary(null)}
                 />
             )}
         </div>

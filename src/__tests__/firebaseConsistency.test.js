@@ -43,6 +43,12 @@ import {
 import { isManagerRole, isAdminRole } from '../utils/formatters.js';
 import { TIMER_ENGINE_VERSION } from '../utils/timerTransitionPlan.js';
 import { BADGE_CATALOG, TIER_KEYS } from '../utils/badgeCatalog.js';
+import {
+  buildPlanVerdict,
+  MIN_PRIOR_INSTANCES,
+  MIN_IMPROVEMENT_RATIO,
+  MIN_COMPARABLE_MINUTES,
+} from '../utils/planPerformance.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
 import {
   NOTIFICATIONS,
@@ -1169,6 +1175,76 @@ describe('estimate-string parser lockstep (functions parseEstimateMinutes ↔ cl
       }
     }
     expect(disagreements, `estimate-string parsing diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// PLAN-PERFORMANCE MIRROR LOCKSTEP — the finish summary judges a run against its plan and against
+// the worker's own past runs (src/utils/planPerformance.js); the Cloud Function recomputes the SAME
+// verdict to stamp `planVerdict` on the task and award the improves_own_time badge. A drift means
+// the worker is congratulated on a screen for something the server does not record — or, worse, the
+// server grants a PERMANENT badge tier the app never showed a reason for. Slice the server block out
+// and compare it against the client copy over a battery that walks every guard.
+// =============================================================================================
+
+describe('plan-performance mirror lockstep (functions buildTaskPlanVerdict ↔ client buildPlanVerdict)', () => {
+  function buildServerPlanPerformance() {
+    const start = FUNCTIONS_SRC.indexOf('// --- PLAN-PERFORMANCE MIRROR (start)');
+    const end = FUNCTIONS_SRC.indexOf('// --- PLAN-PERFORMANCE MIRROR (end)');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice the plan-performance mirror out of functions/index.js — markers moved; update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end);
+    return new Function(
+      `${block}\n;return { buildTaskPlanVerdict, PLAN_MIN_PRIOR_INSTANCES, PLAN_MIN_IMPROVEMENT_RATIO, PLAN_MIN_COMPARABLE_MINUTES };`
+    )();
+  }
+
+  const server = buildServerPlanPerformance();
+
+  it('the three guard constants are identical on both sides', () => {
+    expect(server.PLAN_MIN_PRIOR_INSTANCES).toBe(MIN_PRIOR_INSTANCES);
+    expect(server.PLAN_MIN_IMPROVEMENT_RATIO).toBe(MIN_IMPROVEMENT_RATIO);
+    expect(server.PLAN_MIN_COMPARABLE_MINUTES).toBe(MIN_COMPARABLE_MINUTES);
+  });
+
+  const cases = [
+    // in plan / over plan / exactly on the line
+    { actualMinutes: 200, estimatedMinutes: 240, priorMinutes: [] },
+    { actualMinutes: 240, estimatedMinutes: 240, priorMinutes: [] },
+    { actualMinutes: 300, estimatedMinutes: 240, priorMinutes: [] },
+    // no usable estimate
+    { actualMinutes: 200, estimatedMinutes: 0, priorMinutes: [] },
+    { actualMinutes: 200, estimatedMinutes: null, priorMinutes: [] },
+    // improvement: below / at / above the ratio floor
+    { actualMinutes: 220, estimatedMinutes: 240, priorMinutes: [240, 240, 240] },
+    { actualMinutes: 204, estimatedMinutes: 240, priorMinutes: [240, 240, 240] },
+    { actualMinutes: 180, estimatedMinutes: 240, priorMinutes: [240, 240, 240] },
+    // history too thin, and exactly at the floor
+    { actualMinutes: 60, estimatedMinutes: 240, priorMinutes: [240, 240] },
+    { actualMinutes: 60, estimatedMinutes: 240, priorMinutes: [240, 240, 240] },
+    // baseline too short to measure
+    { actualMinutes: 1, estimatedMinutes: 20, priorMinutes: [20, 20, 20, 20] },
+    // even-count median, and one wild row the median must absorb
+    { actualMinutes: 100, estimatedMinutes: 240, priorMinutes: [120, 130, 180, 240] },
+    { actualMinutes: 100, estimatedMinutes: 240, priorMinutes: [120, 125, 130, 6000] },
+    // slower than usual — must produce NO improvement on either side
+    { actualMinutes: 400, estimatedMinutes: 240, priorMinutes: [240, 240, 240] },
+    // junk in the history
+    { actualMinutes: 100, estimatedMinutes: 240, priorMinutes: [240, 0, -5, null, 240, 240] },
+    // degenerate inputs
+    { actualMinutes: 0, estimatedMinutes: 240, priorMinutes: [240, 240, 240] },
+    { actualMinutes: null, estimatedMinutes: null, priorMinutes: [] },
+  ];
+
+  it('server and client agree on every verdict', () => {
+    const disagreements = [];
+    for (const input of cases) {
+      const s = JSON.stringify(server.buildTaskPlanVerdict(input));
+      const c = JSON.stringify(buildPlanVerdict(input));
+      if (s !== c) disagreements.push(`${JSON.stringify(input)}\n  server=${s}\n  client=${c}`);
+    }
+    expect(disagreements, `plan-performance copies diverged:\n${disagreements.join('\n')}`).toEqual([]);
   });
 });
 
