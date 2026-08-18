@@ -495,13 +495,11 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         // resume, a nested break/call resumes from the run alone.
         let restoreTask = null;
         if (base.run.pausedSession?.type === 'task') {
+            // A null here means the server no longer has the task (hard-deleted while the quick
+            // work ran). Passing it through as null lets the planner end IDLE instead of restoring
+            // a run whose task exists nowhere — same call the planner makes for a task that was
+            // finished or handed over meanwhile (isRestorableTask).
             restoreTask = await loadTaskForTimer(base.run.pausedSession.taskId);
-            if (!restoreTask) {
-                restoreTask = {
-                    id: base.run.pausedSession.taskId,
-                    title: base.run.pausedSession.taskTitle || 'Užduotis',
-                };
-            }
         }
 
         const plan = planSecondaryEnd({

@@ -155,13 +155,9 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
         const pausedSession = base.run?.pausedSession || userData?.activeSession?.pausedSession || null;
         let restoreTask = null;
         if (pausedSession?.type === 'task' && pausedSession.taskId) {
+            // Null = the task is gone from the server; the planner then ends IDLE rather than
+            // restoring an unstoppable run (see isRestorableTask).
             restoreTask = await loadTaskForTimer(pausedSession.taskId);
-            if (!restoreTask) {
-                restoreTask = {
-                    id: pausedSession.taskId,
-                    title: pausedSession.taskTitle || 'Užduotis',
-                };
-            }
         }
 
         const now = serverNowISO();

@@ -454,6 +454,99 @@ describe('revisioned timer transition plans', () => {
             });
     });
 
+    // The task under a quick work can be finished and handed over (priduota) from another surface
+    // while the quick work runs. Restoring it then hands the worker a running timer that appears in
+    // NO list, so nothing on screen can stop it — the reported "auto-started a submitted task" bug.
+    it.each([
+        ['completed and handed over', { ...baseTask, completed: true, status: 'confirmed', timerStatus: 'paused' }],
+        ['deleted from the server', null],
+    ])('ends quick work IDLE when the paused task is %s', (_label, restoreTask) => {
+        const plan = planSecondaryEnd({
+            type: 'quickWork',
+            userId,
+            userData: {
+                ...idleUser,
+                displayName: 'Worker A',
+                quickWorkState: { isQuickWorking: true },
+                workStatus: { isWorking: false, status: 'paused', activeTaskId: 'task-a' },
+            },
+            activeRecord: {
+                userId,
+                revision: 4,
+                status: 'active',
+                run: {
+                    runId: 'run-qw',
+                    type: 'quickWork',
+                    startedAt: '2026-07-09T08:00:00.000Z',
+                    revision: 4,
+                    pausedSession: {
+                        type: 'task',
+                        taskId: 'task-a',
+                        taskTitle: 'Task A',
+                        runId: 'run-task-before-qw',
+                    },
+                },
+            },
+            restoreTask,
+            commandId: 'cmd-end-qw',
+            runId: 'run-after-qw',
+            issuedAt: '2026-07-09T08:20:00.000Z',
+            customTitle: 'Greitas darbas',
+        });
+
+        expect(plan.restoredRunId).toBeNull();
+        expect(plan.writes.some((write) => write.path === 'tasks/task-a')).toBe(false);
+        expect(plan.writes.find((write) => write.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'idle', run: null });
+        expect(plan.writes.find((write) => write.path === `users/${userId}`).data)
+            .toMatchObject({
+                activeSession: null,
+                quickWorkState: { isQuickWorking: false },
+                workStatus: { isWorking: false, status: 'idle', activeTaskId: null },
+            });
+    });
+
+    it('ends a break IDLE when the paused task was confirmed while the break ran', () => {
+        const plan = planBreakEnd({
+            userId,
+            userData: {
+                ...idleUser,
+                displayName: 'Worker A',
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 3, lastDate: '2026-07-09' },
+                workStatus: { isWorking: false, status: 'paused', activeTaskId: 'task-a' },
+            },
+            activeRecord: {
+                userId,
+                revision: 6,
+                status: 'active',
+                run: {
+                    runId: 'run-break',
+                    type: 'break',
+                    startedAt: '2026-07-09T08:05:00.000Z',
+                    revision: 6,
+                    pausedSession: {
+                        type: 'task',
+                        taskId: 'task-a',
+                        taskTitle: 'Task A',
+                        runId: 'run-before-break',
+                    },
+                },
+            },
+            restoreTask: { ...baseTask, completed: true, status: 'confirmed', timerStatus: 'paused' },
+            commandId: 'cmd-end-break',
+            runId: 'run-after-break',
+            issuedAt: '2026-07-09T08:20:00.000Z',
+        });
+
+        expect(plan.restoredTaskRunId).toBeNull();
+        expect(plan.writes.some((write) => write.path === 'tasks/task-a')).toBe(false);
+        expect(plan.writes.find((write) => write.path === `users/${userId}`).data)
+            .toMatchObject({
+                activeSession: null,
+                workStatus: { isWorking: false, status: 'idle', activeTaskId: null },
+            });
+    });
+
     it('starts quick work over a break by banking the break and nesting it for restore', () => {
         const plan = planSecondaryStart({
             type: 'quickWork',

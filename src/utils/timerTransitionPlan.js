@@ -139,6 +139,18 @@ const pausedTaskIdOf = (pausedSession) => {
     return null;
 };
 
+// A task that was finished, handed over (priduota) or deleted WHILE the interrupting session ran
+// must never be restored when that session ends. The restore would re-run a task that no longer
+// appears in any of the worker's lists, so nothing on screen can stop it again — the worker is left
+// with a timer they can only clear by toggling some other task. The legacy closer already refused
+// such a resume (sessionActions.doResume: `taskIsUnresumable`); the revisioned planner restored
+// unconditionally, which is the regression this guard closes. A restoreTask of null means the
+// document is gone from the server (the callers' loader THROWS rather than returning null when it
+// merely cannot read), so that too counts as unresumable.
+export const isRestorableTask = (task) => !!task
+    && !task.completed
+    && !['completed', 'confirmed', 'deleted'].includes(task.status);
+
 const runToPausedSession = (run) => {
     if (!run) return null;
     const base = {
@@ -759,9 +771,15 @@ export function planBreakEnd({
     // can nest a call/quick work underneath, and crash recovery has no live worker at boot to hand a
     // resumed session back to, so restoring one would silently start a timer nobody is watching.
     const paused = skipRestore ? null : (base.run.pausedSession || null);
-    const restoresTask = paused?.type === 'task';
+    // An unresumable paused task (finished/handed over/deleted meanwhile) is dropped rather than
+    // restored — see isRestorableTask. The run then ends IDLE, exactly as if nothing had been
+    // paused, instead of handing the worker a timer no list can stop.
+    const pausedIsTask = paused?.type === 'task';
+    const restoresTask = pausedIsTask && isRestorableTask(restoreTask);
     const restoresSecondary = isSecondaryRunType(paused?.type);
-    if (paused?.type && !restoresTask && !restoresSecondary) {
+    // Keyed on the paused TYPE, not on restoresTask: an unsupported nesting must still throw, while
+    // a supported-but-unresumable task simply falls through to the idle branch below.
+    if (paused?.type && !pausedIsTask && !restoresSecondary) {
         throw Object.assign(new Error('This nested break restore is not supported yet'), {
             code: 'timer/conflict',
         });
@@ -1210,9 +1228,15 @@ export function planSecondaryEnd({
     // restoring one would silently start a timer nobody is watching. Mirrors the legacy closer's
     // skipResume argument, which the revisioned path must match to avoid regressing at cutover.
     const paused = skipRestore ? null : (base.run.pausedSession || null);
-    const restoresTask = paused?.type === 'task';
+    // An unresumable paused task (finished/handed over/deleted meanwhile) is dropped rather than
+    // restored — see isRestorableTask. The run then ends IDLE, exactly as if nothing had been
+    // paused, instead of handing the worker a timer no list can stop.
+    const pausedIsTask = paused?.type === 'task';
+    const restoresTask = pausedIsTask && isRestorableTask(restoreTask);
     const restoresSecondary = isSecondaryRunType(paused?.type);
-    if (paused?.type && !restoresTask && !restoresSecondary) {
+    // Keyed on the paused TYPE, not on restoresTask: an unsupported nesting must still throw, while
+    // a supported-but-unresumable task simply falls through to the idle branch below.
+    if (paused?.type && !pausedIsTask && !restoresSecondary) {
         throw Object.assign(new Error('This nested secondary restore is not supported yet'), {
             code: 'timer/conflict',
         });

@@ -342,13 +342,9 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         // resume, a nested break/quick work resumes from the run alone.
         let restoreTask = null;
         if (base.run.pausedSession?.type === 'task') {
+            // Null = the task is gone from the server; the planner then ends IDLE rather than
+            // restoring an unstoppable run (see isRestorableTask).
             restoreTask = await loadTaskForTimer(base.run.pausedSession.taskId);
-            if (!restoreTask) {
-                restoreTask = {
-                    id: base.run.pausedSession.taskId,
-                    title: base.run.pausedSession.taskTitle || 'Užduotis',
-                };
-            }
         }
 
         const plan = planSecondaryEnd({
