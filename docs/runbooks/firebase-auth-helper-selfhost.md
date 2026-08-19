@@ -28,14 +28,17 @@ origin**, so the handshake is first-party and there is no partitioned storage to
 Downloaded 2026-08-19 from `https://darbo-planavimas.firebaseapp.com/__/auth/` (and
 `/__/firebase/` for `init.json`):
 
+Every file keeps Firebase's own name and path, so each request is an **exact static-asset match**
+and nothing has to rewrite anything:
+
 | Local path | Upstream path | Note |
 | --- | --- | --- |
-| `public/__/auth/handler.html` | `/__/auth/handler` | renamed for `Content-Type` — see below |
+| `public/__/auth/handler` | `/__/auth/handler` | extensionless — needs `_headers` `Content-Type` |
 | `public/__/auth/handler.js` | `/__/auth/handler.js` | |
 | `public/__/auth/experiments.js` | `/__/auth/experiments.js` | |
-| `public/__/auth/iframe.html` | `/__/auth/iframe` | renamed |
+| `public/__/auth/iframe` | `/__/auth/iframe` | extensionless |
 | `public/__/auth/iframe.js` | `/__/auth/iframe.js` | |
-| `public/__/auth/links.html` | `/__/auth/links` | renamed |
+| `public/__/auth/links` | `/__/auth/links` | extensionless |
 | `public/__/auth/links.js` | `/__/auth/links.js` | |
 | `public/__/firebase/init.json` | `/__/firebase/init.json` | `handler.js` fetches this from its **own** origin |
 
@@ -43,16 +46,33 @@ Downloaded 2026-08-19 from `https://darbo-planavimas.firebaseapp.com/__/auth/` (
 ship in the browser bundle). It is **not** a secret. Note its real path is `/__/firebase/`, not
 `/__/auth/`: requesting `/__/auth/init.json` silently returns the SPA's `index.html` instead.
 
-### Two deliberate deviations from upstream
+### Nothing is edited, and nothing is renamed
 
-1. **`handler`/`iframe`/`links` gained a `.html` suffix.** Firebase's URLs are extensionless; a
-   static host then guesses `Content-Type`, and a browser will not execute an HTML document
-   served as `application/octet-stream`. The `.html` name makes the host say `text/html`, and
-   `_redirects` (plus `netlify.toml`) rewrites the extensionless URL onto it. Those rewrites must
-   stay **above** the SPA catch-all, or Google's redirect gets handed `index.html`.
-2. **Nothing else is edited.** Contents are byte-identical to upstream on purpose, so re-syncing
-   is a plain re-download with no patch to reapply. `init.json` keeps its upstream
-   `authDomain` value for the same reason — do not "fix" it to our host.
+Contents and names are byte-identical to upstream on purpose, so re-syncing is a plain
+re-download with no patch to reapply. `init.json` keeps its upstream `authDomain` value for the
+same reason — do not "fix" it to our host.
+
+The only host-side wiring is **`Content-Type` in `public/_headers`** (mirrored in `netlify.toml`)
+for the three extensionless files: with no extension there is nothing to infer a type from, and a
+browser will not execute an HTML document sent as `application/octet-stream`.
+
+### ⚠️ Do NOT add a `_redirects` rewrite for these paths
+
+The obvious-looking alternative — name them `handler.html` and rewrite `/__/auth/handler` onto it
+with status 200 — **was shipped once (42b203f) and broke sign-in worse than before.** Cloudflare
+Pages already redirects `*.html` to its extension-less counterpart, so the rewrite and that
+canonicalization point straight at each other:
+
+```
+/__/auth/handler → (our rule) → /__/auth/handler.html → (Pages) → /__/auth/handler → …
+```
+
+The live result was `308 Permanent Redirect` with `Location: /__/auth/handler` — an infinite loop,
+and an installed iOS app that hung instead of merely failing. Reverted in the follow-up commit.
+
+The extensionless naming avoids the whole class: an exact asset match needs no rule, and existing
+assets already win over the SPA catch-all — which `/__/auth/handler.js` and
+`/__/firebase/init.json` demonstrate on the live site.
 
 ## Re-sync (the standing maintenance debt)
 
@@ -61,7 +81,7 @@ snapshot can break sign-in if Firebase changes the handshake. Re-check on any Fi
 major upgrade, and if sign-in on the installed iOS app starts failing.
 
 ```bash
-cd public/__/auth && for f in handler.js experiments.js iframe.js links.js; do curl -sf "https://darbo-planavimas.firebaseapp.com/__/auth/$f" -o "$f"; done && for p in handler iframe links; do curl -sf "https://darbo-planavimas.firebaseapp.com/__/auth/$p" -o "$p.html"; done
+cd public/__/auth && for f in handler experiments.js handler.js iframe iframe.js links links.js; do curl -sf "https://darbo-planavimas.firebaseapp.com/__/auth/$f" -o "$f"; done
 ```
 
 ```bash
@@ -75,7 +95,7 @@ this way silently, returning `index.html` with a 200):
 grep -l 'Theme boot' public/__/auth/* public/__/firebase/* || echo "clean — no SPA shell captured"
 ```
 
-**Known non-issue:** `handler.html` contains the literal `var POST_BODY = '{{POST_BODY}}';`.
+**Known non-issue:** `handler` contains the literal `var POST_BODY = '{{POST_BODY}}';`.
 That is a Firebase Hosting template slot which a static host cannot fill, and `handler.js`
 already guards for it (`POST_BODY != "{{POST_BODY}}" ? … : null`). It only matters for providers
 that return via HTTP POST (`form_post`) — Apple and SAML. WORKZ uses Google only, which returns

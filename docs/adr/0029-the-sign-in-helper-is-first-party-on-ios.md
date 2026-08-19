@@ -65,9 +65,9 @@ environment that cannot work without it.**
   our own `location.host` **only** when `isPopupSignInBlocked()` — the installed iOS/iPadOS app.
   Every other browser keeps `darbo-planavimas.firebaseapp.com` and the popup, unchanged. Every
   uncertain case (no DOM, no readable host) falls back to the hosted helper.
-- The helper answers on the extensionless URLs Firebase uses, while the files carry `.html` so hosts
-  send `text/html` without per-path header overrides; `_redirects` and `netlify.toml` bridge the two,
-  above the SPA catch-all.
+- Files keep Firebase's exact names, including the extensionless `handler`/`iframe`/`links`, so every
+  request is an exact static-asset match needing no rewrite rule. `_headers` (and `netlify.toml`)
+  declare their `Content-Type`, which an extensionless file cannot imply.
 - `src/sw.js` denies `/__/*` on its navigation route, and the precache skips those paths.
 
 ## Consequences
@@ -88,10 +88,21 @@ environment that cannot work without it.**
 - **Each hosting origin needs its `/__/auth/handler` URL authorized in the Google OAuth client.**
   A new domain for the app is now a two-step change, and forgetting the second step fails as
   `redirect_uri_mismatch`.
+- **A `_redirects` rewrite for these paths is a trap, and it shipped once.** The first attempt named
+  the files `handler.html` and rewrote `/__/auth/handler` onto them with status 200, reasoning that
+  the `.html` extension guarantees `text/html`. But Cloudflare Pages already redirects `*.html` to
+  its extension-less counterpart, so the rule and that canonicalization pointed at each other:
+  production answered `308 Permanent Redirect` with `Location: /__/auth/handler`, an infinite loop —
+  strictly worse than the original failure, because the installed app hung instead of reporting.
+  Fixed by keeping Firebase's extensionless names (an exact asset match needs no rule) and declaring
+  `Content-Type` in `_headers`. Recorded because the broken version looks more careful than the
+  correct one.
 - **Verified:** vendored files byte-identical to upstream and syntactically complete; the `/__/*`
   denylist present in the compiled worker; precache down 54 → 47 entries (2597 → 1957 KiB);
-  `lint` clean, `build` green, 1421 tests pass. **Not yet verified:** the end-to-end handshake on a
-  real installed iOS app, which cannot be exercised until the OAuth redirect URI is registered.
+  `lint` clean, `build` green, 1421 tests pass. On the live host, `/__/auth/handler` serves
+  Firebase's handler as `text/html` and `/__/firebase/init.json` parses as JSON. **Not yet
+  verified:** the end-to-end handshake on a real installed iOS app, which cannot be exercised until
+  the OAuth redirect URI is registered.
 
 ## Follow-ups
 

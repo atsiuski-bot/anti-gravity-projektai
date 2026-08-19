@@ -10,26 +10,28 @@
   # ambiguous case builds.
   ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- src public index.html package.json package-lock.json vite.config.js tailwind.config.js postcss.config.js netlify.toml"
 
-# Firebase Auth sign-in helper on the extensionless paths Firebase's own URLs use, kept in step
-# with public/_redirects (Cloudflare Pages) so both hosts resolve the handshake identically.
-# Order matters: Netlify takes the FIRST matching rule, so these must precede the SPA catch-all
-# or Google's redirect lands on index.html and the sign-in silently returns nothing.
-[[redirects]]
-  from = "/__/auth/handler"
-  to = "/__/auth/handler.html"
-  status = 200
-
-[[redirects]]
-  from = "/__/auth/iframe"
-  to = "/__/auth/iframe.html"
-  status = 200
-
-[[redirects]]
-  from = "/__/auth/links"
-  to = "/__/auth/links.html"
-  status = 200
-
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Firebase's sign-in helper keeps Firebase's own extensionless filenames, so nothing here can
+# infer their type and they would be served as a download rather than executed. Mirrors
+# public/_headers (Cloudflare Pages) so both hosts resolve the handshake identically. No
+# `[[redirects]]` rule belongs with it — an exact asset match already beats the catch-all above,
+# and a rewrite onto a `.html` copy collides with extensionless-URL canonicalization and loops.
+# See docs/runbooks/firebase-auth-helper-selfhost.md.
+[[headers]]
+  for = "/__/auth/handler"
+  [headers.values]
+    Content-Type = "text/html; charset=utf-8"
+
+[[headers]]
+  for = "/__/auth/iframe"
+  [headers.values]
+    Content-Type = "text/html; charset=utf-8"
+
+[[headers]]
+  for = "/__/auth/links"
+  [headers.values]
+    Content-Type = "text/html; charset=utf-8"

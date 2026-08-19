@@ -1,20 +1,17 @@
 # Force HTTPS
 http://* https://:splat 301!
 
-# Firebase Auth sign-in helper, served from OUR origin so the handshake is FIRST-PARTY.
-# Firebase normally serves these from <project>.firebaseapp.com, but a cross-origin helper is
-# exactly what Safari's storage partitioning breaks: the redirect comes back and the credential
-# cannot be read out, so the installed iOS app can never finish signing in. Same-origin removes
-# the third party entirely. See docs/runbooks/firebase-auth-helper-selfhost.md.
+# NOTE: Firebase's self-hosted sign-in helper under /__/ deliberately has NO rule here.
+# Its files are named exactly as Firebase serves them (extensionless `handler`, `iframe`,
+# `links`), so each request is an EXACT static-asset match — which existing assets win over the
+# SPA catch-all below, exactly as /__/auth/handler.js and /__/firebase/init.json already do.
+# `_headers` supplies their Content-Type, since an extensionless file has no extension to infer
+# it from. See docs/runbooks/firebase-auth-helper-selfhost.md.
 #
-# The helper must answer on EXTENSIONLESS paths (Firebase's own URLs), while the files carry
-# .html so the host sends `Content-Type: text/html` without any per-path header override — a
-# browser will not execute an HTML document served as octet-stream. These rewrites bridge the
-# two, and MUST stay above the SPA fallback: the first matching rule wins, so the catch-all
-# below would otherwise hand Google's redirect our index.html instead of the handler.
-/__/auth/handler   /__/auth/handler.html   200
-/__/auth/iframe    /__/auth/iframe.html    200
-/__/auth/links     /__/auth/links.html     200
+# Do NOT "help" by adding a rewrite from /__/auth/handler to a .html copy: Cloudflare Pages
+# already redirects `*.html` to its extension-less counterpart, so such a rule and that
+# canonicalization point at each other and the handler becomes an infinite 308 loop. That was
+# shipped once (42b203f) and reverted here.
 
 # SPA fallback
 /*    /index.html   200

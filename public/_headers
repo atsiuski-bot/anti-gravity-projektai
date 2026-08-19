@@ -9,3 +9,17 @@
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+
+# Firebase's sign-in helper keeps Firebase's own extensionless filenames, so the host has no
+# extension to infer a type from and would serve these as a download instead of running them —
+# a browser will not execute an HTML document sent as octet-stream, and the whole handshake
+# depends on this one executing. Declared explicitly for that reason.
+# See docs/runbooks/firebase-auth-helper-selfhost.md.
+/__/auth/handler
+  Content-Type: text/html; charset=utf-8
+
+/__/auth/iframe
+  Content-Type: text/html; charset=utf-8
+
+/__/auth/links
+  Content-Type: text/html; charset=utf-8
