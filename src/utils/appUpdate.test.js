@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { forceAppUpdate, isStaleChunkLoadError, tryRecoverFromStaleChunk } from './appUpdate';
+import { applyPendingUpdate, forceAppUpdate, isStaleChunkLoadError, tryRecoverFromStaleChunk } from './appUpdate';
 
 const store = new Map();
 const sessionStorageStub = {
@@ -153,6 +153,81 @@ describe('forceAppUpdate app-shell retention', () => {
 
         expect(unregister).toHaveBeenCalledTimes(1);
         expect(cachesDelete).toHaveBeenCalledWith('workbox-precache-v2-https://app.test/');
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+});
+
+// The accepted-update handover. vite-plugin-pwa reloads only when workbox-window latched
+// `isUpdate` at registration (i.e. the document was already service-worker-controlled) and only if a
+// worker is still waiting when the prompt is tapped. On an installed phone neither holds reliably:
+// the load after a repair starts uncontrolled and that document then lives for days, and a waiting
+// worker can activate on its own while the app is backgrounded. Both used to end with the update
+// unapplied, the button spinning forever, and no address bar to reload from — the "installed app is
+// stuck, only the browser works" report. Every branch below must therefore end in a reload.
+describe('applyPendingUpdate', () => {
+    let controllerListeners;
+    let reload;
+    let repair;
+
+    beforeEach(() => {
+        controllerListeners = {};
+        reload = vi.fn();
+        repair = vi.fn(() => Promise.resolve());
+        vi.stubGlobal('navigator', {
+            onLine: true,
+            serviceWorker: {
+                addEventListener: vi.fn((type, handler) => { controllerListeners[type] = handler; }),
+                removeEventListener: vi.fn(),
+            },
+        });
+        vi.stubGlobal('window', { location: { origin: 'https://app.test', reload } });
+    });
+
+    it('reloads as soon as the new worker takes control', async () => {
+        const requestSkipWaiting = vi.fn();
+
+        const applied = applyPendingUpdate(requestSkipWaiting, { repair });
+        controllerListeners.controllerchange();
+        await applied;
+
+        expect(requestSkipWaiting).toHaveBeenCalledTimes(1);
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(repair).not.toHaveBeenCalled();
+    });
+
+    it('repairs instead of hanging when control never changes hands', async () => {
+        const applied = applyPendingUpdate(vi.fn(), { repair, timeoutMs: 3500 });
+        await vi.advanceTimersByTimeAsync(3500);
+        await applied;
+
+        expect(repair).toHaveBeenCalledTimes(1);
+    });
+
+    it('repairs when the skip-waiting request itself fails', async () => {
+        const applied = applyPendingUpdate(() => Promise.reject(new Error('no waiting worker')), { repair });
+        await applied;
+
+        expect(repair).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not also repair after a handover already happened', async () => {
+        const applied = applyPendingUpdate(vi.fn(), { repair, timeoutMs: 3500 });
+        controllerListeners.controllerchange();
+        await applied;
+        await vi.advanceTimersByTimeAsync(10_000);
+
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(repair).not.toHaveBeenCalled();
+    });
+
+    it('still reloads when the repair path throws', async () => {
+        const applied = applyPendingUpdate(vi.fn(), {
+            repair: () => Promise.reject(new Error('caches blocked')),
+            timeoutMs: 3500,
+        });
+        await vi.advanceTimersByTimeAsync(3500);
+        await applied;
+
         expect(reload).toHaveBeenCalledTimes(1);
     });
 });

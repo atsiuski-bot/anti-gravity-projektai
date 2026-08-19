@@ -5,6 +5,10 @@ const AUTO_RECOVERY_WINDOW_MS = 60 * 1000;
 const CONTROLLER_CHANGE_TIMEOUT_MS = 3000;
 const WORKER_INSTALL_TIMEOUT_MS = 2000;
 const FRESHNESS_PROBE_TIMEOUT_MS = 4000;
+// How long an accepted update may take to hand this document over to the new worker before we stop
+// waiting and repair instead. A real handover is sub-second (the worker is already installed and
+// waiting); anything past this is one of the stuck states applyPendingUpdate() exists to break.
+const HANDOVER_TIMEOUT_MS = 3500;
 
 const STALE_CHUNK_PATTERNS = [
     /failed to fetch dynamically imported module/i,
@@ -204,6 +208,72 @@ export async function forceAppUpdate() {
     if (typeof window !== 'undefined') {
         window.location.reload();
     }
+}
+
+/**
+ * Apply a downloaded update and GUARANTEE this document ends up on the new build.
+ *
+ * With `registerType: 'prompt'` the reload after the user accepts is done by vite-plugin-pwa, which
+ * arms a single `controlling` listener and reloads only when `event.isUpdate` is true. That flag is
+ * latched ONCE by workbox-window, at registration, from `navigator.serviceWorker.controller`. Two
+ * states seen routinely on an installed phone defeat it, and both end with the accepted update never
+ * being applied:
+ *
+ *  - **The document registered without a controller.** True on a first install, and on every load
+ *    that follows a repair — the boot watchdog's "Atkurti programą" and `forceAppUpdate` above both
+ *    unregister the worker, so the page they reload into starts uncontrolled. `isUpdate` is then
+ *    false for the LIFE of that document, and an installed PWA is resumed rather than reloaded for
+ *    days. The SKIP_WAITING message still activates the new worker, whose activation prunes the
+ *    previous build's precache entries — while the running page is still the OLD bundle. Every lazy
+ *    chunk it had not loaded yet is now missing from the cache AND (after a deploy) from the origin,
+ *    so the installed app rots view by view while the same site in the browser is fine.
+ *  - **Nothing is waiting anymore when the prompt is tapped.** The prompt lives in React state, so it
+ *    survives every background/resume cycle; meanwhile the worker may have activated on its own (all
+ *    clients went away) or gone redundant. `messageSkipWaiting()` is a documented no-op with no
+ *    waiting worker, so no controller change is ever emitted.
+ *
+ * Neither case reloaded and neither cleared the prompt: the button kept spinning and, because it also
+ * disabled "Vėliau", the notice could not even be dismissed. In standalone there is no address bar to
+ * refresh, which is why the reported escape hatch was "open it in the browser instead".
+ *
+ * So the handover is owned here rather than delegated: reload the instant control changes, and if it
+ * has not changed by `timeoutMs`, fall through to the full repair — which re-checks for a worker,
+ * activates it, and reloads in every branch. The exit is always a reload, never a stuck prompt.
+ */
+export function applyPendingUpdate(requestSkipWaiting, {
+    timeoutMs = HANDOVER_TIMEOUT_MS,
+    repair = forceAppUpdate,
+} = {}) {
+    const container = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined;
+    const reloadNow = () => {
+        if (typeof window !== 'undefined') window.location.reload();
+    };
+
+    return new Promise((resolve) => {
+        let settled = false;
+        let timer;
+
+        const finish = (action) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            container?.removeEventListener?.('controllerchange', onControllerChange);
+            // A failing repair must still land the user on a fresh document — a reload of a stale
+            // build is recoverable, a prompt that never resolves is not.
+            resolve(Promise.resolve().then(action).catch(reloadNow));
+        };
+
+        function onControllerChange() {
+            finish(reloadNow);
+        }
+
+        container?.addEventListener?.('controllerchange', onControllerChange);
+        timer = setTimeout(() => finish(repair), timeoutMs);
+
+        Promise.resolve()
+            .then(requestSkipWaiting)
+            .catch(() => finish(repair));
+    });
 }
 
 /**
