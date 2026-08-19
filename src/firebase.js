@@ -3,10 +3,17 @@ import { getAuth } from "firebase/auth";
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getFunctions } from "firebase/functions";
+import { resolveAuthDomain } from "./utils/authEnvironment";
+
+/** Firebase's own helper origin — correct everywhere the popup works, i.e. almost everywhere. */
+const HOSTED_AUTH_DOMAIN = "darbo-planavimas.firebaseapp.com";
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDXaHCrL8hKgaEedSXEIT-XSxhmIcCEuXU",
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "darbo-planavimas.firebaseapp.com",
+    // Environment-dependent: the installed iOS app needs a FIRST-PARTY sign-in helper or it can
+    // never complete a Google handshake at all (see resolveAuthDomain). An explicit env override
+    // still wins — it is how a non-production project points elsewhere.
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || resolveAuthDomain(HOSTED_AUTH_DOMAIN),
     projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "darbo-planavimas",
     storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "darbo-planavimas.firebasestorage.app",
     messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "198926113678",

@@ -55,6 +55,44 @@ export function isPopupSignInBlocked(env) {
     return !!env?.ios && !!env?.standalone;
 }
 
+/**
+ * Which origin serves the Google sign-in helper (`/__/auth/*`) — i.e. Firebase's `authDomain`.
+ *
+ * Firebase's own origin is the better default and stays the answer nearly everywhere: the popup
+ * flow does not care that the helper is cross-origin, and letting Firebase host it means never
+ * having to keep a copy in step.
+ *
+ * The installed iOS app is where that reasoning inverts, because there BOTH routes are shut. The
+ * popup cannot run at all (null `window.opener`, above), leaving only a redirect — and a
+ * redirect's return leg reads the credential back through an iframe on the HELPER's origin, which
+ * is precisely the third-party storage Safari partitions away. Pointing that one environment at
+ * our own origin (where `public/__/auth/` serves a vendored copy of the same helper) removes the
+ * third party instead of arguing with it: same-origin storage is never partitioned.
+ *
+ * Two properties worth keeping:
+ *   - It reads `location.host`, so the helper always comes from whichever origin actually served
+ *     the app, rather than a hardcoded domain that silently rots on a rename.
+ *   - Every fallback lands on `hostedDomain`. Without a DOM (tests, SSR) or without a host there
+ *     is nothing to self-host FROM, and the hosted helper is the only answer that can work.
+ *
+ * Each origin used this way needs its `/__/auth/handler` URL authorized in the Google OAuth
+ * client — see docs/runbooks/firebase-auth-helper-selfhost.md.
+ *
+ * @param {string} hostedDomain - Firebase's `<project>.firebaseapp.com`.
+ * @param {Window} [win] - injectable for tests.
+ */
+export function resolveAuthDomain(hostedDomain, win = typeof window !== 'undefined' ? window : undefined) {
+    try {
+        if (isPopupSignInBlocked(readSignInEnvironment(win))) {
+            const host = win?.location?.host;
+            if (host) return host;
+        }
+    } catch {
+        /* no DOM at all — fall through to the hosted helper */
+    }
+    return hostedDomain;
+}
+
 /** Remember that a redirect sign-in is in flight. Never throws (storage may be unavailable). */
 export function markRedirectPending() {
     try { sessionStorage.setItem(REDIRECT_PENDING_KEY, '1'); } catch { /* storage disabled */ }

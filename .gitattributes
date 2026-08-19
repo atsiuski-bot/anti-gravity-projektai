@@ -1,0 +1,11 @@
+# Scoped deliberately to ONE path. The repo otherwise relies on git's default line-ending
+# handling (core.autocrlf), and a broader rule here would rewrite endings across the tree.
+
+# Firebase's sign-in helper, vendored verbatim so the installed iOS app can complete a Google
+# handshake first-party (docs/runbooks/firebase-auth-helper-selfhost.md). `-text` disables all
+# line-ending conversion: these files must stay byte-identical to what Firebase serves, because
+# re-syncing them is a plain re-download and the staleness check compares them against upstream.
+# Without this, a Windows checkout rewrites them to CRLF and every future comparison reports a
+# difference that is not one — which would make a genuinely stale helper indistinguishable from
+# a freshly synced one.
+public/__/** -text

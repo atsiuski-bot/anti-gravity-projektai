@@ -69,6 +69,21 @@ const OFFLINE_DOCUMENT = `<!doctype html>
 
 const precachedIndex = createHandlerBoundToURL('index.html');
 
+// `/__/*` is NOT ours to answer — it is Firebase's sign-in helper, vendored under `public/__/`
+// so the installed iOS app can complete a Google handshake first-party
+// (docs/runbooks/firebase-auth-helper-selfhost.md).
+//
+// Without this denylist the route below would swallow it. Every leg of that handshake is a
+// NAVIGATION — the redirect out to `/__/auth/handler`, Google's redirect back to the same URL, and
+// the `/__/auth/iframe` subframe load (an iframe's load is `mode: 'navigate'` too) — so the
+// navigation route would hand Firebase's helper our app shell instead, and the credential would
+// never come back. The failure would look exactly like the cross-origin one this whole change
+// exists to fix, which is precisely why it is called out here rather than left implicit.
+//
+// Serving these from the network is also correct on its own terms: they carry live OAuth state and
+// are only ever needed while signing in, which cannot work offline anyway.
+const HELPER_PATHS = /^\/__\//;
+
 registerRoute(
     new NavigationRoute(async (options) => {
         try {
@@ -84,5 +99,5 @@ registerRoute(
                 headers: { 'Content-Type': 'text/html; charset=utf-8' },
             });
         }
-    })
+    }, { denylist: [HELPER_PATHS] })
 );

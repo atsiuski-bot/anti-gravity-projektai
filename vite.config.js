@@ -33,7 +33,12 @@ export default defineConfig({
         // iOS splash set — 20 device-specific PNGs of which any one device only ever uses one, so
         // precaching them all would bloat the offline cache for no benefit (iOS fetches the matching
         // splash at launch).
-        globIgnores: ['**/firebase-messaging-sw.js', '**/splash/**']
+        // Also skip the vendored Firebase sign-in helper under `public/__/`: ~650 kB of minified
+        // third-party JS that only ever runs during a Google handshake, which needs the network
+        // regardless. Precaching it would weigh down every install — on the cellular connections
+        // this app is actually used over — to cache something offline that cannot work offline.
+        // src/sw.js additionally keeps its navigation route off those paths; both are required.
+        globIgnores: ['**/firebase-messaging-sw.js', '**/splash/**', '__/**']
       },
       manifest: {
         name: 'Gildija',
