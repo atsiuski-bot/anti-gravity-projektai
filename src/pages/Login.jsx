@@ -5,6 +5,13 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import BrandMark from '../components/ui/BrandMark';
 import { auth } from '../firebase';
+import { logError } from '../utils/errorLog';
+import {
+    readSignInEnvironment,
+    isPopupSignInBlocked,
+    takeLoginError,
+    LOGIN_ERROR_EVENT,
+} from '../utils/authEnvironment';
 
 /** The Google "G" mark. Monochrome (currentColor) so it sits cleanly on the brand button. */
 function GoogleIcon({ className }) {
@@ -29,6 +36,11 @@ function loginErrorMessage(err) {
             return 'Jūsų paskyra užblokuota. Susisiekite su administratoriumi.';
         case 'app/verification-unavailable':
             return 'Nepavyko patikrinti paskyros būsenos — gali būti silpnas ar nestabilus ryšys. Patikrinkite interneto ryšį (pabandykite kitą tinklą ar naršyklę) ir bandykite dar kartą.';
+        // The installed iOS app came back from Google empty-handed: Safari isolates the storage the
+        // sign-in handshake needs. Nothing the person can change inside the installed app fixes it,
+        // so the copy points at the one route that does work — the app opened in Safari.
+        case 'app/redirect-handshake-blocked':
+            return 'Prisijungti įdiegtoje programėlėje nepavyko — „Safari“ apribojimai neleidžia užbaigti Google prisijungimo. Atidarykite programą naršyklėje ir prisijunkite ten.';
         case 'auth/popup-blocked':
             return 'Naršyklė užblokavo prisijungimo langą. Leiskite iškylančius langus šiai svetainei ir bandykite dar kartą.';
         case 'auth/popup-closed-by-user':
@@ -60,6 +72,9 @@ export default function Login() {
     const navigate = useNavigate();
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    // The installed iOS app, where the Google popup cannot return a credential and the redirect
+    // handshake may be cut off by Safari's storage isolation. Drives the browser escape below.
+    const [isInstalledIOS] = useState(() => isPopupSignInBlocked(readSignInEnvironment()));
 
     // ── DEV-only test login ──────────────────────────────────────────────────
     // A popup-free email/password sign-in for local visual QA (the Google popup
@@ -85,6 +100,20 @@ export default function Login() {
         }
     }, [currentUser, navigate]);
 
+    // A redirect sign-in fails on a DIFFERENT page load than the one that started it, so its reason
+    // cannot arrive through handleLogin's catch. Read anything parked before this page mounted, and
+    // subscribe for a failure that is still being resolved while the user looks at the button.
+    useEffect(() => {
+        const parked = takeLoginError();
+        if (parked) setError(loginErrorMessage({ code: parked }));
+        const onLoginError = (event) => {
+            setLoading(false);
+            setError(loginErrorMessage({ code: event.detail?.code }));
+        };
+        window.addEventListener(LOGIN_ERROR_EVENT, onLoginError);
+        return () => window.removeEventListener(LOGIN_ERROR_EVENT, onLoginError);
+    }, []);
+
     async function handleLogin() {
         try {
             setError('');
@@ -94,6 +123,10 @@ export default function Login() {
         } catch (err) {
             setError(loginErrorMessage(err));
             console.error('Login component error:', err);
+            // A sign-in failure used to leave NO durable trace anywhere — the one failure a locked-out
+            // person cannot report from inside the app, because they never get in. The local ring
+            // buffer survives the reload, so the code is recoverable afterwards.
+            logError(err, { source: 'login', code: err?.code || 'unknown' });
             setLoading(false);
         }
     }
@@ -138,6 +171,20 @@ export default function Login() {
                 {error && (
                     <div role="alert" className="mb-4 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
                         {error}
+                        {/* An installed iOS app has no address bar, so "open it in the browser" is
+                            advice the person cannot act on. This is the action itself. */}
+                        {isInstalledIOS && (
+                            <div className="mt-3">
+                                <Button
+                                    size="md"
+                                    variant="secondary"
+                                    fullWidth
+                                    onClick={() => window.open(window.location.href, '_blank', 'noopener')}
+                                >
+                                    Atidaryti naršyklėje
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 )}
 

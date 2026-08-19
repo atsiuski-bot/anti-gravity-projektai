@@ -3,6 +3,7 @@ import { auth, db } from '../firebase';
 import {
     GoogleAuthProvider,
     signInWithPopup,
+    signInWithRedirect,
     getRedirectResult,
     signOut,
     onAuthStateChanged
@@ -12,6 +13,13 @@ import { logError } from '../utils/errorLog';
 import { removeFcmToken } from '../utils/messaging';
 import { setAgentsEnabled } from '../domain/agentControl';
 import { decideDisabledLogin } from '../utils/accountStatus';
+import {
+    readSignInEnvironment,
+    isPopupSignInBlocked,
+    markRedirectPending,
+    takeRedirectPending,
+    rememberLoginError,
+} from '../utils/authEnvironment';
 import { applyPendingSessionProjection } from '../utils/sessionProjection';
 import { isTimerEngineEnabledFor } from '../utils/timerEngineGate';
 // Statically imported on purpose. This was a dynamic import to keep the engine out of the eager
@@ -76,11 +84,28 @@ export function AuthProvider({ children }) {
 
     async function login() {
         const isOpera = isOperaBrowser();
-        console.log(`Auth: Starting Google Login with popup...`);
         const provider = new GoogleAuthProvider();
         try {
+            // The INSTALLED iOS app is the one environment where the popup can never finish: WebKit
+            // hands its popup a null `window.opener` (iOS 17.5+), so the credential has nowhere to
+            // be posted back to. Sending the user through a redirect instead is what keeps the
+            // installed app usable at all — otherwise signing out locks that install out for good,
+            // and only a normal browser tab can sign in. See utils/authEnvironment.js.
+            if (isPopupSignInBlocked(readSignInEnvironment())) {
+                console.log('Auth: installed iOS app — using redirect sign-in (popup cannot return)');
+                // Marked BEFORE navigating: the result is handled by a different document, and the
+                // marker is the only way that document can tell a failed handshake apart from an
+                // ordinary cold boot.
+                markRedirectPending();
+                await signInWithRedirect(auth, provider);
+                // Unreachable in practice — the page navigates away. If it ever does return, the
+                // caller must not treat it as a completed sign-in.
+                return;
+            }
+
             // Use popup for all browsers (including Opera)
-            // Note: Opera works fine with popup. Redirect requires Firebase Console configuration.
+            // Note: Opera works fine with popup.
+            console.log('Auth: Starting Google Login with popup...');
             if (isOpera) {
                 console.log('Auth: Opera browser detected, using popup (works reliably)');
             }
@@ -95,6 +120,9 @@ export function AuthProvider({ children }) {
 
         } catch (error) {
             console.error("Auth: Login Error:", error.code, error.message);
+            // A redirect that never got off the ground must not leave its marker behind, or the
+            // next ordinary boot would be misread as a failed handshake.
+            takeRedirectPending();
             // EVERY failure must reach the caller — including auth/popup-closed-by-user. Swallowing
             // that one made login() resolve normally, so Login.handleLogin's catch never ran and its
             // `loading` flag stayed true: the app's only sign-in button stayed disabled on
@@ -233,7 +261,9 @@ export function AuthProvider({ children }) {
         let unsubscribeSnapshot = null;
         let expirationCheckInterval = null;
 
-        // Handle redirect result (for Opera browser and mobile/fallback)
+        // Return leg of a redirect sign-in (the installed iOS app — see login()). The marker is
+        // consumed on EVERY boot, so an ordinary cold start clears nothing and reports nothing.
+        const wasRedirectPending = takeRedirectPending();
         getRedirectResult(auth)
             .then(async (result) => {
                 if (result && !isProcessingAuth.current) {
@@ -248,10 +278,20 @@ export function AuthProvider({ children }) {
                             isProcessingAuth.current = false;
                         }, 1000);
                     }
+                } else if (!result && wasRedirectPending && !auth.currentUser) {
+                    // We DID leave for Google and came back with nothing and nobody signed in.
+                    // Safari partitions the storage the redirect handshake reads its credential
+                    // back out of, so this is the documented failure mode rather than a fluke —
+                    // and without a coded reason the user just lands on the login screen again with
+                    // no idea why. Park it so Login can say what happened and offer the one route
+                    // that still works from an installed iOS app: a normal browser tab.
+                    console.warn('Auth: redirect sign-in returned no credential (storage blocked?)');
+                    rememberLoginError('app/redirect-handshake-blocked');
                 }
             })
             .catch((error) => {
                 console.error("Auth: Redirect Login Error:", error.code, error.message);
+                if (wasRedirectPending) rememberLoginError(error?.code || 'app/redirect-handshake-blocked');
                 isProcessingAuth.current = false;
             });
 
