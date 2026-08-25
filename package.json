@@ -31,7 +31,7 @@
     "react": "^18.2.0",
     "react-big-calendar": "^1.19.4",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.30.4",
+    "react-router-dom": "^6.30.6",
     "react-swipeable": "^7.0.2",
     "tailwind-merge": "^2.2.1"
   },
@@ -48,7 +48,7 @@
     "firebase-admin": "^14.0.0",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
-    "vite": "^7.3.5",
+    "vite": "^7.3.6",
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.1.9",
     "workbox-precaching": "^7.4.1",
