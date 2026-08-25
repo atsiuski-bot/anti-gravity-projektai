@@ -50,6 +50,17 @@ const sourceFiles = (dir) => {
  */
 const escapeTailwindClass = (cls) => cls.replace(/[[\]():.%,/]/g, (ch) => `\\${ch}`);
 
+/**
+ * Budget for the two tests that walk every file under src/ SYNCHRONOUSLY (readdir + stat + read per
+ * entry). Their duration tracks the machine's filesystem under whatever else vitest is running in
+ * parallel — NOT the code under test. Vitest's 5s default is the wrong budget for that: the walk has
+ * measured ~5s warm and 25s on a cold cache, i.e. it sits ON the default limit and flips to a
+ * spurious red under full-suite load. A timeout here would only ever mean "the disk was busy", never
+ * "a fallback is missing", so give the two walkers room that only a genuine hang can exhaust. Every
+ * other test in this file keeps the 5s default, and with it the fast fail.
+ */
+const WALK_TIMEOUT_MS = 60_000;
+
 describe('browser-floor CSS fallbacks (index.css)', () => {
     it('every dvh utility used in a component has a vh twin in index.css', () => {
         // Match the UTILITY SHAPE (optional variants + an arbitrary value containing dvh) rather
@@ -70,7 +81,7 @@ describe('browser-floor CSS fallbacks (index.css)', () => {
             `index.css has no vh fallback for: ${missing.join(', ')}. Below Safari 15.4 these `
             + 'declarations are dropped and the element loses its height cap entirely.'
         ).toEqual([]);
-    });
+    }, WALK_TIMEOUT_MS);
 
     it('the vh fallbacks are emitted BEFORE the dvh utilities they back up', () => {
         // Position is the whole mechanism: same specificity means the LAST rule wins, so a fallback
@@ -144,7 +155,7 @@ describe('browser-floor CSS fallbacks (index.css)', () => {
             `no :focus-within fallback for: ${missing.join(', ')}. Below Safari 15.4 the rule is `
             + 'dropped and the control has no visible focus indicator.'
         ).toEqual([]);
-    });
+    }, WALK_TIMEOUT_MS);
 });
 
 describe('boot watchdog (index.html)', () => {
