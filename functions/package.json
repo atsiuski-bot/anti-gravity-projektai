@@ -8,7 +8,8 @@
   "main": "index.js",
   "scripts": {
     "lint": "eslint .",
-    "test": "node integrityScans.test.cjs && node decisionLog.test.cjs && node workDay.test.cjs",
+    "//test": "adminSdk.emulator.test.cjs is deliberately NOT here: it needs FIRESTORE_EMULATOR_HOST and fails loudly without it. The release gate runs it inside the root test:firestore emulator session.",
+    "test": "node integrityScans.test.cjs && node decisionLog.test.cjs && node workDay.test.cjs && node discovery.test.cjs",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log"

@@ -161,30 +161,63 @@ describe('legacy recovery ownership wiring', () => {
 });
 
 // =============================================================================================
-// 2. TEST-SCRIPT COVERAGE — the functions/ suites run on bare node, and their file list is written
-//    out BY HAND in two package.json files: functions/package.json (`test`) and the root
-//    package.json (`test:functions`, the one the release gate actually invokes). A suite missing
-//    from either is a test that exists, passes when run directly, and protects nothing.
+// 2. TEST-SCRIPT COVERAGE — the functions/ suites' file list is written out BY HAND across three
+//    package.json scripts. A suite missing from the ones that should carry it is a test that
+//    exists, passes when run directly, and protects nothing.
+//
+//    There are two categories, told apart by FILENAME because they need different runners:
+//
+//      *.emulator.test.cjs — needs FIRESTORE_EMULATOR_HOST, so it rides inside the root
+//                            `test:firestore` emulators:exec session. It must NOT be listed in the
+//                            bare-node scripts: it exits 1 without the emulator, by design (that
+//                            loud failure is what stops it from silently self-skipping).
+//      everything else     — bare node, wired into BOTH functions/package.json `test` and the root
+//                            `test:functions` that the release gate invokes.
+//
+//    Both categories are checked, so "wired to the wrong runner" fails just as loudly as "not
+//    wired at all".
 // =============================================================================================
 
 describe('functions test-script coverage', () => {
   const suites = readdirSync(resolve(ROOT, 'functions')).filter((f) => /\.test\.cjs$/.test(f));
-  const rootScript = JSON.parse(read('package.json')).scripts['test:functions'] || '';
+  const isEmulatorSuite = (f) => /\.emulator\.test\.cjs$/.test(f);
+  const rootScripts = JSON.parse(read('package.json')).scripts;
+  const rootScript = rootScripts['test:functions'] || '';
+  const firestoreScript = rootScripts['test:firestore'] || '';
   const fnScript = JSON.parse(read('functions/package.json')).scripts.test || '';
 
   it('found the functions test suites (extraction sanity)', () => {
     expect(suites.length, 'No functions/*.test.cjs found — did the suites move?').toBeGreaterThan(0);
   });
 
-  it('every functions suite is wired into BOTH test scripts', () => {
+  it('every bare-node functions suite is wired into BOTH test scripts', () => {
     const missing = [];
-    for (const suite of suites) {
+    for (const suite of suites.filter((f) => !isEmulatorSuite(f))) {
       if (!rootScript.includes(suite)) missing.push(`${suite} → root package.json "test:functions"`);
       if (!fnScript.includes(suite)) missing.push(`${suite} → functions/package.json "test"`);
     }
     expect(
       missing,
       `A functions suite exists but is never run by the gate:\n${missing.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('every emulator functions suite runs inside test:firestore and nowhere without the emulator', () => {
+    const wrong = [];
+    for (const suite of suites.filter(isEmulatorSuite)) {
+      if (!firestoreScript.includes(suite)) {
+        wrong.push(`${suite} → missing from root package.json "test:firestore", so it never runs`);
+      }
+      if (rootScript.includes(suite)) {
+        wrong.push(`${suite} → listed in root package.json "test:functions", which runs bare node: it would exit 1 without FIRESTORE_EMULATOR_HOST`);
+      }
+      if (fnScript.includes(suite)) {
+        wrong.push(`${suite} → listed in functions/package.json "test", which runs bare node: it would exit 1 without FIRESTORE_EMULATOR_HOST`);
+      }
+    }
+    expect(
+      wrong,
+      `An emulator suite is wired to the wrong runner:\n${wrong.join('\n')}`,
     ).toEqual([]);
   });
 });
