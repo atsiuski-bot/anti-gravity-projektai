@@ -250,3 +250,156 @@ describe('design tokens doc ↔ runtime palette', () => {
     ).toEqual([]);
   });
 });
+
+// =============================================================================================
+// 4. REACT ROUTER DEFERRAL PRECONDITIONS (ADR 0030) — two advisories against react-router have no
+//    fix in any 6.x release (GHSA-wrjc-x8rr-h8h6 backslash open redirect, GHSA-337j-9hxr-rhxg
+//    deserializeErrors constructor injection), so npm's only remedy is the react-router-dom@7
+//    major. We stay on 6.x because neither advisory describes code this app runs — but that is a
+//    claim about OUR USAGE, not about the library, and it expires the moment somebody writes the
+//    usage it excludes. ADR 0030 names three conditions; this section is what makes them fail the
+//    ship instead of quietly becoming false.
+//
+//    Scanning IMPORT SPECIFIERS rather than JSX is deliberate and is the only precise option here:
+//    `<Link` also matches this repo's own `<Linkify>` and lucide's `<LinkIcon>`, while react-router's
+//    Link cannot be used without being imported. The namespace-import check closes the one hole that
+//    leaves (`import * as RR from 'react-router-dom'`).
+//
+//    If this gate goes red, the correct response is NOT to relax it: the deferral is void, and
+//    closing the advisories — migrate to v7, or delete react-router and hand its two routes to
+//    NavigationContext — becomes the next dependency task. See docs/adr/0030-*.md.
+// =============================================================================================
+
+describe('react-router deferral preconditions (ADR 0030)', () => {
+  // Condition 1 (navigation components that carry the open redirect) + condition 3 (every symbol
+  // that only exists on the data-router path, which is where deserializeErrors lives).
+  const BANNED_SPECIFIERS = [
+    'Link',
+    'NavLink',
+    'Form',
+    'createBrowserRouter',
+    'createHashRouter',
+    'createMemoryRouter',
+    'RouterProvider',
+    'StaticRouterProvider',
+    'HydratedRouter',
+    'useLoaderData',
+    'useActionData',
+    'useFetcher',
+    'useSubmit',
+  ];
+
+  // Condition 3's other half: a server render is what makes the hydration path exist at all. These
+  // come from react-dom, not react-router, so they are matched as bare identifiers.
+  const SSR_ENTRY_SYMBOLS = [
+    'hydrateRoot',
+    'renderToString',
+    'renderToPipeableStream',
+    'renderToReadableStream',
+  ];
+
+  const ROUTER_IMPORTS = PROD_CODE.flatMap(({ file, code }) => {
+    const found = [];
+    const re = /import\s*\{([^}]*)\}\s*from\s*['"]react-router(?:-dom)?['"]/g;
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      const specifiers = m[1]
+        .split(',')
+        .map((s) => s.trim().split(/\s+as\s+/)[0].trim())
+        .filter(Boolean);
+      found.push({ file, specifiers });
+    }
+    return found;
+  });
+
+  // Every place the app decides WHERE to go. `\bnavigate\s*\(` cannot match `useNavigate(` — the
+  // preceding `e` is a word character, so the boundary fails — so this reads call sites only.
+  const NAV_TARGETS = PROD_CODE.flatMap(({ file, code }) => {
+    const found = [];
+    let m;
+    const imperative = /\bnavigate\s*\(\s*([^,)]*)/g;
+    while ((m = imperative.exec(code)) !== null) {
+      found.push({ file, kind: 'navigate(…)', target: m[1].trim() });
+    }
+    const declarative = /<Navigate\b[^>]*?\bto=(\{[^}]*\}|"[^"]*"|'[^']*')/g;
+    while ((m = declarative.exec(code)) !== null) {
+      found.push({ file, kind: '<Navigate to=…>', target: m[1].trim() });
+    }
+    return found;
+  });
+
+  // A literal is a quoted string (optionally inside JSX braces) or a history delta like -1. Anything
+  // else — an identifier, a member expression, a template literal — can carry a value the app did
+  // not author, which is exactly what the open redirect needs.
+  const isLiteralTarget = (t) =>
+    /^'[^']*'$/.test(t) ||
+    /^"[^"]*"$/.test(t) ||
+    /^-?\d+$/.test(t) ||
+    /^\{\s*'[^']*'\s*\}$/.test(t) ||
+    /^\{\s*"[^"]*"\s*\}$/.test(t);
+
+  it('found the react-router imports and the navigation targets (extraction sanity)', () => {
+    // Without this, every assertion below passes vacuously the day a regex stops matching — the gate
+    // would report green while enforcing nothing, which is worse than not having it.
+    expect(ROUTER_IMPORTS.length, 'No react-router import found — the extraction regex broke.')
+      .toBeGreaterThan(0);
+    expect(
+      ROUTER_IMPORTS.every((i) => i.specifiers.length > 0),
+      'A react-router import parsed to zero specifiers — the extraction regex broke.',
+    ).toBe(true);
+    expect(NAV_TARGETS.length, 'No navigation target found — the extraction regex broke.')
+      .toBeGreaterThan(0);
+  });
+
+  it('condition 1 & 3: no react-router Link/NavLink/Form and no data-router symbol is imported', () => {
+    const offenders = [];
+    for (const { file, specifiers } of ROUTER_IMPORTS) {
+      for (const spec of specifiers) {
+        if (BANNED_SPECIFIERS.includes(spec)) offenders.push(`${file}: imports { ${spec} }`);
+      }
+    }
+    expect(
+      offenders,
+      `ADR 0030's deferral is void — these imports make a react-router advisory reachable:\n${offenders.join(
+        '\n',
+      )}`,
+    ).toEqual([]);
+  });
+
+  it('condition 1 & 3: react-router is never imported as a namespace (which would hide the above)', () => {
+    const offenders = PROD_CODE.filter(({ code }) =>
+      /import\s+\*\s+as\s+\w+\s+from\s*['"]react-router(?:-dom)?['"]/.test(code),
+    ).map(({ file }) => file);
+    expect(
+      offenders,
+      `A namespace import puts every banned symbol back in reach:\n${offenders.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('condition 2: every navigation target is a hardcoded literal', () => {
+    const offenders = NAV_TARGETS.filter(({ target }) => !isLiteralTarget(target)).map(
+      ({ file, kind, target }) => `${file}: ${kind} ← ${target || '(empty)'}`,
+    );
+    expect(
+      offenders,
+      `A navigation destination is not a literal, so GHSA-wrjc-x8rr-h8h6 becomes reachable:\n${offenders.join(
+        '\n',
+      )}`,
+    ).toEqual([]);
+  });
+
+  it('condition 3: the app has no server-render entry point', () => {
+    const offenders = [];
+    for (const { file, code } of PROD_CODE) {
+      for (const symbol of SSR_ENTRY_SYMBOLS) {
+        if (new RegExp(`\\b${symbol}\\s*\\(`).test(code)) offenders.push(`${file}: ${symbol}(…)`);
+      }
+    }
+    expect(
+      offenders,
+      `A server render makes the deserializeErrors hydration path (GHSA-337j-9hxr-rhxg) exist:\n${offenders.join(
+        '\n',
+      )}`,
+    ).toEqual([]);
+  });
+});

@@ -48,7 +48,7 @@
     "firebase-admin": "^14.0.0",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
-    "vite": "^7.3.5",
+    "vite": "^7.3.6",
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.1.9",
     "workbox-precaching": "^7.4.1",
