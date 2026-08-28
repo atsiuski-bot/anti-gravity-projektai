@@ -1,9 +1,9 @@
 ---
 project: workz
 status: active
-phase: "live; security hardening + triage sweeps"
-updated: 2026-07-13
-summary: "Gildija - mobile work-time-tracking PWA for field workers and managers on a Firebase backend; live with real users; ongoing security-rule hardening and report triage."
+phase: "live; maintenance mode - dependency audits + advisory closures"
+updated: 2026-08-28
+summary: "Gildija - mobile work-time-tracking PWA for field workers and managers on a Firebase backend; live with real users; the security-hardening wave is done, current work is dependency audits and advisory closures (last: 2026-08-25)."
 ---
 
 # Status
