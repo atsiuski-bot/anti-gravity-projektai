@@ -285,27 +285,31 @@ describe('design tokens doc ↔ runtime palette', () => {
 });
 
 // =============================================================================================
-// 4. REACT ROUTER DEFERRAL PRECONDITIONS (ADR 0030) — two advisories against react-router have no
-//    fix in any 6.x release (GHSA-wrjc-x8rr-h8h6 backslash open redirect, GHSA-337j-9hxr-rhxg
-//    deserializeErrors constructor injection), so npm's only remedy is the react-router-dom@7
-//    major. We stay on 6.x because neither advisory describes code this app runs — but that is a
-//    claim about OUR USAGE, not about the library, and it expires the moment somebody writes the
-//    usage it excludes. ADR 0030 names three conditions; this section is what makes them fail the
-//    ship instead of quietly becoming false.
+// 4. REACT ROUTER LIBRARY-MODE SURFACE (ADR 0031, supersedes ADR 0030) — these assertions were
+//    written when they were the price of staying on a known-vulnerable 6.x: two advisories with no
+//    fix in any 6.x release, unreachable only because of how narrowly this app uses the router.
+//    react-router-dom is now 7.18.3 and both are closed, so they no longer defend a CVE — they
+//    defend the ROUTER SURFACE ITSELF, which is what made those advisories structurally
+//    unreachable and is worth keeping on its own merits.
+//
+//    Navigation in WORKZ is tab-based through NavigationContext, not route-based. The router owns
+//    two literal routes, the history entry and ?tab= — nothing else. Library mode (BrowserRouter
+//    + <Routes>) rather than framework / data-router mode is a deliberate choice, not an accident
+//    of not having upgraded yet.
 //
 //    Scanning IMPORT SPECIFIERS rather than JSX is deliberate and is the only precise option here:
 //    `<Link` also matches this repo's own `<Linkify>` and lucide's `<LinkIcon>`, while react-router's
 //    Link cannot be used without being imported. The namespace-import check closes the one hole that
 //    leaves (`import * as RR from 'react-router-dom'`).
 //
-//    If this gate goes red, the correct response is NOT to relax it: the deferral is void, and
-//    closing the advisories — migrate to v7, or delete react-router and hand its two routes to
-//    NavigationContext — becomes the next dependency task. See docs/adr/0030-*.md.
+//    If this gate goes red, the change is not wrong — but it is bigger than it looks: it widens
+//    the router surface past what ADR 0031 records. Update the ADR (and this section) deliberately
+//    rather than deleting the failing assertion. See docs/adr/0031-*.md.
 // =============================================================================================
 
-describe('react-router deferral preconditions (ADR 0030)', () => {
-  // Condition 1 (navigation components that carry the open redirect) + condition 3 (every symbol
-  // that only exists on the data-router path, which is where deserializeErrors lives).
+describe('react-router library-mode surface (ADR 0031)', () => {
+  // Navigation components that carry a target (the historical open-redirect class) + every symbol
+  // that only exists on the data-router path, which is where deserializeErrors lives.
   const BANNED_SPECIFIERS = [
     'Link',
     'NavLink',
@@ -384,7 +388,7 @@ describe('react-router deferral preconditions (ADR 0030)', () => {
       .toBeGreaterThan(0);
   });
 
-  it('condition 1 & 3: no react-router Link/NavLink/Form and no data-router symbol is imported', () => {
+  it('no react-router Link/NavLink/Form and no data-router symbol is imported', () => {
     const offenders = [];
     for (const { file, specifiers } of ROUTER_IMPORTS) {
       for (const spec of specifiers) {
@@ -393,13 +397,13 @@ describe('react-router deferral preconditions (ADR 0030)', () => {
     }
     expect(
       offenders,
-      `ADR 0030's deferral is void — these imports make a react-router advisory reachable:\n${offenders.join(
+      `These imports widen the router past the library-mode surface ADR 0031 records:\n${offenders.join(
         '\n',
       )}`,
     ).toEqual([]);
   });
 
-  it('condition 1 & 3: react-router is never imported as a namespace (which would hide the above)', () => {
+  it('react-router is never imported as a namespace (which would hide the above)', () => {
     const offenders = PROD_CODE.filter(({ code }) =>
       /import\s+\*\s+as\s+\w+\s+from\s*['"]react-router(?:-dom)?['"]/.test(code),
     ).map(({ file }) => file);
@@ -409,19 +413,19 @@ describe('react-router deferral preconditions (ADR 0030)', () => {
     ).toEqual([]);
   });
 
-  it('condition 2: every navigation target is a hardcoded literal', () => {
+  it('every navigation target is a hardcoded literal', () => {
     const offenders = NAV_TARGETS.filter(({ target }) => !isLiteralTarget(target)).map(
       ({ file, kind, target }) => `${file}: ${kind} ← ${target || '(empty)'}`,
     );
     expect(
       offenders,
-      `A navigation destination is not a literal, so GHSA-wrjc-x8rr-h8h6 becomes reachable:\n${offenders.join(
+      `A navigation destination is not a literal, so the target is no longer app-authored:\n${offenders.join(
         '\n',
       )}`,
     ).toEqual([]);
   });
 
-  it('condition 3: the app has no server-render entry point', () => {
+  it('the app has no server-render entry point', () => {
     const offenders = [];
     for (const { file, code } of PROD_CODE) {
       for (const symbol of SSR_ENTRY_SYMBOLS) {
@@ -430,7 +434,7 @@ describe('react-router deferral preconditions (ADR 0030)', () => {
     }
     expect(
       offenders,
-      `A server render makes the deserializeErrors hydration path (GHSA-337j-9hxr-rhxg) exist:\n${offenders.join(
+      `A server render puts this app on the data-router hydration path (deserializeErrors):\n${offenders.join(
         '\n',
       )}`,
     ).toEqual([]);

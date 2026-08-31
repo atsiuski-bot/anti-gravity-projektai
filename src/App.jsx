@@ -66,7 +66,10 @@ function App() {
     }, []);
 
     return (
-        <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        /* No `future` prop: the two flags this used to carry (v7_startTransition,
+           v7_relativeSplatPath) are unconditional behaviour in react-router 7 and the
+           option no longer exists — passing them would be dead config. */
+        <BrowserRouter>
             {/* ThemeProvider wraps AuthProvider so the chosen theme is live pre-login and during
                 the auth spinner (AuthProvider gates its children behind a full-screen loader). */}
             <ThemeProvider>

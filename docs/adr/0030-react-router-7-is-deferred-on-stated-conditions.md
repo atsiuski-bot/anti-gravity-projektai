@@ -1,6 +1,13 @@
 # ADR 0030 — React Router 7 is deferred on stated conditions, not skipped
 
-Status: Accepted · Date: 2026-08-25
+Status: **Superseded by [ADR 0031](./0031-react-router-7-adopted-in-library-mode.md)** (2026-08-31) · Date: 2026-08-25
+
+> The deferral recorded below ended as this ADR's own follow-up asked it to: the endgame was
+> decided in favour of migrating. `react-router-dom` is now 7.18.3 and both advisories are
+> closed. The three conditions are still enforced by section 4 of `sourceConsistency.test.js`,
+> but they now defend **library mode as an architectural choice**, not a known-vulnerable
+> dependency — see ADR 0031 for the current reasoning. Everything below is kept as the record of
+> why the bump was deferred between 2026-08-25 and 2026-08-31.
 
 ## Context
 
