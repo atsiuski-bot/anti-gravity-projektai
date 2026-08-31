@@ -11,7 +11,7 @@ export function useNavigation() {
 }
 
 export function NavigationProvider({ children }) {
-    const { userRole } = useAuth();
+    const { currentUser, userRole } = useAuth();
     const [searchParams, setSearchParams] = useSearchParams();
     const location = useLocation();
     // Seed from the URL so a reload or a shared link reopens the same tab.
@@ -44,14 +44,25 @@ export function NavigationProvider({ children }) {
 
     // Mirror the active tab into ?tab= (replace, so each switch doesn't push a history entry).
     // Only on the app route — never decorate /login with a tab param.
+    //
+    // The `currentUser` guard is load-bearing, not a tidiness check. This provider sits ABOVE the
+    // route tree, so its effects run AFTER the ones inside it. For a signed-out visitor on '/',
+    // ProtectedRoute renders <Navigate to="/login">, whose effect pushes the redirect — and then
+    // this effect's `replace` to '/?tab=...' lands on top and discards it. <Navigate> only
+    // navigates once per mount, so it never retries: the app stays parked on the protected route
+    // rendering null, i.e. a white screen that never reaches the login page. Gating on
+    // `currentUser` makes the mirror and the redirect mutually exclusive by construction, since
+    // the redirect fires on exactly the condition (`!currentUser`) that silences the mirror.
+    // Writing a tab param for a visitor who has no tabs was meaningless anyway.
     useEffect(() => {
+        if (!currentUser) return;
         if (location.pathname !== '/') return;
         if (searchParams.get('tab') === activeTab) return;
         const next = new URLSearchParams(searchParams);
         next.set('tab', activeTab);
         setSearchParams(next, { replace: true });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- mirror activeTab → URL; guarded by an equality check to avoid a loop.
-    }, [activeTab, location.pathname]);
+    }, [activeTab, location.pathname, currentUser]);
 
     const setActiveTab = (newTab) => {
         // Save current scroll position before switching
