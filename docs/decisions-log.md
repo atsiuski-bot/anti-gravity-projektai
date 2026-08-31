@@ -41,6 +41,30 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-08-31** — **A provider above the router must not write the URL for a state the router is
+  redirecting out of** (`src/context/NavigationContext.jsx`). A signed-out visitor loading `/`
+  got a permanent WHITE SCREEN: the URL turned into `/?tab=tasks`, `#root` stayed empty and
+  `/login` was never reached, with no console error. Cause: `NavigationProvider` sits ABOVE the
+  route outlet, so its effects run AFTER the ones inside it. `ProtectedRoute` renders
+  `<Navigate to="/login">`, whose effect pushes the redirect — and the provider's "mirror the
+  active tab into `?tab=`" effect then `replace`d that entry with `/?tab=tasks`. `<Navigate>`
+  navigates once per mount and never retries, so the app parked on the protected route rendering
+  `null` forever. It only bites when the mirror actually WRITES, which is why `/?tab=tasks` as a
+  bare deep link always worked and plain `/` reproduced 3/3. Not a react-router 7 regression —
+  bisected identically against 6.30.6 with the v7 future flags (see
+  [ADR 0030](./adr/0030-react-router-7-is-deferred-on-stated-conditions.md)).
+  **Decision: gate the mirror on `currentUser` rather than restructure the provider stack.**
+  Hoisting the auth gate above `NavigationProvider` would also work, but it rewrites the provider
+  tree for every route to fix one effect; gating on `currentUser` makes the mirror and the
+  redirect mutually exclusive BY CONSTRUCTION, because the redirect fires on exactly the condition
+  (`!currentUser`) that silences the mirror — and writing a tab param for a visitor who has no
+  tabs was meaningless anyway. Locked by the repo's first route-transition test
+  (`src/context/NavigationContext.redirect.test.jsx`), which asserts BOTH directions so the effect
+  cannot be "fixed" by deletion; it needed the first jsdom environment in the suite (opted in per
+  file, so the pure Node suites keep their speed). Verified signed-out cold load 3/3 → `/login`,
+  plus login, tab switching and sign-out on the dev test account. Client-only: no rules, no
+  functions, nothing to deploy.
+
 - **2026-07-31** — **Session timestamps are anchored to SERVER time, not the device clock**
   (`src/utils/serverClock.js`). A worker reported that every stop and every break taken over a
   running task was refused from one desktop machine (`timerCommandEngine.settle: Missing or
