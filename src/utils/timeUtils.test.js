@@ -19,6 +19,7 @@ import {
     relativeDeadline,
     injectInactiveGaps,
     mergeContinuousSessions,
+    dropUncreditedSessionRows,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -602,6 +603,22 @@ describe('mergeContinuousSessions (one unpaused stretch = one row)', () => {
         expect(mergeContinuousSessions([base, loose])).toHaveLength(2);
     });
 
+    // Recovery mints a zero-length proven row when the run's only heartbeat sits on its start
+    // instant. Sorted by startTime it lands INSIDE the block around it, and it used to end the
+    // stretch there — one continuous task then read as three consecutive blocks.
+    it('absorbs a contained zero-length row instead of letting it split the stretch', () => {
+        const out = mergeContinuousSessions([
+            seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z'),
+            seg('zero', '2026-08-15T08:00:00.000Z', '2026-08-15T08:00:00.000Z'),
+            seg('b', '2026-08-15T09:00:00.000Z', '2026-08-15T09:30:00.000Z'),
+        ]);
+
+        expect(out).toHaveLength(1);
+        expect(out[0].segments.map((s) => s.id)).toEqual(['a', 'zero', 'b']);
+        expect(out[0].endTime).toBe('2026-08-15T09:30:00.000Z');
+        expect(out[0].duration).toBeCloseTo(90, 6);
+    });
+
     it('is idempotent and passes short lists through untouched', () => {
         expect(mergeContinuousSessions([])).toEqual([]);
         const one = [seg('a', '2026-08-15T08:00:00.000Z', '2026-08-15T09:00:00.000Z')];
@@ -614,6 +631,46 @@ describe('mergeContinuousSessions (one unpaused stretch = one row)', () => {
         const twice = mergeContinuousSessions(folded);
         expect(twice).toHaveLength(1);
         expect(twice[0].segments.map((s) => s.id)).toEqual(['a', 'b']);
+    });
+});
+
+
+describe('dropUncreditedSessionRows (a row that credits nothing is not a block of work)', () => {
+    const row = (extra) => ({
+        id: 'r',
+        type: 'session',
+        taskId: 'T1',
+        userId: 'U1',
+        startTime: '2026-08-15T08:00:00.000Z',
+        endTime: '2026-08-15T08:00:00.000Z',
+        duration: 0,
+        ...extra,
+    });
+
+    it('drops the empty engine rows a close/recovery has to file', () => {
+        expect(dropUncreditedSessionRows([row(), row({ id: 'r2', duration: 0.08 })])).toEqual([]);
+    });
+
+    it('keeps everything a person must still see or act on', () => {
+        const kept = [
+            row({ id: 'live', isActive: true }),
+            row({ id: 'edited', edited: true }),
+            row({ id: 'manual', isManualSession: true }),
+            row({ id: 'legacy', isManualAdjustment: true }),
+            row({ id: 'block', segments: [row(), row({ id: 'r2' })] }),
+            row({ id: 'break', type: 'break' }),
+            row({ id: 'real', duration: 12 }),
+            // Half a minute still rounds to 1m on screen, so it is real time and stays.
+            row({ id: 'short', duration: 0.6 }),
+        ];
+        expect(dropUncreditedSessionRows(kept).map((r) => r.id)).toEqual(
+            ['live', 'edited', 'manual', 'legacy', 'block', 'break', 'real', 'short']
+        );
+    });
+
+    it('guards non-array input', () => {
+        expect(dropUncreditedSessionRows(null)).toEqual([]);
+        expect(dropUncreditedSessionRows([])).toEqual([]);
     });
 });
 

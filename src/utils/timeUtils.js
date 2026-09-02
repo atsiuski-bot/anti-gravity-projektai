@@ -598,27 +598,45 @@ const isFoldableSession = (item) =>
     && !item.isManualAdjustment
     && !!item.taskId;
 
-// Do these two rows describe ONE stretch the worker never interrupted? Same task, same worker, same
-// work day, and the second one opens where the first one closed (within the seam tolerance, which
-// mirrors injectInactiveGaps' own "a hole this small is not a hole" threshold — a seam we refuse to
-// draw a Neaktyvus band for must not split the block either).
-const continuesStretch = (prev, next, maxSeamMinutes) => {
+// Does this row continue the stretch built so far? Same task, same worker, same work day, and it
+// opens where the stretch has reached (within the seam tolerance, which mirrors injectInactiveGaps'
+// own "a hole this small is not a hole" threshold — a seam we refuse to draw a Neaktyvus band for
+// must not split the block either).
+//
+// `closedIso` is the stretch's RUNNING MAXIMUM end, not the last segment's — the same merge-
+// intervals discipline injectInactiveGaps uses, and for the same reason. Recovery mints a
+// zero-length proven row whenever the run's only heartbeat sits on its start instant, and that row
+// sorts INSIDE the block around it. Comparing against the previous row alone made such a contained
+// row a wall: the stretch ended there and the rest of the very same continuous work opened a second
+// block (production, Simona 2026-08-31 — "11:53–12:04", then a bare "11:53–11:53 0m", then
+// "12:04–12:18" as a third block). Measured against the running max, the contained row is absorbed
+// (its seam is negative, i.e. it opens before the stretch has ended) and the stretch survives it.
+const continuesStretch = (prev, closedIso, next, maxSeamMinutes) => {
     if (!isFoldableSession(prev) || !isFoldableSession(next)) return false;
     if (prev.taskId !== next.taskId) return false;
     if ((prev.userId || null) !== (next.userId || null)) return false;
     // Never fold across the work-day boundary: the day is the filing unit every total groups by.
     if ((prev.date || null) !== (next.date || null)) return false;
-    const closed = Date.parse(prev.endTime);
+    const closed = Date.parse(closedIso);
     const opened = Date.parse(next.startTime);
-    if (!Number.isFinite(closed) || !Number.isFinite(opened)) return false;
+    const nextClosed = Date.parse(next.endTime);
+    if (!Number.isFinite(closed) || !Number.isFinite(opened) || !Number.isFinite(nextClosed)) return false;
+    // Contained in what the stretch already covers — absorbed, never a seam.
+    if (nextClosed <= closed) return true;
     const seamMinutes = (opened - closed) / 60000;
     return seamMinutes >= 0 && seamMinutes <= maxSeamMinutes;
 };
 
+// The stretch reaches as far as its FURTHEST segment end, which a contained row does not move.
+const stretchEnd = (segments) => segments.reduce(
+    (latest, s) => (Date.parse(s.endTime) > Date.parse(latest) ? s.endTime : latest),
+    segments[0].endTime,
+);
+
 const foldStretch = (segments) => {
     const folded = {
         ...segments[0],
-        endTime: segments[segments.length - 1].endTime,
+        endTime: stretchEnd(segments),
         duration: segments.reduce((sum, s) => sum + (Number(s.duration) || 0), 0),
         segments,
     };
@@ -662,7 +680,7 @@ export const mergeContinuousSessions = (sortedItems, maxSeamMinutes = 1) => {
     };
 
     for (const item of sortedItems) {
-        if (stretch && continuesStretch(stretch[stretch.length - 1], item, maxSeamMinutes)) {
+        if (stretch && continuesStretch(stretch[stretch.length - 1], stretchEnd(stretch), item, maxSeamMinutes)) {
             stretch.push(item);
             continue;
         }
@@ -676,6 +694,39 @@ export const mergeContinuousSessions = (sortedItems, maxSeamMinutes = 1) => {
     flush();
 
     return out;
+};
+
+/**
+ * Drop the ledger rows that credit NOTHING from a human-facing timeline.
+ *
+ * Why they exist at all: the rules' `taskCloseLedgerBound()` requires `work_sessions/sess_run_{runId}`
+ * to be written in the SAME batch as any task-run close — that invariant is what makes credited time
+ * impossible to lose, so every close files a row even when the run was empty. Two ordinary events
+ * produce an empty one: recovery closing a run whose only heartbeat sits on its start instant, and a
+ * worker stopping a run seconds after boot recovery re-anchored it (ADR 0027). Both render as a bare
+ * "0m" line, and a day full of them reads as a shift chopped into scraps of work nobody did.
+ *
+ * So the row stays in Firestore — audits, integrity scans and the rules invariant all keep what they
+ * need — and only the timeline stops showing what rounds to nothing. Deliberately narrow: a folded
+ * block, a live row, an admin-edited row and any human-authored manual row are never dropped, however
+ * short, because each of those is something a person must still be able to see and act on. Totals are
+ * unaffected: every surface sums the sessions themselves, not these rows.
+ *
+ * @param {Array} items - timeline items (fold them first, so a contained row is already absorbed).
+ * @returns {Array} the items without the uncredited engine rows.
+ */
+export const dropUncreditedSessionRows = (items) => {
+    if (!Array.isArray(items)) return items || [];
+    return items.filter((item) => !(
+        item
+        && item.type === 'session'
+        && !item.segments
+        && !item.isActive
+        && !item.edited
+        && !item.isManualSession
+        && !item.isManualAdjustment
+        && Math.round(Number(item.duration) || 0) === 0
+    ));
 };
 
 /**

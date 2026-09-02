@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getWorkDayString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, mergeContinuousSessions, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getWorkDayString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, mergeContinuousSessions, dropUncreditedSessionRows, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { validateSelfReduction, reduceOwnWorkSession, validateOwnStartCorrection, correctOwnSessionStart } from '../utils/sessionEditActions';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
@@ -933,11 +933,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // eslint-disable-next-line react-hooks/exhaustive-deps -- finishedTasks changes already propagate via manualTasks; preserving current timing
     }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId, isRange]);
 
-    // The rows actually rendered: the timeline with every OPENED folded block expanded back into
-    // its segments. A folded block is several ledger documents shown as one, so it is never itself
-    // editable — this disclosure is what keeps the per-row correction affordances one tap away.
+    // The rows actually rendered: the timeline with the rows that credit nothing dropped, and every
+    // OPENED folded block expanded back into its segments. A folded block is several ledger documents
+    // shown as one, so it is never itself editable — this disclosure is what keeps the per-row
+    // correction affordances one tap away, and it is where a dropped row is still reachable when it
+    // belongs to a stretch. Dropping is presentation-only; the totals above sum the sessions.
     const timelineRows = useMemo(
-        () => expandStretches(combinedTimelineItems, openStretches),
+        () => expandStretches(dropUncreditedSessionRows(combinedTimelineItems), openStretches),
         [combinedTimelineItems, openStretches]
     );
 
@@ -1548,7 +1550,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </div>
                 )}
 
-                {combinedTimelineItems.length === 0 ? (
+                {timelineRows.length === 0 ? (
                     <div className="p-12 text-center text-ink-muted">
                         <p>{isRange ? 'Šiuo laikotarpiu veiklos sesijų nefiksuota.' : 'Šią dieną veiklos sesijų nefiksuota.'}</p>
                     </div>
@@ -2372,6 +2374,9 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     const workMinutes = (rows) => rows.filter(i => i.type !== 'break').reduce((a, i) => a + (i.duration || 0), 0);
     const dayWorkMinutes = workMinutes(timeline);
     const dayBreakMinutes = timeline.filter(i => i.type === 'break').reduce((a, i) => a + (i.duration || 0), 0);
+    // Rows that credit nothing are dropped from the LIST only — the day totals above are summed from
+    // the full timeline first, so hiding them can never move a number the manager reads.
+    const shownTimeline = dropUncreditedSessionRows(timeline);
     const [openStretches, setOpenStretches] = useState(() => new Set());
     const toggleStretch = (id) => setOpenStretches((prev) => {
         const next = new Set(prev);
@@ -2384,7 +2389,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     // chronological too. Dividers only earn their space when the list spans more than one day.
     const groups = [];
     const groupIndex = new Map();
-    for (const item of timeline) {
+    for (const item of shownTimeline) {
         const key = item.date || getWorkDayString(item.startTime);
         if (!groupIndex.has(key)) {
             groupIndex.set(key, groups.length);
@@ -2521,7 +2526,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
 
             {/* Scrolling body */}
             <div className="flex-1 overflow-y-auto px-6 py-4">
-                {timeline.length === 0 ? (
+                {shownTimeline.length === 0 ? (
                     <p className="py-6 text-center text-ink-muted">Įrašų nefiksuota.</p>
                 ) : (
                     <div className="space-y-5">
