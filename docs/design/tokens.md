@@ -340,8 +340,16 @@ existing utilities (which is why text color is `ink`, border color is `line`, an
 semantic names instead of `sm/md/lg/xl`). Examples: `bg-brand`, `text-ink-muted`,
 `border-line`, `bg-surface-base`, `bg-session-task-shell`, `rounded-card`, `min-h-touch`.
 
+> **This block is the light-theme VALUE TABLE, not a copy of the file.** The real
+> `tailwind.config.js` maps every colour through `withAlpha('--token')` to a CSS variable defined in
+> `src/index.css`, which is what makes the dark theme possible — a literal hex in the config could
+> not re-theme. The hex values below are the light-theme resolutions of those variables and are
+> kept in sync with `:root` in `src/index.css`; read the config for the token NAMES and `index.css`
+> for the values of both themes. (Everything below `colors` — font sizes, radii, z-index, spacing —
+> is literal in the config exactly as shown.)
+
 ```js
-// tailwind.config.js — theme.extend
+// tailwind.config.js — theme.extend (colours shown as their LIGHT-theme values; see note above)
 extend: {
   colors: {
     brand:   { DEFAULT: '#4F46E5', hover: '#4338CA', soft: '#EEF2FF', ring: '#4F46E5' /* dark: #A5B4FC */ },

@@ -40,9 +40,12 @@ describe('computeWorkerStats — volume & rhythm', () => {
     const s = computeWorkerStats(RAW, WINDOW, { expectedWeeklyHours: 40 });
 
     it('sums worked hours and active days, excluding out-of-window rows', () => {
-        expect(s.totalHours).toBe(14); // 480 + 360 min, the 240-min 05-30 row excluded
+        // 480 + 360 session minutes, the 240-min 05-30 row excluded, PLUS the two plain tasks' own
+        // manualMinutes (100 + 90) — session-less worked time the payroll CSV and DailyStatistics
+        // have always counted. This fixture previously asserted 14h and so LOCKED IN the omission.
+        expect(s.totalHours).toBeCloseTo(17.1667, 3); // (840 + 190) / 60
         expect(s.activeDays).toBe(2);
-        expect(s.avgPerDay).toBeCloseTo(7, 5);
+        expect(s.avgPerDay).toBeCloseTo(8.5833, 3);
     });
 
     it('derives day length (span minus breaks), span, start and end clock', () => {
@@ -53,8 +56,8 @@ describe('computeWorkerStats — volume & rhythm', () => {
     });
 
     it('computes productive share and norm coverage', () => {
-        expect(s.productivePct).toBeCloseTo(93.33, 1); // 840 / 900
-        expect(s.normCoverage).toBeCloseTo(8.17, 1); // (14 / (30/7)) / 40 * 100
+        expect(s.productivePct).toBeCloseTo(94.5, 1); // 1030 / 1090
+        expect(s.normCoverage).toBeCloseTo(10.01, 1); // (17.1667 / (30/7)) / 40 * 100
     });
 });
 
@@ -129,7 +132,7 @@ describe('computeWorkerStats — discipline (punctuality & reschedules)', () => 
     it('measures punctuality against planned shift starts', () => {
         expect(s.onTimePct).toBe(50); // 1 of 2 planned days on time
         expect(s.avgLatenessMin).toBeCloseTo(30, 5); // mean(0, 60)
-        expect(s.planCoveragePct).toBeCloseTo(87.5, 1); // 840 worked / 960 planned
+        expect(s.planCoveragePct).toBeCloseTo(107.29, 1); // 1030 worked / 960 planned
         expect(s.plannedVsWorkedDaysPct).toBe(100); // both planned work days were worked
     });
 
@@ -155,15 +158,17 @@ describe('computeWorkerStats — breaks & mix', () => {
 
     it('derives break duration, share and count per day', () => {
         expect(s.avgBreakPerDay).toBeCloseTo(30, 5);
-        expect(s.breakSharePct).toBeCloseTo(6.67, 1); // 60 / 900
+        expect(s.breakSharePct).toBeCloseTo(5.5, 1); // 60 / 1090
         expect(s.avgBreakCount).toBeCloseTo(1, 5);
     });
 
     it('splits tracked time across categories', () => {
         const task = s.timeSplit.parts.find((p) => p.key === 'task');
         const brk = s.timeSplit.parts.find((p) => p.key === 'break');
-        expect(task.pct).toBeCloseTo(93.33, 1);
-        expect(brk.pct).toBeCloseTo(6.67, 1);
+        // Task-side manual minutes join the TASK slice, so the split still describes the same total
+        // the headline hours report — the guards have already excluded quick-work and calls.
+        expect(task.pct).toBeCloseTo(94.5, 1);
+        expect(brk.pct).toBeCloseTo(5.5, 1);
     });
 });
 
@@ -222,5 +227,78 @@ describe('formatStatValue', () => {
     it('renders an em dash for missing values and unwraps composites', () => {
         expect(formatStatValue(null, 'hours')).toBe('—');
         expect(formatStatValue({ value: 1, sub: 'x' }, 'days')).toBe('1 d.');
+    });
+});
+
+// A finished plain task carries its own `manualMinutes`: session-less worked time, typically a
+// legacy task whose actualTime was typed in. It is ADDITIVE (a task total is manualMinutes +
+// timerMinutes), and the two sibling aggregations built from the identical documents — the payroll
+// CSV (reportAggregate.aggregateDaily) and DailyStatistics' on-screen total — have always counted
+// it. computeWorkerStats did not, so the period summary and the AI report under-reported hours for
+// the same period, and a day whose ONLY work was such a task disappeared from the summary
+// altogether. These cases pin each half of that: the minutes are counted, and the day exists.
+describe('computeWorkerStats — session-less manual task time', () => {
+    const WIN = { startStr: '2026-06-01', endStr: '2026-06-30' };
+    const bare = { workSessions: [], breakSessions: [], tasks: [], plannedShifts: [], calendarRequests: null };
+    const statsFor = (tasks, extra = {}) => computeWorkerStats({ ...bare, ...extra, tasks }, WIN, {});
+
+    it('a day whose ONLY work is a typed-in task still counts as a worked day', () => {
+        // The regression that hid a whole day: no work_sessions row that day, so the day never
+        // entered the bucket map at all and vanished from activeDays/avgPerDay/normCoverage too.
+        const s = statsFor([{ status: 'completed', completedAt: '2026-06-10T14:00:00Z', manualMinutes: 120 }]);
+        expect(s.totalWorkMinutes).toBe(120);
+        expect(s.totalHours).toBeCloseTo(2, 5);
+        expect(s.activeDays).toBe(1);
+    });
+
+    it('adds to the same day bucket as the task\'s own sessions instead of splitting it in two', () => {
+        const s = statsFor(
+            [{ status: 'completed', completedAt: '2026-06-10T14:00:00Z', manualMinutes: 60 }],
+            {
+                workSessions: [{
+                    date: '2026-06-10',
+                    durationMinutes: 300,
+                    startTime: '2026-06-10T06:00:00Z',
+                    endTime: '2026-06-10T11:00:00Z',
+                }],
+            }
+        );
+        expect(s.totalWorkMinutes).toBe(360);
+        expect(s.activeDays).toBe(1);
+    });
+
+    it('does NOT double-count quick-work or call auto-logs, which already have their own session', () => {
+        const s = statsFor([
+            { status: 'completed', completedAt: '2026-06-10T14:00:00Z', manualMinutes: 45, isQuickWork: true },
+            { status: 'completed', completedAt: '2026-06-10T15:00:00Z', manualMinutes: 45, isSystemTask: true },
+        ]);
+        expect(s.totalWorkMinutes).toBe(0);
+        expect(s.activeDays).toBeNull();
+    });
+
+    it('does NOT double-count a task whose time was re-derived from its sessions (timeChanged)', () => {
+        const s = statsFor([
+            { status: 'completed', completedAt: '2026-06-10T14:00:00Z', manualMinutes: 90, timeChanged: true },
+        ]);
+        expect(s.totalWorkMinutes).toBe(0);
+    });
+
+    it('counts a discarded task that kept its work hours — the hours were still worked', () => {
+        // "Delete with keep work hours" discards the TASK, not the time. The payroll export counts
+        // it for exactly this reason; the throughput filter separately drops it from task COUNTS.
+        const s = statsFor([{ status: 'deleted', isDeleted: true, deletedAt: '2026-06-10T14:00:00Z', manualMinutes: 75 }]);
+        expect(s.totalWorkMinutes).toBe(75);
+        expect(s.completedCount).toBe(0);
+    });
+
+    it('ignores an unfinished task — no finish instant means no day to book it against', () => {
+        const s = statsFor([{ status: 'in_progress', manualMinutes: 200 }]);
+        expect(s.totalWorkMinutes).toBe(0);
+    });
+
+    it('clamps an absurd typed-in duration the same way session minutes are clamped', () => {
+        // sanitizeReportMinutes caps a single entry at 16 h; without it one bad row skews a period.
+        const s = statsFor([{ status: 'completed', completedAt: '2026-06-10T14:00:00Z', manualMinutes: 6000 }]);
+        expect(s.totalWorkMinutes).toBe(16 * 60);
     });
 });

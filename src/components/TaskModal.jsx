@@ -22,6 +22,7 @@ import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
 import { resolveInitialTaskStatus, isTimeExtensionEdit } from '../utils/taskStatus';
 import { listPayRates, hasMultiplePayRates } from '../utils/payRate';
+import { effectivePayRate, fetchPayRate } from '../utils/payRateStore';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
 import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
@@ -37,6 +38,7 @@ import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
 import TitleSuggestInput from './task/TitleSuggestInput';
 import TimeEstimatePicker from './TimeEstimatePicker';
+import { devLog } from '../utils/devLog';
 
 // Drag-to-reorder editor for the "Eigos sąrašas" — lazy so @dnd-kit's weight enters the bundle only
 // when a manager actually authors/edits a task, not for every modal viewer (mirrors PriorityBoard).
@@ -397,11 +399,31 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         : [];
 
     // Multi-rate assignment: when the picked Meistras has 2+ pay tariffs, the manager chooses which
-    // one this task is billed by. The list comes from the assignee's own user doc (payRate); a
-    // worker with one-or-zero rates shows no picker (billed by their default). See utils/payRate.js.
+    // one this task is billed by. A worker with one-or-zero rates shows no picker (billed by their
+    // default). See utils/payRate.js.
+    //
+    // The rate is FETCHED, not read off the roster: salary lives in the assignee's private
+    // subcollection now (audit R-10), so it is not part of the users snapshot. One point read per
+    // assignee change, and only for a manager — the only role that sees the picker, and the only
+    // one the read rule admits. An unreadable rate (a manager outside this worker's subtree) simply
+    // hides the picker, and the task is billed by the worker's default tariff exactly as before.
     const assigneeWorker = workers.find((w) => w.id === formData.assignedUserId) || null;
-    const assigneePayRates = assigneeWorker ? listPayRates(assigneeWorker.payRate) : [];
-    const showRatePicker = isManager && hasMultiplePayRates(assigneeWorker?.payRate);
+    const [assigneePayRateDoc, setAssigneePayRateDoc] = useState(null);
+    useEffect(() => {
+        const uid = formData.assignedUserId;
+        if (!isManager || !uid) {
+            setAssigneePayRateDoc(null);
+            return undefined;
+        }
+        let cancelled = false;
+        fetchPayRate(uid)
+            .then((rate) => { if (!cancelled) setAssigneePayRateDoc(rate); })
+            .catch(() => { if (!cancelled) setAssigneePayRateDoc(null); });
+        return () => { cancelled = true; };
+    }, [isManager, formData.assignedUserId]);
+    const assigneePayRate = effectivePayRate(assigneePayRateDoc, assigneeWorker);
+    const assigneePayRates = listPayRates(assigneePayRate);
+    const showRatePicker = isManager && hasMultiplePayRates(assigneePayRate);
 
     // Assigning to a different worker invalidates any previously chosen tariff (ids are per-worker),
     // so clear it — the manager re-picks, or the assignee's default applies.
@@ -1064,7 +1086,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             // If so, and they have a default manager, the Default Manager becomes the Auditor (for approval purposes)
             // BUT we keep the visible managerId as the user themselves (as requested).
             if (activeAuditorId === currentUser.uid && userData?.defaultManager) {
-                console.log("User selected themselves as auditor. Routing approval to default manager:", userData.defaultManager);
+                devLog("User selected themselves as auditor. Routing approval to default manager:", userData.defaultManager);
                 activeAuditorId = userData.defaultManager;
             }
 
@@ -1903,16 +1925,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             items={items}
                                             signature={`${formData.estimatedTime}|${suggestedTime}|${fieldsLocked}|${items.map((i) => i.key).join(',')}`}
                                             more={
-                                                <button
-                                                    type="button"
+                                                <IconButton
+                                                    icon={Plus}
+                                                    label="Pasirinkti kitą planuojamą laiką"
+                                                    title="Daugiau…"
                                                     onClick={() => setTimePickerOpen(true)}
                                                     disabled={fieldsLocked}
-                                                    aria-label="Pasirinkti kitą planuojamą laiką"
-                                                    title="Daugiau…"
-                                                    className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring disabled:opacity-50"
-                                                >
-                                                    <Plus className="h-5 w-5" aria-hidden="true" />
-                                                </button>
+                                                    className="rounded-full border border-line"
+                                                />
                                             }
                                         />
                                     );
@@ -1993,14 +2013,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 <span className="pointer-events-none absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                     <ZoomIn className="h-3 w-3" aria-hidden="true" />
                                                 </span>
-                                                <button
-                                                    type="button"
+                                                <IconButton
+                                                    label="Pašalinti nuotrauką"
+                                                    variant="danger"
                                                     onClick={() => removeExistingAttachment(index)}
-                                                    aria-label="Pašalinti nuotrauką"
-                                                    className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-surface-card rounded-full text-feedback-danger shadow transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
+                                                    className="absolute top-1 right-1 rounded-full bg-surface-card shadow"
                                                 >
                                                     <Trash2 className="w-4 h-4" aria-hidden="true" />
-                                                </button>
+                                                </IconButton>
                                             </div>
                                         ))}
                                     </div>

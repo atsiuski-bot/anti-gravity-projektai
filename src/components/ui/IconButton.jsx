@@ -1,5 +1,5 @@
 import React from 'react';
-import clsx from 'clsx';
+import { cn } from '../../utils/cn';
 
 /**
  * IconButton — the canonical icon-only control (DESIGN_SYSTEM §8).
@@ -9,6 +9,12 @@ import clsx from 'clsx';
  * `p-1.5` (~28px) and `p-0.5` (~20px) icon buttons scattered across the app.
  *
  * Pass either a lucide-react `icon` component or arbitrary `children`.
+ *
+ * Classes merge through `cn` (tailwind-merge), like every other canonical component, so a caller's
+ * `className` genuinely OVERRIDES a default instead of both landing in the class list and letting
+ * stylesheet order decide the winner. That is what lets a call site opt into e.g. `rounded-full`
+ * over the default `rounded-control` — and without it, call sites hand-rolled a raw <button> to
+ * get one, which is how the touch-target and focus-ring guarantees below get lost.
  *
  * @param {React.ElementType} [icon] - a lucide-react icon component.
  * @param {string} label - accessible name; also the tooltip when `title` is omitted.
@@ -37,7 +43,7 @@ const IconButton = React.forwardRef(function IconButton(
             disabled={disabled}
             aria-label={label}
             title={title ?? label}
-            className={clsx(
+            className={cn(
                 'inline-flex items-center justify-center min-h-touch min-w-touch rounded-control',
                 // `transition` (curated, GPU-safe set) so the press scale eases alongside color.
                 'transition duration-base active:scale-95',

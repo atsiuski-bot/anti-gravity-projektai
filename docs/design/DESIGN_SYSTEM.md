@@ -94,8 +94,12 @@ identity and its best glanceable signal from arm's length. We are **not** muting
   not enough (color-blindness, sunlight). A small, legible label naming the state must be
   visible while the state is active. This is how we keep the saturated palette *and* pass AA.
 - **B) One source of truth.** The shell background, the timer pill, and the running task
-  card all read the **same** `SESSION_COLORS` token map. They must never drift (today the
-  call state is `blue` in some places and `sky` in others — that is a bug to fix).
+  card all read the **same** `SESSION_COLORS` token map. They must never drift. The historical
+  example of that drift — the call state rendered `blue` in some places and `sky` in others — is
+  fixed and `bg-sky-*` no longer appears in `src/`. The drift class is not: the break totals in
+  DailyStatistics were still painted with `feedback.warning` (amber-500) instead of
+  `session.break.accent` (amber-700) until 2026-09-06. When a figure names a session state, it
+  reads its colour from the map — a `feedback.*` token is for feedback, not for a session.
 - **C) Saturated red is reserved for the quick-work state.** Do **not** reuse full-saturation
   red for anything else. In particular the **offline banner must not be red** (it currently
   is, and collides with quick-work) — it uses a neutral dark slate (`feedback.offline`) with
@@ -134,9 +138,11 @@ lighter PWA — all of which matter on a weak field connection.
 | `caption` | 12 / 16 | 500 | meta, pills, secondary labels — **the floor** |
 
 **Hard rules:**
-- **No `text-[8px]/[9px]/[10px]/[11px]` for content.** They are banned. The ~150 existing
-  uses are legacy debt to migrate up. Sub-12 px is permitted *only* for purely decorative
-  glyphs that carry no information — and even then, avoid it.
+- **No `text-[8px]/[9px]/[10px]/[11px]` for content.** They are banned, and as of 2026-09-06 the
+  migration is **complete — zero uses remain in `src/`** (the sole grep hit is a comment recording
+  what one control used to be). This is now a floor to hold, not a backlog to burn down. Sub-12 px
+  would be permitted *only* for purely decorative glyphs that carry no information — and even then,
+  avoid it.
 - Primary figures users come to read (hours, timers, spent/planned time) are `body` or
   larger, never `caption`.
 - The live timer readout — the most important glanceable number — is **at least `body-lg`**.

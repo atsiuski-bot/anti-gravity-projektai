@@ -1424,9 +1424,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-h2 font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <Coffee className="w-4 h-4 text-feedback-warning shrink-0" aria-hidden="true" />
+                        <Coffee className="w-4 h-4 text-session-break-accent shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Pertraukos</span>
-                        <span className="text-h2 font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                        <span className="text-h2 font-bold text-session-break-accent tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <span className="text-caption text-brand">Viso</span>
@@ -1578,7 +1578,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
                                         <div>
                                             <dt className="text-caption text-ink-muted">Pertraukos</dt>
-                                            <dd className="font-mono text-body font-semibold text-feedback-warning-text">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
+                                            <dd className="font-mono text-body font-semibold text-session-break-accent">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
                                         </div>
                                         <div>
                                             <dt className="text-caption text-ink-muted">Užduotims</dt>
@@ -1600,7 +1600,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 <dl className="grid grid-cols-3 gap-2 text-center">
                                     <div>
                                         <dt className="text-caption text-ink-muted">Pertraukos</dt>
-                                        <dd className="font-mono text-body font-semibold text-feedback-warning-text">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
+                                        <dd className="font-mono text-body font-semibold text-session-break-accent">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
                                     </div>
                                     <div>
                                         <dt className="text-caption text-ink-muted">Užduotims</dt>
@@ -1662,7 +1662,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-center text-ink-muted font-mono text-sm">
                                             {formatTime(summary.latestEnd)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-feedback-warning font-mono">
+                                        <td className="px-4 py-3 text-right text-session-break-accent font-mono">
                                             {formatMinutesToTimeString(summary.breakMinutes)}
                                         </td>
                                         <td className="px-4 py-3 text-right text-brand font-mono font-semibold">
@@ -1684,7 +1684,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td colSpan="3" className="px-4 py-3 text-right text-ink-strong">
                                         Viso komanda:
                                     </td>
-                                    <td className="px-4 py-3 text-right text-feedback-warning-text">
+                                    <td className="px-4 py-3 text-right text-session-break-accent">
                                         {formatMinutesToTimeString(totalBreakMinutes)}
                                     </td>
                                     <td className="px-4 py-3 text-right text-brand">
@@ -1747,7 +1747,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <div className="flex items-center gap-1 whitespace-nowrap">
                                         <span className={clsx(
                                             "font-mono text-body font-bold",
-                                            item.type === 'break' ? 'text-feedback-warning-text' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
+                                            item.type === 'break' ? 'text-session-break-accent' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
                                         )}>
                                             {formatMinutesToTimeString(item.duration)}
                                         </span>
@@ -1789,7 +1789,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     return (
                                     <tr key={item.rowKey || item.id || idx} className={clsx(
                                         'text-xs hover:bg-surface-sunken border-b border-line last:border-0',
-                                        item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted',
+                                        item.type === 'break' ? 'text-session-break-accent bg-session-break-surface' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted',
                                         item.isStretchSegment && 'bg-surface-sunken/40'
                                     )}>
                                         <td className={clsx('px-4 py-3 font-mono text-ink-muted w-24', item.isStretchSegment && 'pl-10')}>
@@ -1814,7 +1814,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                 <StretchToggle item={item} open={openStretches.has(item.id)} onToggle={toggleStretch} className="ml-5" />
                                             )}
                                         </td>
-                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-feedback-warning' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
+                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-session-break-accent' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
                                             <span className="inline-flex items-center justify-end gap-1">
                                                 {formatMinutesToTimeString(item.duration)}
                                                 {item.type === 'inactive' && canFillGaps && gapWithinWindow(item) && gapTaskOptions(idx).length > 0 && (
@@ -2418,7 +2418,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
         if (item.type === 'break') {
             return (
                 <li key={item.id || idx}>
-                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-feedback-warning-soft/40 p-3 text-feedback-warning-text">
+                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-session-break-surface p-3 text-session-break-accent">
                         <div className="min-w-0">
                             <div className="flex items-center gap-1.5 font-medium">
                                 <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
@@ -2518,7 +2518,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                     <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption">
                         <span className="font-mono text-ink-muted">{headerSpan}</span>
                         <span className="text-ink-muted">Veikla <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
-                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-feedback-warning-text">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-session-break-accent">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
                     </div>
                 </div>
                 <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-2" />

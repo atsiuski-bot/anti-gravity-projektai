@@ -5,7 +5,16 @@ pivotal finding independently re-verified via Firebase MCP. This is a **planning
 deferred R-04 thread — it is NOT an accepted decision. Formalize the chosen slice as ADR-0022 when a
 direction is picked (ADR-0021 Follow-up #3)._
 
-## Pivotal finding — the offline engine is DORMANT in production (verified)
+> **⚠ SUPERSEDED, 2026-09-06 — the pivotal finding below is no longer true.** The revisioned timer
+> engine was rolled out on 2026-07-29 and is now ON FOR EVERYONE (no allowlist, floor
+> `minClientContract: 4`); `timerEngineEnabled` is derived from the live rollout config
+> ([`AuthContext.jsx`](../../src/context/AuthContext.jsx), the `timerEngineStatus` tri-state), not
+> defaulted to `false`, and the `AuthContext.jsx:404` / `:33` / `WorkerView.jsx:75` citations below
+> point at code that has since moved. Read this file as a record of the July reasoning — the
+> reframing it argues for (split R-04 into a migration-gated core and a closeable cross-user slice)
+> still stands, but re-verify every line number and the rollout state before acting on it.
+
+## Pivotal finding — the offline engine is DORMANT in production (verified 2026-07-12, now stale)
 
 `system_config/timerEngine` **does not exist** in prod (`darbo-planavimas`) — confirmed by direct
 Firebase MCP `firestore_get_document` (not found). The client reads this flag at

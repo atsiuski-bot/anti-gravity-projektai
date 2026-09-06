@@ -47,6 +47,13 @@ export const isUndescribedQuickWork = (task) => (
  * index WorkerView already relies on — and filtered client-side, so there is no composite
  * index to provision.
  *
+ * This is the SECOND listener on that exact query — WorkerView holds the other one. It is not a
+ * duplicated read: the Firestore SDK shares one listen target between identical queries, so the two
+ * subscriptions cost one stream and differ only in the client-side filter each applies. Collapsing
+ * them would mean hoisting the worker's task subscription out of the page and into the app shell
+ * (this banner is rendered from Layout, above every route), which is a restructure of the timer hot
+ * path for no read-cost saving — deliberately not done.
+ *
  * @param {{ uid: string } | null} currentUser
  * @returns {Array<Object>} undescribed auto-stopped quick-work tasks, newest first
  */

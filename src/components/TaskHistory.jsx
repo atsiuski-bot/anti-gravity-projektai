@@ -34,6 +34,10 @@ import TaskDetailModal from './task/TaskDetailModal';
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
 const SELECT_CLASS =
     'bg-surface-card border border-line text-ink text-body rounded-input block w-full px-2.5 py-1.5 ' +
+    // min-h-touch keeps the 44px floor (DESIGN_SYSTEM §7): text-body (20px line-height) plus
+    // py-1.5 and a 1px border renders ~34px on its own, and this class is the whole hit area
+    // of the date-range trigger — the one control that opens both date pickers, on every viewport.
+    'min-h-touch ' +
     'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring';
 
 // Firestore caps an `in` filter at 30 values, so the AI export groups its session lookups into
@@ -918,7 +922,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             onClick={() => setSortBy('date')}
                             aria-pressed={sortBy === 'date'}
                             className={clsx(
-                                "px-3 py-1.5 text-body font-semibold transition-colors",
+                                "px-3 py-1.5 min-h-touch text-body font-semibold transition-colors",
                                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
                                 sortBy === 'date' ? "bg-brand text-white focus-visible:ring-white" : "text-ink hover:bg-surface-sunken focus-visible:ring-brand-ring"
                             )}
@@ -931,7 +935,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             onClick={() => setSortBy('status')}
                             aria-pressed={sortBy === 'status'}
                             className={clsx(
-                                "px-3 py-1.5 text-body font-semibold transition-colors",
+                                "px-3 py-1.5 min-h-touch text-body font-semibold transition-colors",
                                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
                                 sortBy === 'status' ? "bg-brand text-white focus-visible:ring-white" : "text-ink hover:bg-surface-sunken focus-visible:ring-brand-ring"
                             )}

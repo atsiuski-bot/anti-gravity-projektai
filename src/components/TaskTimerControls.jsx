@@ -33,6 +33,7 @@ import {
 import { hapticTap, hapticSuccess } from '../utils/haptics';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
+import { devLog } from '../utils/devLog';
 
 // stopBreak/stopCall no longer needed — startTask/resumeTask handle session cleanup
 
@@ -841,7 +842,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 }
             }
 
-            console.log(`Task ${task.id} finished and archived`);
+            devLog(`Task ${task.id} finished and archived`);
             setConfirmFinish(false);
 
             // C1 — celebrate the completion moment. Until now finishing produced only a silent

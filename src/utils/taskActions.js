@@ -628,35 +628,6 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
     }
 };
 /**
- * Archives a task by moving it from 'tasks' to 'archived_tasks' collection.
- * @param {Object} task - The full task data.
- * @param {string} userId - The ID of the user performing the archive.
- * @returns {Promise<void>}
- */
-export const archiveTask = async (task, userId) => {
-    if (!task || !task.id) return;
-
-    try {
-        const { id, ...taskData } = task;
-
-        // 1. Create document in archived_tasks
-        await setDoc(doc(db, 'archived_tasks', id), {
-            ...taskData,
-            archivedAt: new Date().toISOString(),
-            archivedBy: userId
-        });
-
-        // 2. Delete from tasks
-        await deleteDoc(doc(db, 'tasks', id));
-
-
-    } catch (err) {
-        console.error("Error archiving task:", err);
-        throw err;
-    }
-};
-
-/**
  * Saves a new task template.
  * @param {string} templateName - The name of the template.
  * @param {Object} selectedData - The task data to save in the template.

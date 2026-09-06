@@ -9,6 +9,7 @@ import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
 import { notify } from './notify';
 import { APP_INSTANCE_ID } from './appInstance';
+import { devLog } from './devLog';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
@@ -596,7 +597,7 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
                                     !taskIsUnresumable) {
                                     await resumeTask(tData, userId);
                                 } else {
-                                    console.log(`Skipping background resume for ${taskId} (completed or superseded)`);
+                                    devLog(`Skipping background resume for ${taskId} (completed or superseded)`);
                                     // Only when the task itself is the blocker: a supersede (or an
                                     // unprovable user-state read) means a live session owns the user
                                     // doc, and clearing it there would be the data loss we avoid.

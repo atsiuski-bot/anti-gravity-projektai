@@ -7,6 +7,7 @@ import { logError } from '../utils/errorLog';
 import { endSessionForUser } from '../utils/sessionAdmin';
 import { formatDisplayName } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
+import { effectivePayRate, fetchPayRates, savePayRate } from '../utils/payRateStore';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
@@ -577,8 +578,10 @@ function DeleteButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
 // for EVERY role: managers and admins also run their own timers and finish their own tasks, so
 // they earn the same way a Meistras does and need the same rate table. The "on" state (a rate is
 // set) is signalled by a check badge over the coins glyph, not by color alone (§5).
-function PayRateButton({ user, onEdit, fullWidth, iconOnly }) {
-    const has = hasPayRate(user.payRate);
+function PayRateButton({ user, payRate, onEdit, fullWidth, iconOnly }) {
+    // The rate arrives as a prop, not off `user`: it lives in the user's private subcollection now
+    // (audit R-10), so the roster snapshot no longer carries it. See utils/payRateStore.js.
+    const has = hasPayRate(payRate);
     if (iconOnly) {
         return (
             <IconButton
@@ -765,6 +768,11 @@ export default function UserManagement() {
     const [deleting, setDeleting] = useState(false);
     // Pay-rate editor target (admin-only). Holds the user whose tiered rate is being edited.
     const [payRateUser, setPayRateUser] = useState(null);
+    // Pay rates for the roster, keyed by uid. They are NOT part of the users snapshot any more —
+    // salary moved to users/{uid}/private/payRate so a colleague cannot read it (audit R-10), which
+    // costs one point read per listed user. Only an admin sees the control at all, so only an admin
+    // pays for the reads. Refreshed after a save so the "rate is set" badge stays truthful.
+    const [payRates, setPayRates] = useState({});
     // Which mobile cards are expanded into their editing form. At rest a card is collapsed to a
     // scannable summary (identity + role + overseers); editing controls live behind a per-card
     // toggle so a long roster no longer scrolls forever (progressive disclosure). Desktop is a
@@ -808,6 +816,24 @@ export default function UserManagement() {
         return () => unsubscribe();
         // eslint-disable-next-line react-hooks/exhaustive-deps -- subscribe once on mount; adding 'error' would tear down/re-create the listener on every error change
     }, []);
+
+    // Pay rates for the roster. They are no longer part of the users snapshot (audit R-10 moved
+    // salary into each user's private subcollection), so they are fetched separately — one point
+    // read per listed user, and ONLY for an admin, who is the only role that renders the control.
+    // Keyed on the id SET rather than the users array, so an unrelated user-doc edit (a colour, a
+    // role, a live-session projection) does not re-issue the whole batch.
+    const rosterIdKey = useMemo(() => users.map((u) => u.id).sort().join(','), [users]);
+    useEffect(() => {
+        if (!isAdmin || !rosterIdKey) {
+            setPayRates({});
+            return undefined;
+        }
+        let cancelled = false;
+        fetchPayRates(rosterIdKey.split(','))
+            .then((map) => { if (!cancelled) setPayRates(map); })
+            .catch((err) => logError(err, { source: 'UserManagement.fetchPayRates' }));
+        return () => { cancelled = true; };
+    }, [isAdmin, rosterIdKey]);
 
     // Assignment candidate pools. A WORKER may report to any active superior — manager, senior
     // manager, or admin (broad pool, restored after ADR 0006 narrowed it to managers-only and
@@ -994,8 +1020,12 @@ export default function UserManagement() {
     // Persist a worker's tiered pay rate (or clear it with null). Returns the write promise so the
     // PayRateModal can await it and surface its own error/saving state. Admin-only — enforced by
     // firestore.rules (ADR 0012); the editor button is also admin-gated in the UI.
-    const handleSavePayRate = (userId, payRate) =>
-        updateDoc(doc(db, 'users', userId), { payRate });
+    // Writes users/{uid}/private/payRate and clears any pre-migration inline copy in the same
+    // action, then mirrors the new value locally so the badge updates without a re-read.
+    const handleSavePayRate = async (user, payRate) => {
+        await savePayRate(user.id, payRate, user);
+        setPayRates((prev) => ({ ...prev, [user.id]: payRate || null }));
+    };
 
     // Persist a worker's weekly hours baseline (or clear it with null). The report falls back to
     // this when the worker has no calendar plan for the span, so Skirtumas stops being garbage.
@@ -1304,7 +1334,7 @@ export default function UserManagement() {
                                     <StartTimeCorrectionToggle user={user} onToggle={handleToggleStartTimeCorrection} />
                                 )}
                                 {isAdmin && (
-                                    <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
+                                    <PayRateButton user={user} payRate={effectivePayRate(payRates[user.id], user)} onEdit={setPayRateUser} fullWidth />
                                 )}
                                 <BlockButton
                                     user={user}
@@ -1413,7 +1443,7 @@ export default function UserManagement() {
                                                     iconOnly
                                                 />
                                                 {isAdmin && (
-                                                    <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
+                                                    <PayRateButton user={user} payRate={effectivePayRate(payRates[user.id], user)} onEdit={setPayRateUser} iconOnly />
                                                 )}
                                                 {isAdmin && (
                                                     <DeleteButton
@@ -1536,12 +1566,14 @@ export default function UserManagement() {
                 />
             )}
 
-            {/* Pay-rate editor (admin-only) — tiered NET hourly rates + derived gross (ADR 0012) */}
+            {/* Pay-rate editor (admin-only) — tiered NET hourly rates + derived gross (ADR 0012).
+                The editor still reads the rate off `user.payRate`, so hand it the resolved value:
+                the private document when it exists, the legacy inline field until the backfill. */}
             <PayRateModal
                 open={!!payRateUser}
-                user={payRateUser}
+                user={payRateUser ? { ...payRateUser, payRate: effectivePayRate(payRates[payRateUser.id], payRateUser) } : null}
                 onClose={() => setPayRateUser(null)}
-                onSave={(payRate) => handleSavePayRate(payRateUser.id, payRate)}
+                onSave={(payRate) => handleSavePayRate(payRateUser, payRate)}
             />
 
             {/* Permanent delete confirmation (irreversible — admin-only) */}

@@ -81,7 +81,11 @@ reduce the genuine security boundary to a single confirmation, never many paste 
   `settings.json`); don't ask the founder to re-authenticate unless a token has actually expired.
 - **Encapsulate any repeated procedure as a skill/command.** If a console sequence would be run
   more than once, turn it into a `/command` (see `.claude/commands/`) so the founder types one
-  word instead of pasting steps. Existing: `/ship`, `/deploy-netlify`, `/firebase-status`.
+  word instead of pasting steps. Existing (see `.claude/commands/`): `/ship`, `/firebase-status`,
+  `/debug`, `/full-debug-sweep`, `/lost-time-triage`. **There is no WORKZ deploy command** — the app
+  ships by pushing `main` (Cloudflare Pages builds it), and rules/functions deploys are human-only.
+  A `/deploy-netlify` does resolve in some sessions: it is a *user-level* skill that deploys the
+  unrelated **GODSGLOOM** app to `app.godsgloom.com`. Never run it for WORKZ.
 
 ### Human-only boundary (keep it manual — this is the safety net)
 

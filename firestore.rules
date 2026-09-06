@@ -449,6 +449,29 @@ service cloud.firestore {
         allow read: if isUserActive();
         allow write: if false;
       }
+
+      // ---- PRIVATE (confidential per-user data — pay rate) -----------------
+      // Audit R-10. The /users/{userId} read above is deliberately BROAD: every active user
+      // reads every colleague's document, because the roster, display names and overseer
+      // stamps it carries are what the whole app renders. Firestore cannot project fields out
+      // of an allowed document read, so any confidential field stored there is company-wide
+      // readable — and `payRate` (the NET salary tier table, ADR 0012) was exactly that.
+      // Salary therefore lives HERE instead, in its own document, whose read is scoped to the
+      // people entitled to it:
+      //   * the owner — a worker must still see their own earnings (ADR 0012),
+      //   * their overseer — an admin or whole-team manager, or the scoped/senior manager in
+      //     whose closure this user sits (the same subtree boundary every other private row
+      //     uses), and
+      //   * nobody else — a colleague on the same team now reads permission-denied.
+      // Branch ORDER is deliberate and load-bearing: the self branch costs no document read,
+      // canSeeWholeTeam() reads only the CALLER's own doc (already cached by this evaluation),
+      // and overseesUser() — the one branch that reads the TARGET's doc — is evaluated last.
+      // WRITE stays admin-only, mirroring the payRate pin on the user-doc update rule above.
+      match /private/{docId} {
+        allow read: if isAuthenticated() &&
+                    (request.auth.uid == userId || canSeeWholeTeam() || overseesUser(userId));
+        allow write: if isAdmin();
+      }
     }
 
     // ---- TASKS --------------------------------------------------------------

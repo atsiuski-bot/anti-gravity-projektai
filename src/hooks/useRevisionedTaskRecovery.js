@@ -20,6 +20,42 @@ const idFor = (prefix) => {
     return `${prefix}_${random}`;
 };
 
+/**
+ * The PRE-BOOT gate: is there a task run in the canonical record that this boot should even
+ * consider recovering? Returns the run, or null.
+ *
+ * Extracted from the effect so the sequence can be proved without React. It is a gate, not a
+ * decision: passing it only earns the run a SERVER read (see canRecoverConfirmedRun below).
+ * A run that started at or after this boot is the timer the worker is running right now.
+ */
+export function taskRunAwaitingRecovery(base, appLoadedAt) {
+    if (!base || base.status !== 'active' || base.run?.type !== 'task') return null;
+    const startedAt = new Date(base.run.startedAt).getTime();
+    if (!Number.isFinite(startedAt) || startedAt >= appLoadedAt) return null;
+    return base.run;
+}
+
+/**
+ * The SERVER-CONFIRMATION gate: given the task document as the SERVER has it right now, may THIS
+ * device recover `runId`? Every clause exists because it once failed in production:
+ *
+ *  - not running any more → the nightly forgotten-timer net (or a manager force-end, or another
+ *    device) already closed and credited this stretch; recovering on top wrote a SECOND ledger row
+ *    for the same minutes under an id that can never dedupe against the first.
+ *  - a DIFFERENT run id → the worker already started a new run; crediting would attribute the new
+ *    run's minutes to the dead one.
+ *  - owned by another DEVICE → not an orphan at all. A phone timer is always "pre-boot" and always
+ *    looks dead to a PC (the heartbeat is foreground-only), so without this clause signing in on a
+ *    second device reliably stopped the worker's live timer — the reported "when I sign in, it
+ *    stops". A run genuinely abandoned on a device that never returns is closed by the server net,
+ *    never by a bystander. (ADR 0026.)
+ */
+export function canRecoverConfirmedRun(fresh, runId) {
+    if (!fresh || fresh.timerStatus !== 'running' || !fresh.timerStartedAt) return false;
+    if (fresh.timerRunId && fresh.timerRunId !== runId) return false;
+    return isOwnedByThisDevice(fresh.timerOwnerInstance);
+}
+
 export function useRevisionedTaskRecovery(
     tasks,
     currentUser,
@@ -36,10 +72,8 @@ export function useRevisionedTaskRecovery(
             ...userData,
             id: currentUser.uid,
         });
-        if (base.status !== 'active' || base.run?.type !== 'task') return;
-
-        const startedAt = new Date(base.run.startedAt).getTime();
-        if (!Number.isFinite(startedAt) || startedAt >= appLoadTimeServer()) return;
+        const pendingRun = taskRunAwaitingRecovery(base, appLoadTimeServer());
+        if (!pendingRun) return;
         if (handledRuns.current.has(base.run.runId)) return;
 
         const task = tasks.find((candidate) => candidate.id === base.run.taskId);
@@ -89,17 +123,9 @@ export function useRevisionedTaskRecovery(
             return;
         }
 
-        // Someone else already finalized this stretch — the server net, a second device, or a
-        // manager force-end. Nothing of ours left to credit.
-        if (!fresh || fresh.timerStatus !== 'running' || !fresh.timerStartedAt) return;
-        // …and it must still be THE SAME run, not a newer one started meanwhile.
-        if (fresh.timerRunId && fresh.timerRunId !== base.run.runId) return;
-        // …and it must be a run THIS DEVICE anchored. A run belonging to the worker's other device
-        // is not an orphan just because it predates this boot — it is very likely the timer they are
-        // running right now, on a phone whose foreground-only heartbeat went quiet in a pocket.
-        // Recovering it is what stopped their timer every time they signed in here. Leave it alone;
-        // a genuinely dead run is closed by the server's forgotten-timer net, not by a bystander.
-        if (!isOwnedByThisDevice(fresh.timerOwnerInstance)) return;
+        // Already finalized elsewhere, superseded by a newer run, or anchored by another DEVICE —
+        // each reason and its production incident is documented on canRecoverConfirmedRun above.
+        if (!canRecoverConfirmedRun(fresh, base.run.runId)) return;
 
         const recoveredAt = serverNowISO();
         let plan;

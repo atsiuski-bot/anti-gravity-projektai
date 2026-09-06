@@ -12,6 +12,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { privateScopeConstraints } from './teamScope';
 import { addDaysToDateString } from './timeUtils';
 import { formatDisplayName, resolveUserId } from './formatters';
+import { effectivePayRate, fetchPayRates } from './payRateStore';
 
 const dayCount = (startStr, endStr) =>
     Math.round((Date.parse(`${endStr}T00:00:00Z`) - Date.parse(`${startStr}T00:00:00Z`)) / 86400000) + 1;
@@ -173,6 +174,12 @@ export async function gatherReportData({
         );
     }
 
+    // Pay rates — one point read per selected worker. Salary left the user document for the
+    // worker's private subcollection (audit R-10), so the roster passed in no longer carries it.
+    // Best-effort by design: a rate this viewer may not read yields null, and the worker's block
+    // simply omits earnings — the same output a worker with no rate already produced.
+    const payRates = await fetchPayRates(workerIds);
+
     const workers = workerIds.map((id) => {
         const u = users.find((x) => x.id === id);
         const bucket = buckets[id] || {
@@ -187,7 +194,7 @@ export async function gatherReportData({
             userId: id,
             name: formatDisplayName(u?.displayName) || u?.email || id,
             expectedWeeklyHours: u?.weeklyExpectedHours,
-            payRate: u?.payRate,
+            payRate: effectivePayRate(payRates[id], u),
             recognition: recognition[id] || null,
             ...bucket,
             // calendar_requests stays null (not []) when truly absent so workerStats can distinguish

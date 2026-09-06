@@ -312,9 +312,19 @@ function IntegrityReportCard({ report, prominent }) {
                     </p>
                     {scanErrors.length > 0 && (
                         <ul className="mt-1 space-y-0.5">
+                            {/* Lithuanian copy leads, the SDK's own English message follows only as an
+                                explicitly-labelled technical detail. A raw err.message must never stand
+                                in as the message to a user; on this admin-only diagnostic panel the
+                                detail is what makes a failed scan fixable, so it is kept — subordinate,
+                                named as technical, and never the sentence the reader starts on. */}
                             {scanErrors.map((e, i) => (
                                 <li key={`${e.scan}-${i}`} className="text-caption text-feedback-danger-text">
-                                    {e.scan}: {e.message}
+                                    Nepavyko patikrinti: <span className="font-medium">{e.scan}</span>.
+                                    {e.message && (
+                                        <span className="mt-0.5 block font-mono text-ink-muted">
+                                            Techninė žinutė: {e.message}
+                                        </span>
+                                    )}
                                 </li>
                             ))}
                         </ul>

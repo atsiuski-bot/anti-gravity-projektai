@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { auth, db } from '../firebase';
 import {
     GoogleAuthProvider,
@@ -13,6 +13,7 @@ import { logError } from '../utils/errorLog';
 import { removeFcmToken } from '../utils/messaging';
 import { setAgentsEnabled } from '../domain/agentControl';
 import { decideDisabledLogin } from '../utils/accountStatus';
+import { effectivePayRate, subscribePayRate } from '../utils/payRateStore';
 import {
     readSignInEnvironment,
     isPopupSignInBlocked,
@@ -28,6 +29,7 @@ import { isTimerEngineEnabledFor } from '../utils/timerEngineGate';
 // bought a Rollup "dynamically imported but also statically imported" warning plus a promise hop on
 // every boot and every `online` event.
 import { replayQueuedTimerCommands } from '../utils/timerCommandEngine';
+import { devLog } from '../utils/devLog';
 
 // How long the rollout-config listener may stay unresolved before the timer controls fall back to
 // the legacy path. Long enough that a normal (even slow) first snapshot wins; short enough that an
@@ -46,6 +48,9 @@ export function AuthProvider({ children }) {
     const [userData, setUserData] = useState(null); // Latest Firestore view, including local pending writes
     const [confirmedUserData, setConfirmedUserData] = useState(null); // Latest server-confirmed snapshot
     const [pendingSessionProjection, setPendingSessionProjection] = useState(null);
+    // The signed-in user's own pay rate, read from users/{uid}/private/payRate (see the effect
+    // below). null = no rate, or not loaded yet — both mean "show no earnings".
+    const [ownPayRate, setOwnPayRate] = useState(null);
     const [userDataMetadata, setUserDataMetadata] = useState({
         fromCache: true,
         hasPendingWrites: false,
@@ -92,7 +97,7 @@ export function AuthProvider({ children }) {
             // installed app usable at all — otherwise signing out locks that install out for good,
             // and only a normal browser tab can sign in. See utils/authEnvironment.js.
             if (isPopupSignInBlocked(readSignInEnvironment())) {
-                console.log('Auth: installed iOS app — using redirect sign-in (popup cannot return)');
+                devLog('Auth: installed iOS app — using redirect sign-in (popup cannot return)');
                 // Marked BEFORE navigating: the result is handled by a different document, and the
                 // marker is the only way that document can tell a failed handshake apart from an
                 // ordinary cold boot.
@@ -105,14 +110,14 @@ export function AuthProvider({ children }) {
 
             // Use popup for all browsers (including Opera)
             // Note: Opera works fine with popup.
-            console.log('Auth: Starting Google Login with popup...');
+            devLog('Auth: Starting Google Login with popup...');
             if (isOpera) {
-                console.log('Auth: Opera browser detected, using popup (works reliably)');
+                devLog('Auth: Opera browser detected, using popup (works reliably)');
             }
 
             const result = await signInWithPopup(auth, provider);
             const user = result.user;
-            console.log("Auth: Google Sign-In successful for:", user.email);
+            devLog("Auth: Google Sign-In successful for:", user.email);
 
             // Allow the onSnapshot listener to handle state updates
             // but we can check/create the document here to be safe
@@ -257,7 +262,7 @@ export function AuthProvider({ children }) {
     }
 
     useEffect(() => {
-        console.log("Auth: Initializing onAuthStateChanged...");
+        devLog("Auth: Initializing onAuthStateChanged...");
         let unsubscribeSnapshot = null;
         let expirationCheckInterval = null;
 
@@ -270,7 +275,7 @@ export function AuthProvider({ children }) {
                     isProcessingAuth.current = true;
                     try {
                         const user = result.user;
-                        console.log("Auth: Redirect Sign-In successful for:", user.email);
+                        devLog("Auth: Redirect Sign-In successful for:", user.email);
                         await processUserAfterLogin(user);
                     } finally {
                         // Reset after a short delay to allow state updates
@@ -362,7 +367,7 @@ export function AuthProvider({ children }) {
                             if (isProvisioning.current) {
                                 return;
                             }
-                            console.log("Auth: User account is disabled, logging out...");
+                            devLog("Auth: User account is disabled, logging out...");
                             // Clear state first
                             setCurrentUser(null);
                             setUserRole(null);
@@ -403,7 +408,7 @@ export function AuthProvider({ children }) {
                         // applicant and fanning an approval notification to every admin. So tear
                         // this session down instead; re-applying must be the user's own deliberate
                         // sign-in, not an echo of the listener that outlived their record.
-                        console.log("Auth: User document was removed, logging out...");
+                        devLog("Auth: User document was removed, logging out...");
                         setCurrentUser(null);
                         setUserRole(null);
                         setUserData(null);
@@ -441,7 +446,7 @@ export function AuthProvider({ children }) {
                     // On permission-denied, the user document may not exist yet (first login).
                     // Retry creating it so the snapshot can re-attach successfully.
                     if (error.code === 'permission-denied' && !isProcessingRedirect.current) {
-                        console.log("Auth: Permission denied on snapshot — retrying user doc creation...");
+                        devLog("Auth: Permission denied on snapshot — retrying user doc creation...");
                         isProcessingRedirect.current = true;
                         processUserAfterLogin(user)
                             .catch(e => console.error("Auth: Retry failed:", e))
@@ -486,6 +491,21 @@ export function AuthProvider({ children }) {
             }
         };
     }, []);
+
+    // The signed-in user's OWN pay rate. It used to ride along on the user document, but salary
+    // cannot live there — that document is company-readable and Firestore cannot hide one field
+    // inside an allowed read (audit R-10, see utils/payRateStore.js). It is now a separate
+    // document the owner is entitled to read, subscribed here so an admin's edit still lands live,
+    // and merged back onto `userData.payRate` below so every existing consumer (the finish-summary
+    // earnings breakdown, the showEarnings flag) keeps reading the exact same shape.
+    useEffect(() => {
+        if (!currentUser?.uid) {
+            setOwnPayRate(null);
+            return undefined;
+        }
+        const unsub = subscribePayRate(currentUser.uid, setOwnPayRate);
+        return () => unsub();
+    }, [currentUser?.uid]);
 
     // Keep the agent kill-switch (ADR 0015) live for the command kernel while signed in: mirror
     // system_config/agents into the in-memory cache. A permission-denied (the rule not yet deployed)
@@ -592,7 +612,19 @@ export function AuthProvider({ children }) {
         return () => clearTimeout(timer);
     }, [loading]);
 
-    const effectiveUserData = applyPendingSessionProjection(userData, pendingSessionProjection);
+    // Salary no longer lives on the user document (audit R-10 — see utils/payRateStore.js), so
+    // re-attach the separately-read rate here. Every existing consumer of `userData.payRate` then
+    // keeps working against the identical shape, and the storage move stays invisible to them.
+    // MEMOISED, and it returns the projected object UNCHANGED when there is nothing to attach:
+    // applyPendingSessionProjection deliberately preserves object identity when no projection is
+    // pending, and a fresh object every render would re-fire every effect keyed on `userData`.
+    const effectiveUserData = useMemo(() => {
+        const projected = applyPendingSessionProjection(userData, pendingSessionProjection);
+        if (!projected) return projected;
+        const rate = effectivePayRate(ownPayRate, projected);
+        if (rate === (projected.payRate ?? null)) return projected;
+        return { ...projected, payRate: rate || undefined };
+    }, [userData, pendingSessionProjection, ownPayRate]);
 
     const value = {
         currentUser,

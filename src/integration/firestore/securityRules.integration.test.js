@@ -1218,3 +1218,72 @@ describeEmulator('error_logs: the durable crash record admits its diagnostic con
         })));
     });
 });
+
+// ---- R-10: salary is not company-readable ------------------------------------------------
+// The /users/{userId} READ rule is deliberately broad — every active user reads every colleague's
+// document, because that document IS the roster the app renders. Firestore cannot project fields
+// out of an allowed read, so `payRate` (the NET salary tier table, ADR 0012) sitting on it was
+// readable by every worker in the company. It now lives in users/{uid}/private/payRate, and these
+// cases pin who may and may not reach it. The FAIL case is the exploit (a colleague reading a
+// salary); the SUCCESS cases are the flows that must keep working — the worker's own earnings
+// breakdown, and an overseer pricing their team's work.
+const UNSCOPED_MGR = 'rules-mgr-unscoped';
+const PAY_RATE_PATH = `users/${WORKER_ID}/private/payRate`;
+const SAMPLE_RATE = { tiers: [{ fromHours: 0, netRate: 9.5 }] };
+
+describeEmulator('firestore.rules — R-10: pay rate is readable only by the owner and their overseers', () => {
+    beforeEach(async () => {
+        if (!emulatorAvailable) return;
+        await seed({
+            // The owner, stamped with ONE overseer: IN_SCOPE_MGR oversees, OUT_SCOPE_MGR does not.
+            [`users/${WORKER_ID}`]: {
+                id: WORKER_ID,
+                role: 'worker',
+                isDisabled: false,
+                overseerIds: [IN_SCOPE_MGR],
+            },
+            [`users/${IN_SCOPE_MGR}`]: { id: IN_SCOPE_MGR, role: 'manager', scopedManager: true, isDisabled: false },
+            [`users/${OUT_SCOPE_MGR}`]: { id: OUT_SCOPE_MGR, role: 'manager', scopedManager: true, isDisabled: false },
+            // An UNSCOPED manager keeps whole-company reach (canSeeWholeTeam) by design.
+            [`users/${UNSCOPED_MGR}`]: { id: UNSCOPED_MGR, role: 'manager', isDisabled: false },
+            [`users/${WHOLE_TEAM_ADMIN}`]: { id: WHOLE_TEAM_ADMIN, role: 'admin', isDisabled: false },
+            [PAY_RATE_PATH]: SAMPLE_RATE,
+        });
+    });
+
+    it('the exploit: an ordinary colleague cannot read another worker\'s pay rate', async () => {
+        await assertFails(getDoc(doc(authedDb(OTHER_ID), PAY_RATE_PATH)));
+    });
+
+    it('an out-of-scope scoped manager cannot read it either', async () => {
+        await assertFails(getDoc(doc(authedDb(OUT_SCOPE_MGR), PAY_RATE_PATH)));
+    });
+
+    it('the owner reads their own rate (the earnings breakdown must keep working)', async () => {
+        await assertSucceeds(getDoc(doc(authedDb(WORKER_ID), PAY_RATE_PATH)));
+    });
+
+    it('an IN-SCOPE scoped manager reads it (pricing their own team\'s work)', async () => {
+        await assertSucceeds(getDoc(doc(authedDb(IN_SCOPE_MGR), PAY_RATE_PATH)));
+    });
+
+    it('an unscoped whole-team manager reads it', async () => {
+        await assertSucceeds(getDoc(doc(authedDb(UNSCOPED_MGR), PAY_RATE_PATH)));
+    });
+
+    it('an admin reads it', async () => {
+        await assertSucceeds(getDoc(doc(authedDb(WHOLE_TEAM_ADMIN), PAY_RATE_PATH)));
+    });
+
+    it('a worker cannot mint themselves a raise', async () => {
+        await assertFails(setDoc(doc(authedDb(WORKER_ID), PAY_RATE_PATH), { tiers: [{ fromHours: 0, netRate: 99 }] }));
+    });
+
+    it('even an overseeing manager cannot write a rate — setting pay stays admin-only (ADR 0012)', async () => {
+        await assertFails(setDoc(doc(authedDb(IN_SCOPE_MGR), PAY_RATE_PATH), { tiers: [{ fromHours: 0, netRate: 20 }] }));
+    });
+
+    it('an admin may write it (the legitimate editor flow)', async () => {
+        await assertSucceeds(setDoc(doc(authedDb(WHOLE_TEAM_ADMIN), PAY_RATE_PATH), { tiers: [{ fromHours: 0, netRate: 12 }] }));
+    });
+});

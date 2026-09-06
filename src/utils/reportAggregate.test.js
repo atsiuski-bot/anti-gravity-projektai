@@ -384,3 +384,48 @@ describe('renderers', () => {
         expect(dayCells[2]).not.toContain('+');
     });
 });
+
+// ONE export must not carry TWO totals. The headline hours come from computeWorkerStats; the daily
+// evidence log and the payroll CSV come from aggregateDaily. Both are built from the SAME documents
+// in the same call, so any rule about what counts as worked time has to hold in both — and one did
+// not: a finished plain task's own session-less `manualMinutes` was counted by the CSV and the
+// on-screen daily view but not by the summary, so the same period reported fewer hours depending on
+// which surface the reader opened. These cases pin the two aggregations to each other.
+describe('buildReport — the summary total agrees with the daily log and the timesheet', () => {
+    const WIN = { startStr: '2026-06-01', endStr: '2026-06-30' };
+    const PREV = { startStr: '2026-05-02', endStr: '2026-05-31' };
+
+    const withManualTask = baseWorker({
+        workSessions: [session('2026-06-10', 5)],
+        // A legacy task whose time was typed in: no work_sessions row stands behind these 120 min.
+        tasks: [{ status: 'completed', completedAt: '2026-06-12T14:00:00Z', manualMinutes: 120 }],
+    });
+
+    const report = buildReport({
+        generatedAt: '2026-06-30 12:00:00',
+        window: WIN,
+        prevWindow: PREV,
+        scopeLabel: '1 vykdytojas',
+        includeEarnings: false,
+        includeDaily: true,
+        workers: [withManualTask],
+    });
+    const worker = report.workers[0];
+
+    it('books the typed-in minutes into the summary, not only into the daily log', () => {
+        expect(report.team.totalWorkMinutes).toBe(420); // 300 session + 120 manual
+        expect(worker.metrics.totalHours.raw).toBeCloseTo(7, 5);
+        expect(worker.metrics.activeDays.raw).toBe(2); // the manual-only day is a worked day
+    });
+
+    it('the daily log sums to exactly the headline total', () => {
+        const dailySum = worker.daily.reduce((a, d) => a + d.workMinutes, 0);
+        expect(dailySum).toBe(report.team.totalWorkMinutes);
+    });
+
+    it('the payroll timesheet\'s Viso row matches the same total', () => {
+        const csv = renderTimesheetCSV([withManualTask], WIN);
+        const totalRow = csv.split('\n').find((line) => line.includes(',Viso,'));
+        expect(totalRow).toContain('07:00'); // 420 min
+    });
+});

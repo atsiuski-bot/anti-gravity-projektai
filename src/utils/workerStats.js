@@ -153,6 +153,41 @@ export function computeWorkerStats(raw, window, opts = {}) {
         d.breakCount += 1;
     });
 
+    // A plain task's own `manualMinutes` is SEPARATE, additive worked time — a task's total is
+    // manualMinutes + timerMinutes (timeUtils.calculateCurrentTotalMinutes) — and it has no
+    // work_sessions row behind it (typically a legacy task whose actualTime was typed in). Summing
+    // sessions alone therefore reported FEWER hours here than the two sibling aggregations built
+    // from the very same documents: `aggregateDaily` (the payroll CSV) and DailyStatistics' own
+    // on-screen total, both of which add it. One export then carried two different totals for one
+    // period, and a day whose ONLY work was such a task vanished from `days` entirely — dropping it
+    // from activeDays, avgPerDay, normCoverage, productivePct and weekConsistency as well.
+    //
+    // The guards mirror aggregateDaily EXACTLY (that is the point — these two must agree), and each
+    // prevents a double count:
+    //   • quick-work / call tasks already log a dedicated work_session of the same length;
+    //   • `timeChanged` means the time was re-derived from sessions into timerMinutes, so the loop
+    //     above already carries it;
+    //   • no finish instant ⇒ no day to bucket into.
+    // `deletedAt` is deliberately an accepted finish instant: deleting a task with "keep work hours"
+    // discards the TASK, not the hours worked — the same reason the payroll export counts it, and
+    // separate from the throughput filter below, which rightly drops deleted tasks from task COUNTS.
+    (raw.tasks || []).forEach((t) => {
+        if (!t || !t.manualMinutes) return;
+        if (t.isSystemTask || t.isQuickWork || t.timeChanged) return;
+        const finishedAt = t.completedAt || t.deletedAt || t.confirmedAt;
+        if (!finishedAt || Number.isNaN(new Date(finishedAt).getTime())) return;
+        // The WORK day it finished in — the same key the task's own sessions carry, so typed-in
+        // manual minutes and timer minutes land in ONE day bucket instead of two.
+        const date = getWorkDayString(finishedAt);
+        if (!inWindow(date, startStr, endStr)) return;
+        const mins = sanitizeReportMinutes(t.manualMinutes);
+        dayOf(date).workMin += mins;
+        // Counted as TASK time in the where-did-the-time-go split: the guards above have already
+        // excluded quick-work and calls, so this can only be task work. Without it the split's
+        // denominator would describe a different total than the headline hours it sits beside.
+        catMinutes.task += mins;
+    });
+
     const dayKeys = Object.keys(days);
     const workedDayKeys = dayKeys.filter((k) => days[k].workMin > 0);
     const activeDays = workedDayKeys.length;
