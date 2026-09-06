@@ -46,6 +46,10 @@
  */
 
 const admin = require('firebase-admin');
+// firebase-admin 14 dropped the `admin.firestore()` / `admin.credential` namespaces from the
+// default export; the modular entry point is the supported shape, and it is the same one
+// functions/index.js already uses.
+const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const fs = require('fs');
 
 const EXPECTED_PROJECT = 'darbo-planavimas';
@@ -88,8 +92,10 @@ const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? nu
 
 async function run() {
     const project = validateCredentialsOrExit();
-    admin.initializeApp({ credential: admin.credential.applicationDefault() });
-    db = admin.firestore();
+    // Bare initializeApp picks up Application Default Credentials, i.e. the key that
+    // GOOGLE_APPLICATION_CREDENTIALS points at — already validated above.
+    admin.initializeApp();
+    db = getFirestore();
 
     console.log(`Project: ${project}`);
     console.log(APPLY ? 'MODE: APPLY (writes will be committed)' : 'MODE: DRY-RUN (no writes)');
@@ -145,7 +151,7 @@ async function run() {
             await u.privateRef.set(u.inline);
             copied += 1;
         }
-        await u.ref.update({ [PAY_RATE_DOC_ID]: admin.firestore.FieldValue.delete() });
+        await u.ref.update({ [PAY_RATE_DOC_ID]: FieldValue.delete() });
         cleared += 1;
         console.log(`  ✓ ${u.name} (${u.id})`);
     }
