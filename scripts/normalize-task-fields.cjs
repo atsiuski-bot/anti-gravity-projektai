@@ -31,6 +31,10 @@
  */
 
 const admin = require('firebase-admin');
+// firebase-admin 14 dropped the `admin.firestore()` / `admin.credential` / `admin.app()`
+// namespaces from the default export; the modular entry point is the supported shape, and it
+// is the same one functions/index.js already uses.
+const { getFirestore } = require('firebase-admin/firestore');
 const fs = require('fs');
 
 const EXPECTED_PROJECT = 'darbo-planavimas';
@@ -39,7 +43,7 @@ const BATCH_LIMIT = 400;
 const COLLECTIONS = ['tasks', 'archived_tasks'];
 
 admin.initializeApp();
-const db = admin.firestore();
+const db = getFirestore();
 
 // --- Canonical priority — MIRROR of src/utils/priority.js normalizePriority. ---
 const PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
@@ -77,7 +81,7 @@ function projectFromKeyFile() {
 function resolvedProject() {
     return (
         projectFromKeyFile() ||
-        admin.app().options.projectId ||
+        admin.getApp().options.projectId ||
         process.env.GOOGLE_CLOUD_PROJECT ||
         process.env.GCLOUD_PROJECT ||
         process.env.FIREBASE_PROJECT ||

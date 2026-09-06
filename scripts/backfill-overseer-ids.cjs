@@ -30,6 +30,10 @@
  */
 
 const admin = require('firebase-admin');
+// firebase-admin 14 dropped the `admin.firestore()` / `admin.credential` / `admin.app()`
+// namespaces from the default export; the modular entry point is the supported shape, and it
+// is the same one functions/index.js already uses.
+const { getFirestore } = require('firebase-admin/firestore');
 const fs = require('fs');
 
 const EXPECTED_PROJECT = 'darbo-planavimas';
@@ -46,7 +50,7 @@ const OWNED_COLLECTIONS = [
 ];
 
 admin.initializeApp();
-const db = admin.firestore();
+const db = getFirestore();
 
 // Read project_id straight from the service-account key JSON pointed to by
 // GOOGLE_APPLICATION_CREDENTIALS. This is the authoritative source: applicationDefault()
@@ -65,7 +69,7 @@ function projectFromKeyFile() {
 function resolvedProject() {
     return (
         projectFromKeyFile() ||
-        admin.app().options.projectId ||
+        admin.getApp().options.projectId ||
         process.env.GOOGLE_CLOUD_PROJECT ||
         process.env.GCLOUD_PROJECT ||
         process.env.FIREBASE_PROJECT ||

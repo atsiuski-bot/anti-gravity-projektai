@@ -34,6 +34,10 @@
  */
 
 const admin = require('firebase-admin');
+// firebase-admin 14 dropped the `admin.firestore()` / `admin.credential` / `admin.app()`
+// namespaces from the default export; the modular entry point is the supported shape, and it
+// is the same one functions/index.js already uses.
+const { getFirestore } = require('firebase-admin/firestore');
 const fs = require('fs');
 
 const EXPECTED_PROJECT = 'darbo-planavimas';
@@ -86,7 +90,7 @@ function resolveCredentialsOrExit() {
 async function run() {
     const { project, options } = resolveCredentialsOrExit();
     admin.initializeApp(options);
-    db = admin.firestore();
+    db = getFirestore();
     console.log(`\nCredentials project : ${project}`);
     console.log(`Mode                : ${APPLY ? 'APPLY (will DELETE)' : 'DRY-RUN (no writes)'}`);
     console.log(`Target              : ${COLLECTION} userId == ${POVILAS_UID}`);

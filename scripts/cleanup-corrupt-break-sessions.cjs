@@ -27,13 +27,17 @@
  */
 
 const admin = require('firebase-admin');
+// firebase-admin 14 dropped the `admin.firestore()` / `admin.credential` / `admin.app()`
+// namespaces from the default export; the modular entry point is the supported shape, and it
+// is the same one functions/index.js already uses.
+const { getFirestore } = require('firebase-admin/firestore');
 
 const PROJECT = 'darbo-planavimas';
 const CEILING_MINUTES = 16 * 60; // 960 — MAX_SESSION_MINUTES; a break can never exceed this
 const dryRun = process.argv.includes('--dry-run');
 
 admin.initializeApp({ projectId: PROJECT });
-const db = admin.firestore();
+const db = getFirestore();
 
 (async () => {
     const snap = await db
