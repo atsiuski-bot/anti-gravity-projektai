@@ -18,8 +18,12 @@
  *        gcloud auth application-default login            # easiest if gcloud is installed
  *        # or:  export GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccountKey.json
  *        #      (download from Firebase console > Project settings > Service accounts)
- *   2. node ../scripts/cleanup-corrupt-break-sessions.cjs --dry-run   # preview, deletes nothing
- *   3. node ../scripts/cleanup-corrupt-break-sessions.cjs             # actually delete
+ *   2. node ../scripts/cleanup-corrupt-break-sessions.cjs             # dry-run (deletes nothing)
+ *   3. node ../scripts/cleanup-corrupt-break-sessions.cjs --apply     # actually delete
+ *
+ * SAFETY: DRY-RUN by default — the same contract as every other script in scripts/. This one
+ * used to delete unless you passed --dry-run, i.e. the reflex invocation (no flags) was the
+ * destructive one. `--dry-run` is still accepted and now simply means the default.
  *
  * ALREADY RUN once (2026-06-23, see ADR 0011) — kept as the audit trail of that incident.
  * Lives in scripts/ deliberately: anything under functions/ is uploaded verbatim by
@@ -34,12 +38,15 @@ const { getFirestore } = require('firebase-admin/firestore');
 
 const PROJECT = 'darbo-planavimas';
 const CEILING_MINUTES = 16 * 60; // 960 — MAX_SESSION_MINUTES; a break can never exceed this
-const dryRun = process.argv.includes('--dry-run');
+// Deleting requires an explicit --apply. `--dry-run` stays accepted so an operator following
+// the old instructions still lands in the safe mode rather than on an unrecognised flag.
+const APPLY = process.argv.includes('--apply');
 
 admin.initializeApp({ projectId: PROJECT });
 const db = getFirestore();
 
 (async () => {
+    console.log(`Mode: ${APPLY ? 'APPLY (will DELETE)' : 'DRY-RUN (no deletions)'}`);
     const snap = await db
         .collection('break_sessions')
         .where('durationMinutes', '>', CEILING_MINUTES)
@@ -60,8 +67,8 @@ const db = getFirestore();
     );
     if (corrupt.length > 6) console.log(`  ... and ${corrupt.length - 6} more`);
 
-    if (dryRun) {
-        console.log('\n--dry-run: no documents deleted. Re-run without --dry-run to apply.');
+    if (!APPLY) {
+        console.log(`\nDRY-RUN complete — would DELETE ${corrupt.length} documents. Re-run with --apply to commit.`);
         process.exit(0);
     }
 
