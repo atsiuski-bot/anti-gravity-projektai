@@ -1,0 +1,33 @@
+
+> workz@0.0.0 test:firestore
+> node scripts/check-emulator-port.mjs && firebase emulators:exec --project demo-workz-timer --only firestore "node functions/adminSdk.emulator.test.cjs && vitest run src/integration/firestore --maxWorkers=1 --no-file-parallelism"
+
+[36m[1mi  emulators:[22m[39m Starting emulators: firestore
+[36m[1mi  emulators:[22m[39m Detected demo project ID "demo-workz-timer", emulated services will use a demo configuration and attempts to access non-emulated services for this project will fail.
+[36m[1mi  firestore:[22m[39m Firestore Emulator logging to [1mfirestore-debug.log[22m
+[32m[1m+  firestore:[22m[39m Firestore Emulator was started in standard edition.
+[32m[1m+  firestore:[22m[39m Firestore Emulator UI websocket is running on 9150.
+[36m[1mi [22m[39m Running script: [1mnode functions/adminSdk.emulator.test.cjs && vitest run src/integration/firestore --maxWorkers=1 --no-file-parallelism[22m
+  ok  duplicate create() reports ALREADY_EXISTS in the shape the guards match
+  ok  update() on a missing doc reports NOT_FOUND in the shape the guard matches
+  ok  runTransaction round-trips a read-modify-write
+  ok  bulkWriter applies queued updates and settles on close()
+  ok  batch commits set and update atomically
+  ok  the guard predicates in index.js still match what this suite vets
+adminSdk.emulator.test: OK — 6 checks against the SDK in functions/node_modules
+
+ RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ/.claude/worktrees/gallant-moser-71646e
+
+
+ Test Files  5 passed (5)
+      Tests  118 passed (118)
+   Start at  23:11:03
+   Duration  35.63s (transform 279ms, setup 0ms, import 2.74s, tests 30.48s, environment 1ms)
+
+[32m[1m+ [22m[39m Script exited successfully (code 0)
+[36m[1mi  emulators:[22m[39m Shutting down emulators.
+[36m[1mi  firestore:[22m[39m Stopping Firestore Emulator
+[33m[1m! [22m[39m Firestore Emulator has exited upon receiving signal: SIGINT
+[36m[1mi  hub:[22m[39m Stopping emulator hub
+[36m[1mi  logging:[22m[39m Stopping Logging Emulator
+TEST_FIRESTORE_EXIT=0

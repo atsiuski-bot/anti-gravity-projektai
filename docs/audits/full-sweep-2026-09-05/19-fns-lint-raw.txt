@@ -1,0 +1,5 @@
+
+> lint
+> eslint .
+
+FNS_LINT_EXIT=0

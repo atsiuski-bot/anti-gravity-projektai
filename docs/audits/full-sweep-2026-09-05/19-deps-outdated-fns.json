@@ -1,0 +1,9 @@
+{
+  "eslint": {
+    "current": "8.57.1",
+    "wanted": "8.57.1",
+    "latest": "10.10.0",
+    "dependent": "functions",
+    "location": "C:\\Users\\karol\\Desktop\\WORKZ\\.claude\\worktrees\\gallant-moser-71646e\\functions\\node_modules\\eslint"
+  }
+}

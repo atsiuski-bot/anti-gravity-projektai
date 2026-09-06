@@ -1,0 +1,14 @@
+
+> workz@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ/.claude/worktrees/gallant-moser-71646e
+
+
+ Test Files  95 passed | 5 skipped (100)
+      Tests  1433 passed | 118 skipped (1551)
+   Start at  23:04:06
+   Duration  54.23s (transform 21.24s, setup 0ms, import 152.80s, tests 16.44s, environment 47.01s)
+
+TEST_EXIT=0

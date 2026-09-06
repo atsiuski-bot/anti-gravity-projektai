@@ -1,0 +1,1146 @@
+{
+  "status": "success",
+  "result": [
+    {
+      "platform": "gcfv2",
+      "id": "archiveFinishedTasks",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "scheduleTrigger": {},
+      "entryPoint": "archiveFinishedTasks",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "archiveFinishedTasks/function-source.zip",
+          "generation": "1787684065825897"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/archiveFinishedTasks",
+        "FUNCTION_TARGET": "archiveFinishedTasks",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/archiveFinishedTasks",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase",
+        "deployment-scheduled": "true"
+      },
+      "runServiceId": "archivefinishedtasks",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "backfillTeamStamps",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "callableTrigger": {},
+      "entryPoint": "backfillTeamStamps",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "backfillTeamStamps/function-source.zip",
+          "generation": "1787684065801379"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/backfillTeamStamps",
+        "FUNCTION_TARGET": "backfillTeamStamps",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/backfillTeamStamps",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-callable": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "backfillteamstamps",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "cleanupAttachmentsOnArchivedDelete",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.deleted",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "archived_tasks/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "cleanupAttachmentsOnArchivedDelete",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "cleanupAttachmentsOnArchivedDelete/function-source.zip",
+          "generation": "1787684065779120"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/cleanupAttachmentsOnArchivedDelete",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "cleanupAttachmentsOnArchivedDelete",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/cleanupAttachmentsOnArchivedDelete",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "cleanupattachmentsonarchiveddelete",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "cleanupAttachmentsOnTaskDelete",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.deleted",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "tasks/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "cleanupAttachmentsOnTaskDelete",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "cleanupAttachmentsOnTaskDelete/function-source.zip",
+          "generation": "1787684065888820"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/cleanupAttachmentsOnTaskDelete",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "cleanupAttachmentsOnTaskDelete",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/cleanupAttachmentsOnTaskDelete",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "cleanupattachmentsontaskdelete",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "cleanupAttachmentsOnTaskUpdate",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.updated",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "tasks/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "cleanupAttachmentsOnTaskUpdate",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "cleanupAttachmentsOnTaskUpdate/function-source.zip",
+          "generation": "1787684065796039"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/cleanupAttachmentsOnTaskUpdate",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "cleanupAttachmentsOnTaskUpdate",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/cleanupAttachmentsOnTaskUpdate",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "cleanupattachmentsontaskupdate",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "dailyIntegrityScan",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "scheduleTrigger": {},
+      "entryPoint": "dailyIntegrityScan",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "dailyIntegrityScan/function-source.zip",
+          "generation": "1787684065805178"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/dailyIntegrityScan",
+        "FUNCTION_TARGET": "dailyIntegrityScan",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/dailyIntegrityScan",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-scheduled": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "dailyintegrityscan",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "escalateTaskPriorities",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "scheduleTrigger": {},
+      "entryPoint": "escalateTaskPriorities",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "escalateTaskPriorities/function-source.zip",
+          "generation": "1787684065670409"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/escalateTaskPriorities",
+        "FUNCTION_TARGET": "escalateTaskPriorities",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/escalateTaskPriorities",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "deployment-scheduled": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "escalatetaskpriorities",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "generateRecurringTasks",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "scheduleTrigger": {},
+      "entryPoint": "generateRecurringTasks",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "generateRecurringTasks/function-source.zip",
+          "generation": "1787684065583190"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/generateRecurringTasks",
+        "FUNCTION_TARGET": "generateRecurringTasks",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/generateRecurringTasks",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "deployment-scheduled": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "generaterecurringtasks",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "notifyAdminsOnPendingSignup",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "users/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "notifyAdminsOnPendingSignup",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "notifyAdminsOnPendingSignup/function-source.zip",
+          "generation": "1787684065826115"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/notifyAdminsOnPendingSignup",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "notifyAdminsOnPendingSignup",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/notifyAdminsOnPendingSignup",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "notifyadminsonpendingsignup",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "notifyOnCalendarRequest",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "calendar_requests/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "notifyOnCalendarRequest",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "notifyOnCalendarRequest/function-source.zip",
+          "generation": "1787684065754159"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/notifyOnCalendarRequest",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "notifyOnCalendarRequest",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/notifyOnCalendarRequest",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "notifyoncalendarrequest",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "notifyOnRequestNotification",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "request_notifications/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "notifyOnRequestNotification",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "notifyOnRequestNotification/function-source.zip",
+          "generation": "1787684017849009"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/notifyOnRequestNotification",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "notifyOnRequestNotification",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/notifyOnRequestNotification",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "notifyonrequestnotification",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "notifyOverEstimateTimers",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "scheduleTrigger": {},
+      "entryPoint": "notifyOverEstimateTimers",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "notifyOverEstimateTimers/function-source.zip",
+          "generation": "1787684065636693"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/notifyOverEstimateTimers",
+        "FUNCTION_TARGET": "notifyOverEstimateTimers",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/notifyOverEstimateTimers",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "deployment-scheduled": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "notifyoverestimatetimers",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "notifyOverdueTasks",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "scheduleTrigger": {},
+      "entryPoint": "notifyOverdueTasks",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "notifyOverdueTasks/function-source.zip",
+          "generation": "1787684065648350"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/notifyOverdueTasks",
+        "FUNCTION_TARGET": "notifyOverdueTasks",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/notifyOverdueTasks",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "deployment-scheduled": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "notifyoverduetasks",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "onCalendarPlanBadge",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "calendar_requests/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "onCalendarPlanBadge",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "onCalendarPlanBadge/function-source.zip",
+          "generation": "1787684065900015"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/onCalendarPlanBadge",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "onCalendarPlanBadge",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/onCalendarPlanBadge",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "oncalendarplanbadge",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "onTaskFinishedBadge",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.updated",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "tasks/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "onTaskFinishedBadge",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "onTaskFinishedBadge/function-source.zip",
+          "generation": "1787684065752015"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/onTaskFinishedBadge",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "onTaskFinishedBadge",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/onTaskFinishedBadge",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "ontaskfinishedbadge",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "onWorkSessionBadge",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": false,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "work_sessions/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "onWorkSessionBadge",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "onWorkSessionBadge/function-source.zip",
+          "generation": "1787684066085848"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/onWorkSessionBadge",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "onWorkSessionBadge",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/onWorkSessionBadge",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "onworksessionbadge",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "parseTaskDraft",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "callableTrigger": {},
+      "entryPoint": "parseTaskDraft",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "parseTaskDraft/function-source.zip",
+          "generation": "1787684017747399"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/parseTaskDraft",
+        "FUNCTION_TARGET": "parseTaskDraft",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "secretEnvironmentVariables": [
+        {
+          "key": "OPENROUTER_API_KEY",
+          "projectId": "darbo-planavimas",
+          "secret": "OPENROUTER_API_KEY",
+          "version": "1"
+        }
+      ],
+      "timeoutSeconds": 30,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/parseTaskDraft",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-callable": "true",
+        "firebase-functions-hash": "a63fd04a2b70d39fa5c6d2a23b8da55edac23784",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "parsetaskdraft",
+      "codebase": "default",
+      "hash": "a63fd04a2b70d39fa5c6d2a23b8da55edac23784",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "reconcileCounterOnGapClaim",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": true,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "work_sessions/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "reconcileCounterOnGapClaim",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "reconcileCounterOnGapClaim/function-source.zip",
+          "generation": "1787684065846513"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/reconcileCounterOnGapClaim",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "reconcileCounterOnGapClaim",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/reconcileCounterOnGapClaim",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "reconcilecounterongapclaim",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "restampTeamOnUserChange",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.updated",
+        "retry": true,
+        "eventFilters": {
+          "namespace": "(default)",
+          "database": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "users/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "restampTeamOnUserChange",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "restampTeamOnUserChange/function-source.zip",
+          "generation": "1787684065989842"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/restampTeamOnUserChange",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "restampTeamOnUserChange",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/restampTeamOnUserChange",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "restampteamonuserchange",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "runRecurringTasksNow",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "callableTrigger": {},
+      "entryPoint": "runRecurringTasksNow",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "runRecurringTasksNow/function-source.zip",
+          "generation": "1787684065894242"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/runRecurringTasksNow",
+        "FUNCTION_TARGET": "runRecurringTasksNow",
+        "LOG_EXECUTION_ID": "true",
+        "FUNCTION_SIGNATURE_TYPE": "http"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/runRecurringTasksNow",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "deployment-callable": "true",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "runrecurringtasksnow",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "stampTeamOnArchivedTaskWrite",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.written",
+        "retry": true,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "archived_tasks/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "stampTeamOnArchivedTaskWrite",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "stampTeamOnArchivedTaskWrite/function-source.zip",
+          "generation": "1787684065834056"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/stampTeamOnArchivedTaskWrite",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "stampTeamOnArchivedTaskWrite",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/stampTeamOnArchivedTaskWrite",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "stampteamonarchivedtaskwrite",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "stampTeamOnBreakSessionCreate",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": true,
+        "eventFilters": {
+          "namespace": "(default)",
+          "database": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "break_sessions/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "stampTeamOnBreakSessionCreate",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "stampTeamOnBreakSessionCreate/function-source.zip",
+          "generation": "1787684065898349"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/stampTeamOnBreakSessionCreate",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "stampTeamOnBreakSessionCreate",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/stampTeamOnBreakSessionCreate",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+        "deployment-tool": "cli-firebase"
+      },
+      "runServiceId": "stampteamonbreaksessioncreate",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "stampTeamOnTaskWrite",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.written",
+        "retry": true,
+        "eventFilters": {
+          "namespace": "(default)",
+          "database": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "tasks/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "stampTeamOnTaskWrite",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "stampTeamOnTaskWrite/function-source.zip",
+          "generation": "1787684066002282"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/stampTeamOnTaskWrite",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "stampTeamOnTaskWrite",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/stampTeamOnTaskWrite",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "stampteamontaskwrite",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    },
+    {
+      "platform": "gcfv2",
+      "id": "stampTeamOnWorkSessionCreate",
+      "project": "darbo-planavimas",
+      "region": "europe-west1",
+      "eventTrigger": {
+        "eventType": "google.cloud.firestore.document.v1.created",
+        "retry": true,
+        "eventFilters": {
+          "database": "(default)",
+          "namespace": "(default)"
+        },
+        "eventFilterPathPatterns": {
+          "document": "work_sessions/{id}"
+        },
+        "region": "eur3"
+      },
+      "entryPoint": "stampTeamOnWorkSessionCreate",
+      "runtime": "nodejs22",
+      "source": {
+        "storageSource": {
+          "bucket": "gcf-v2-sources-198926113678-europe-west1",
+          "object": "stampTeamOnWorkSessionCreate/function-source.zip",
+          "generation": "1787684065836001"
+        }
+      },
+      "ingressSettings": "ALLOW_ALL",
+      "environmentVariables": {
+        "FIREBASE_CONFIG": "{\"projectId\":\"darbo-planavimas\",\"storageBucket\":\"darbo-planavimas.firebasestorage.app\"}",
+        "GCLOUD_PROJECT": "darbo-planavimas",
+        "EVENTARC_CLOUD_EVENT_SOURCE": "projects/darbo-planavimas/locations/europe-west1/services/stampTeamOnWorkSessionCreate",
+        "FUNCTION_SIGNATURE_TYPE": "cloudevent",
+        "FUNCTION_TARGET": "stampTeamOnWorkSessionCreate",
+        "LOG_EXECUTION_ID": "true"
+      },
+      "timeoutSeconds": 60,
+      "uri": "https://europe-west1-darbo-planavimas.cloudfunctions.net/stampTeamOnWorkSessionCreate",
+      "serviceAccount": "198926113678-compute@developer.gserviceaccount.com",
+      "availableMemoryMb": 256,
+      "cpu": 1,
+      "maxInstances": 10,
+      "concurrency": 80,
+      "labels": {
+        "deployment-tool": "cli-firebase",
+        "firebase-functions-hash": "f32f542590f2c14ddd4595912a341ea0c57da495"
+      },
+      "runServiceId": "stampteamonworksessioncreate",
+      "codebase": "default",
+      "hash": "f32f542590f2c14ddd4595912a341ea0c57da495",
+      "state": "ACTIVE"
+    }
+  ]
+}

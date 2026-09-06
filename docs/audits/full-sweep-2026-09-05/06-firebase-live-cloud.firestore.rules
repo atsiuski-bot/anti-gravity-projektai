@@ -1,0 +1,1150 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Identity / role helpers -------------------------------------------
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Active = authenticated, the user doc exists, and isDisabled is not true.
+    // We read the field with .get('isDisabled', false) — NOT dot notation. In
+    // Firestore rules, accessing a MISSING map key with `.field` raises an
+    // evaluation error that denies the rule; only .get(key, default) is safe for an
+    // absent field. Legacy user docs created before the isDisabled convention have
+    // no such field, so dot access there silently denied EVERY team-wide read for
+    // those users (their own-doc reads still passed via the uid match, so the app
+    // shell rendered while every collection listener failed permission-denied).
+    // The default `false` => a missing field is treated as "not disabled" = active.
+    // (Repeated get()/exists() on the same user doc are cached within one rule
+    // evaluation, so the role helpers below add no extra document-read cost.)
+    function isUserActive() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isDisabled', false) != true;
+    }
+
+    function isAdmin() {
+      return isUserActive() &&
+             (getUserData().get('role', '') == 'admin' ||
+              getUserData().get('role', '') == 'Administratorius');
+    }
+
+    function isManager() {
+      return isUserActive() &&
+             getUserData().get('role', '') == 'manager';
+    }
+
+    // Vyr. vadovas (senior manager): a manager-shaped rank SCOPED to its transitive subtree — its
+    // assigned managers plus those managers' workers (ADR 0007), NOT the whole company. Account
+    // management (role changes, membership) stays admin-only.
+    // Four-level hierarchy: admin > seniorManager > manager > worker.
+    function isSeniorManager() {
+      return isUserActive() &&
+             getUserData().get('role', '') == 'seniorManager';
+    }
+
+    function isManagerOrAdmin() {
+      return isAdmin() || isManager() || isSeniorManager();
+    }
+
+    // ---- Scoped overseer hierarchy (ADR 0005 + ADR 0007) -------------------
+    // A manager is "scoped" when an admin set scopedManager=true on their user doc: they may only
+    // SEE and ACT on their assigned people. A SENIOR manager (Vyr. vadovas) is ALWAYS scoped — to
+    // its transitive subtree (its managers + those managers' workers), denormalized into each row's
+    // teamManagerIds closure by a Cloud Function (ADR 0007). Admins and managers left unscoped (the
+    // default) keep whole-company access.
+    function isScopedManager() {
+      return isManager() && getUserData().get('scopedManager', false) == true;
+    }
+    // A caller whose visibility is limited to their subtree's denormalized stamp (the row's
+    // teamManagerIds closure): a scoped manager OR any senior manager. Both rely on inCallerTeam().
+    function isScopedOverseer() {
+      return isScopedManager() || isSeniorManager();
+    }
+    function canSeeWholeTeam() {
+      return isAdmin() || (isManager() && getUserData().get('scopedManager', false) != true);
+    }
+    // The caller is in the target user's OVERSEER CLOSURE (managers + their seniors), maintained on
+    // the user doc (overseerIds) by the re-stamp Cloud Function (ADR 0007). One get() on the target
+    // doc — used on WRITES only (low volume), so the extra read is acceptable. Used at create/
+    // reassign time, before the row's denormalized teamManagerIds has been stamped. Covers BOTH a
+    // scoped manager (always in their own workers' closure) and a senior manager.
+    function overseesUser(uid) {
+      return uid is string &&
+             exists(/databases/$(database)/documents/users/$(uid)) &&
+             request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('overseerIds', []);
+    }
+    // The EXISTING row is within the caller's team (denormalized teamManagerIds copied from the
+    // owner). Pure field compare — no extra read — so it is cheap on the hot read path.
+    function inCallerTeam() {
+      return request.auth.uid in resource.data.get('teamManagerIds', []);
+    }
+    // Audit R-08 — WRITE-side scope for a MANAGER acting on ANOTHER user's own doc. The document
+    // being written IS the target user, so their overseer closure reads straight from resource.data
+    // (no extra get()). Admins + unscoped managers keep whole-company reach; a scoped/senior manager
+    // must appear in the target's overseerIds. That closure is CF-maintained and only ever holds
+    // manager/senior uids, so membership already implies a legitimate overseer (a worker uid can
+    // never be in it, and the field pins still block any privilege field) — no separate role call
+    // needed. Kept as ONE function so the users-update gate is a single call: the users rule carries
+    // ~10 field pins, and inlining this multi-term OR at the statement level pushed the whole rule
+    // past the rules engine's per-request evaluation limit (empirically it denied a logically-true
+    // write; the same OR shape works inline on break_sessions/work_sessions, which have far fewer pins).
+    function overseesUserDoc() {
+      return canSeeWholeTeam() ||
+             (request.auth.uid in resource.data.get('overseerIds', []));
+    }
+    // A private row (task/session) is readable by: whole-team viewers, its owner, the caller's
+    // team membership, or (tasks only) the manager/auditor named on the row.
+    function canReadOwnedTask() {
+      return canSeeWholeTeam() ||
+             ownsAssignedUser() ||
+             inCallerTeam() ||
+             request.auth.uid == resource.data.get('managerId', '');
+    }
+
+    // The WRITE-side mirror of the managerId branch in canReadOwnedTask: a manager/admin who is the
+    // task's DESIGNATED vadovas (managerId) or auditor (taskAuditor) may act on it (approve / accept /
+    // edit / delete) even when it sits OUTSIDE their team closure — e.g. ANOTHER manager created the
+    // task and named THIS manager its overseer. Without this, such a manager could SEE the task (READ
+    // grants managerId) yet have every WRITE silently denied — the exact "I'm the vadovas but can
+    // neither approve nor edit" trap (founder, 2026-06-24). Because the named manager IS the legitimate
+    // approver, this branch deliberately permits the approval-field flip that changesApprovalFields()
+    // blocks on the assignee branch. Gated to a manager role for defense in depth, so a stray worker
+    // uid sitting in managerId can never gain write. Reads resource.data, so UPDATE/DELETE only.
+    function isNamedTaskOverseer() {
+      return isManagerOrAdmin() &&
+             (request.auth.uid == resource.data.get('managerId', '') ||
+              request.auth.uid == resource.data.get('taskAuditor', ''));
+    }
+
+    // ---- Per-document ownership helpers -------------------------------------
+    // A worker "owns" a record when its owner field equals their uid. The owner
+    // field per collection was audited from the client write sites: `userId` for
+    // sessions/hours/calendar/notifications, `assignedUserId` for tasks,
+    // `recipientId` for request_notifications, `createdBy` for templates.
+    // Read/update/delete use resource.data (the stored doc); create uses
+    // request.resource.data (the incoming doc).
+    //
+    // READ vs WRITE asymmetry (important — Firestore rules are NOT row filters):
+    // several worker-facing features (the Reports tab, the team calendar) issue
+    // collection-WIDE queries and filter client-side, so they intentionally read
+    // other users' rows. A per-owner READ rule would make those whole queries fail
+    // with permission-denied (one unreadable row rejects the entire query). This
+    // app's design is team-wide VISIBILITY, so READ on the shared collections stays
+    // broad (`isUserActive()`). The real threat C1 identified is TAMPERING, so
+    // WRITE (create/update/delete) is scoped to the owner with a manager/admin
+    // escape — a worker can see a colleague's hours but cannot mutate them. If
+    // per-user read isolation is ever wanted, it requires changing those client
+    // queries to filter by uid for workers (a product change), not just the rule.
+
+    function ownsUserId() {
+      return resource.data.userId == request.auth.uid;
+    }
+    function createOwnsUserId() {
+      return request.resource.data.userId == request.auth.uid;
+    }
+    function ownsAssignedUser() {
+      return resource.data.assignedUserId == request.auth.uid;
+    }
+
+    // Manager-only approval/confirmation fields on a task. A worker may edit their
+    // own task but must never FLIP these on an existing task (no client-forged
+    // self-confirmation of a manager-assigned task). Note: this guards UPDATE only.
+    // CREATE is intentionally not guarded this way, because the legitimate call/
+    // quick-work auto-logging path creates a worker's own task already 'confirmed'
+    // (a call is auto-confirmed by design) — blocking self-confirmed CREATE would
+    // break that flow, while the actual escalation risk is flipping an EXISTING task.
+    function changesApprovalFields() {
+      return (request.resource.data.get('status', '') != resource.data.get('status', '') &&
+              request.resource.data.get('status', '') in ['confirmed', 'approved']) ||
+             request.resource.data.get('isApproved', false) != resource.data.get('isApproved', false) ||
+             request.resource.data.get('confirmedBy', null) != resource.data.get('confirmedBy', null) ||
+             request.resource.data.get('approvedBy', null) != resource.data.get('approvedBy', null);
+    }
+
+    // calendar_requests approval fields — the owner (worker) may edit their own request's dates/reason
+    // but must NOT self-flip these. Only a manager path (canSeeWholeTeam / scoped overseer) writes them
+    // via calendarApproval.js. Without this an owner could updateDoc {status:'approved', approvedBy:
+    // <any managerUid>} to self-approve leave and plant a forged decision in the Reports history.
+    function changesCalendarApprovalFields() {
+      return request.resource.data.get('status', '') != resource.data.get('status', '') ||
+             request.resource.data.get('approvedBy', null) != resource.data.get('approvedBy', null) ||
+             request.resource.data.get('approvedAt', null) != resource.data.get('approvedAt', null) ||
+             request.resource.data.get('declinedBy', null) != resource.data.get('declinedBy', null) ||
+             request.resource.data.get('declinedAt', null) != resource.data.get('declinedAt', null);
+    }
+
+    // ---- Data shape / range validation (durability guardrails) --------------
+    // The rules above answer WHO may write; these answer WHAT a write may contain, so a buggy
+    // client or a runaway agent cannot poison the logged-time record with impossible values — the
+    // failure mode that previously left 247 break_sessions with >960-min durations (a one-off
+    // SA-key script had to delete them, because there was no guard at the door).
+    //
+    // Deliberately PERMISSIVE so it can never break a legitimate flow: a field is checked only when
+    // it is PRESENT (the `.get(field, default)` form defaults-pass an absent field) and, on update,
+    // only when this write actually CHANGES it. That keeps partial updates (a title rename, a
+    // soft-delete that touches no times) and the remediation of an already-corrupt row both
+    // possible — neither is blocked by a value it does not set. The admin-SDK Cloud Functions
+    // bypass rules entirely, so the team-stamp writes are unaffected.
+
+    // A session's credited duration: a finite number within a physical sanity ceiling (24h). The
+    // client clamps far below this (16h), so a legitimate write can never trip it; the ceiling
+    // exists only to reject the absurd values that corruption produces.
+    function durationInRange(data) {
+      return data.get('durationMinutes', 0) is number &&
+             data.get('durationMinutes', 0) >= 0 &&
+             data.get('durationMinutes', 0) <= 1440;
+    }
+    // On UPDATE, enforce the range only when the write changes the duration — so a rename /
+    // soft-delete (duration untouched) and the cleanup of a pre-existing out-of-range row pass.
+    function durationOkForUpdate() {
+      return request.resource.data.get('durationMinutes', 0) == resource.data.get('durationMinutes', 0) ||
+             durationInRange(request.resource.data);
+    }
+    // ---- Worker self-service reduction: ONE-WAY -----------------------------
+    // A worker may shorten one of their OWN logged sessions with no approval (a timer left running
+    // is the commonest honest error, and giving time back is self-punishing — see
+    // sessionEditActions.reduceOwnWorkSession). Lengthening one is the opposite incentive, so it
+    // never travels that path: it becomes a correction REQUEST the manager applies with the editor
+    // they already have. This is the door-level half of that asymmetry.
+    //
+    // Keyed on the `selfAdjusted` marker the self-service write sets, NOT on the caller's role, for
+    // two reasons. First, it judges only the new path: the live timer, every legacy closer, the
+    // Cloud Functions net and the admin editor leave the marker absent, so this can never reject a
+    // write it was not designed to evaluate — which matters because the timer legitimately GROWS a
+    // session's duration as the worker keeps working (the partial→final quick-work/call rows update
+    // the same deterministic doc id with a larger value). Second, an updateDoc is judged on the
+    // MERGED result, so a marker left behind on a row would silently constrain every later write to
+    // it — which is why the admin editor explicitly clears it back to false.
+    //
+    // The check is on durationMinutes, the number that actually reaches pay, and only when THIS
+    // write changes it — so a soft-delete, a rename or a teamManagerIds touch on an already
+    // self-adjusted row never re-litigates a value it does not set. Both operands must be numbers:
+    // a legacy row with a non-numeric duration is simply not self-reducible (the client validator
+    // refuses it for the same reason), rather than raising an evaluation error.
+    function selfAdjustOkForUpdate() {
+      return request.resource.data.get('durationMinutes', 0) == resource.data.get('durationMinutes', 0) ||
+             request.resource.data.get('selfAdjusted', false) != true ||
+             (request.resource.data.get('durationMinutes', 0) is number &&
+              resource.data.get('durationMinutes', 0) is number &&
+              request.resource.data.get('durationMinutes', 0) < resource.data.get('durationMinutes', 0));
+    }
+
+    // work_hours carries no duration; its time bounds are ISO strings. Guard only that, if present,
+    // start/end are strings (a bug writing a number/object/array there is rejected). Absent → pass.
+    function workHoursShapeOk(data) {
+      return data.get('start', '') is string &&
+             data.get('end', '') is string;
+    }
+
+    // ---- Client wall-clock trust: bounded skew (audit P2 #10) ---------------
+    // A session row RECORDS WORK THAT ALREADY HAPPENED, so its end instant can never be later than
+    // the moment the write reaches the server. The asymmetry is the whole point, and it is what
+    // makes this safe for an offline-first field app:
+    //   * endTime EARLIER than server time is NORMAL and stays allowed, with no lower bound at all —
+    //     a worker who finishes at 15:00 with no signal and syncs at 17:00 must not be punished.
+    //   * endTime LATER than server time is PHYSICALLY IMPOSSIBLE. The only way to produce it is a
+    //     device clock pushed forward, which is the one way to inflate paid time that needs no
+    //     tooling at all — just the phone's own settings screen. Until now nothing checked it:
+    //     every credited number in this app is client-authored (ADR 0021).
+    //
+    // Parsed out of the ISO STRING rather than added as a numeric field ON PURPOSE. The ledger row
+    // has ~22 write sites spread over four layers (the canonical plan builder, the legacy closers,
+    // the admin edit/backdate path, and the Cloud Functions auto-close net) with NO shared
+    // row-builder, so a new field would mean editing every one of them on the most safety-critical
+    // path in the product. Keeping the check here leaves the write path completely untouched.
+    //
+    // TOLERANCE = 2min (was 1h until 2026-07-28; founder decision) — the ONE knob here. What it
+    // actually buys is narrower than it looks, and that is why it could be tightened so far:
+    //
+    //   * The OFFLINE case never needs it. A worker who finishes at 15:00 with no signal and syncs at
+    //     17:00 writes an endTime EARLIER than request.time, which passes with no lower bound at all.
+    //     The tolerance only ever covers a write sent more or less immediately.
+    //   * A UNIFORMLY wrong clock gains nothing. Shift the phone an hour ahead and BOTH the start and
+    //     the end shift with it — the duration, which is their difference, is unchanged. There is no
+    //     inflation to defend against.
+    //   * So the tolerance is precisely the ceiling on ONE deliberate manoeuvre: start the timer, move
+    //     the clock forward mid-session, then stop. That is the only way a device clock inflates a
+    //     credited duration, and it is now capped at 2 minutes per session.
+    //
+    // The error modes remain asymmetric — wrongly DENYING an honest write loses a worker's pay (and
+    // offline it fails late and quietly), while wrongly ALLOWING one costs at most the tolerance. 2min
+    // is still ~60x the drift of an auto-synced phone (which is seconds), so it stays clear of the
+    // honest population. The residual exposure it does NOT address is a device whose clock runs more
+    // than 2 minutes fast: that worker's stop is rejected — and it WAS reported, from a desktop
+    // machine, days after this was tightened. It is fixed on the CLIENT (src/utils/serverClock.js),
+    // which now stamps every session in the SERVER's frame rather than the device's, so this number
+    // did not have to move and should not be the first thing reached for: raising it only moves the
+    // cliff. If such a rejection is seen again, check whether that device's clock anchor is landing
+    // (an offline device never gets a probe, and then stamps with its own clock as before).
+    //
+    // What this check CANNOT do, at any tolerance: bound a duration asserted entirely in the past. A
+    // fabricated session with plausible past times is untouched by it. Closing that needs the duration
+    // bounded by SERVER-elapsed time between start and stop — which requires a server-anchored start,
+    // and a server-anchored start cannot coexist with offline-first starts (the start write's server
+    // time resolves only when it reaches the server, so an offline start would make the server's
+    // elapsed SHORTER than the real work and reject honest pay). That is the deferred rework in
+    // ADR 0021, not a knob.
+    function isIsoInstant(value) {
+      return value is string &&
+             value.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}.*');
+    }
+    function isoInstantMillis(value) {
+      return timestamp.date(int(value[0:4]), int(value[5:7]), int(value[8:10])).toMillis() +
+             int(value[11:13]) * 3600000 +
+             int(value[14:16]) * 60000 +
+             int(value[17:19]) * 1000;
+    }
+    // Shape-guarded and PERMISSIVE, exactly like the duration/shape guards above: the check runs
+    // ONLY on a string matching the 'YYYY-MM-DDTHH:MM:SS' prefix that every writer's toISOString()
+    // produces. Absent, empty, legacy or any unanticipated shape passes unjudged, so this can never
+    // brick a write it was not designed to evaluate. (Parsing a malformed string would raise an
+    // evaluation error, which DENIES — the same trap as bare dot access on a missing field.)
+    function endTimeNotInServerFuture(data) {
+      return !isIsoInstant(data.get('endTime', '')) ||
+             isoInstantMillis(data.get('endTime', '')) <= request.time.toMillis() + 120000;
+    }
+    // On UPDATE, judge only a write that actually CHANGES endTime — so a soft-delete, a rename or a
+    // teamManagerIds touch never re-litigates a value it does not set, and an already-stored
+    // out-of-bounds row stays REMEDIABLE rather than frozen.
+    function endTimeOkForUpdate() {
+      return request.resource.data.get('endTime', '') == resource.data.get('endTime', '') ||
+             endTimeNotInServerFuture(request.resource.data);
+    }
+
+    // A task's priority (if present) must be one of the canonical UPPERCASE tokens, and
+    // estimatedTimeMinutes (if present) a non-negative number within a sane ceiling (1000h). Mirrors
+    // the write-path canonicalization (priority.js / timeUtils) so a future code path cannot
+    // re-introduce the priority casing split or a string-typed numeric estimate. Permissive: an
+    // ABSENT field passes, so quick-work's minimal shape and legacy rows are never blocked. Applied
+    // to /tasks only (NOT /archived_tasks — the client archives legacy rows verbatim).
+    function taskFieldsOk(data) {
+      return (!('priority' in data) ||
+              data.priority in ['URGENT', 'HIGH', 'MEDIUM', 'LOW']) &&
+             (!('estimatedTimeMinutes' in data) ||
+              (data.estimatedTimeMinutes is number &&
+               data.estimatedTimeMinutes >= 0 &&
+               data.estimatedTimeMinutes <= 60000));
+    }
+    // On UPDATE, enforce only when this write CHANGES priority/estimate — so a status/timer/title
+    // edit that leaves them untouched, AND the remediation of an already-non-canonical legacy row,
+    // both pass. (The app's edit path rewrites priority canonically on every save anyway.)
+    function taskFieldsOkForUpdate() {
+      return (request.resource.data.get('priority', '') == resource.data.get('priority', '') &&
+              request.resource.data.get('estimatedTimeMinutes', 0) == resource.data.get('estimatedTimeMinutes', 0))
+             || taskFieldsOk(request.resource.data);
+    }
+
+    // ---- USERS --------------------------------------------------------------
+    match /users/{userId} {
+      // Read OWN doc unconditionally (first-login bootstrap before the doc has an
+      // isDisabled value, and a disabled user must still be able to load its own
+      // record). Read OTHER users only while ACTIVE — a disabled account keeps a
+      // valid token for up to ~1h but can no longer enumerate the whole company.
+      allow read: if isAuthenticated() &&
+                  (request.auth.uid == userId || isUserActive());
+      // Users create their own document on first login — and ONLY as a safe, self-provisioned
+      // DISABLED WORKER awaiting admin approval (the exact shape AuthContext.processUserAfterLogin
+      // writes). The create rule previously accepted ANY shape, so a hostile client could win the
+      // first write to users/{ownUid} with role:'admin' + isDisabled:false and self-escalate to
+      // full admin across every admin-gated collection (audit R-01). We pin every privilege-bearing
+      // field to its safe default here, mirroring the admin-only pins on the UPDATE rule below:
+      //   * role must be 'worker' (no self-minted admin/manager/senior),
+      //   * the account must start EXPLICITLY disabled — an ABSENT isDisabled reads as ACTIVE
+      //     (isUserActive defaults it false), so it must be present AND true, and
+      //   * no scope / pay / test / backdate field may be pre-set.
+      // An admin later grants the real role and access via the (fully-pinned) update rule.
+      allow create: if isAuthenticated() && request.auth.uid == userId
+                    && request.resource.data.get('role', '') == 'worker'
+                    && request.resource.data.get('isDisabled', false) == true
+                    && request.resource.data.get('scopedManager', false) == false
+                    && request.resource.data.get('isTest', false) == false
+                    && request.resource.data.get('canBackdateTime', false) == false
+                    && request.resource.data.get('canEditOwnStartTime', false) == false
+                    && request.resource.data.get('teamManagerIds', []) == []
+                    && request.resource.data.get('seniorManagerIds', []) == []
+                    && request.resource.data.get('overseerIds', []) == []
+                    && request.resource.data.get('defaultSeniorManager', '') == ''
+                    && request.resource.data.get('payRate', {}) == {};
+      // Update: own doc or a manager/admin acting on anyone. Only admins change
+      // roles; only managers/admins toggle isDisabled (the `get` fallback keeps
+      // legacy docs without the field editable).
+      // Membership is admin-only: only an admin may change a worker's team (teamManagerIds) or a
+      // manager's scope (scopedManager). Otherwise a worker could hide themselves from / expose
+      // themselves to a manager, or a scoped manager could lift their own restriction. (ADR 0005)
+      // Both the role pin and the isDisabled pin read EVERY operand through .get(field, default).
+      // A bare dot access (request.resource.data.isDisabled) on a field the document does NOT carry
+      // raises a rules EVALUATION ERROR that denies the whole write — the exact trap isUserActive()
+      // documents above. Legacy user docs predate the isDisabled convention, so on a merge update the
+      // incoming doc inherits that absence; the previous left-operand dot access therefore denied a
+      // worker's own workStatus/activeSession write (every timer action), bricking start/pause/finish
+      // for those accounts. Managers/admins were spared only because isManagerOrAdmin() short-circuits
+      // the conjunct before the dot access. .get() on both sides defaults a missing field to a safe
+      // value so the equality (unchanged on these self-writes) passes for legacy and current docs alike.
+      // Audit R-08: a manager may act on ANOTHER user's doc only within scope. Admins and UNSCOPED
+      // managers keep whole-company reach (canSeeWholeTeam) — new-signup approval writes and the
+      // force-end-anyone control both depend on it; a scoped or senior manager must oversee the
+      // TARGET (overseesUser reads users/{userId}.overseerIds). This completes the force-end scope:
+      // active_sessions + users/{userId}/timer_commands already use this exact predicate, so all
+      // three writes of one force-end now share a single subtree boundary. Was bare isManagerOrAdmin(),
+      // which let a scoped/senior manager disable or mutate ANY user's doc outside their subtree. The
+      // per-field pins below are unchanged — they still gate WHICH fields each role may change; this
+      // only gates WHETHER the caller may touch this user at all. (Signup approval is admin-only, so
+      // the empty-overseerIds new user is reached via canSeeWholeTeam, never overseesUser.)
+      allow update: if isAuthenticated()
+                    && (request.auth.uid == userId || overseesUserDoc())
+                    // isDisabled toggle: an admin may toggle ANYONE; a (non-admin) manager may toggle
+                    // only a NON-admin target; everyone else must leave it unchanged. Without the
+                    // target-role guard a single unscoped-manager credential could disable every admin
+                    // (canSeeWholeTeam reaches them) — and a disabled admin loses isAdmin()/isUserActive(),
+                    // so NO in-app path could re-enable them (governance lockout). Approval / disable of
+                    // ordinary workers is unaffected (a self-signup is never role 'admin'). .get() on both
+                    // sides keeps a legacy doc without the field editable (the dot-access trap above).
+                    && (isAdmin() ||
+                        (isManagerOrAdmin() &&
+                         resource.data.get('role', '') != 'admin' &&
+                         resource.data.get('role', '') != 'Administratorius') ||
+                        request.resource.data.get('isDisabled', false) == resource.data.get('isDisabled', false))
+                    // The overseer closure is written ONLY by the admin-SDK Cloud Function (which
+                    // bypasses rules). No client — not even an admin — may hand-edit it, or the
+                    // confidentiality boundary could be silently desynced. (ADR 0007)
+                    && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', [])
+                    // ADMIN-ONLY FIELDS. A non-admin may change NONE of these; only an admin may set
+                    // role (no self-mint), team/senior membership + scope (ADR 0005/0007), payRate
+                    // (ADR 0012), canBackdateTime / canEditOwnStartTime (per-user admin grants), or isTest (audit R-07 — no
+                    // self-exclusion from reports/pay). Consolidated into ONE isAdmin() branch (was 8
+                    // separate `isAdmin() || …` conjuncts): logically identical — a non-admin must
+                    // leave every one of these unchanged either way — but it evaluates isAdmin() ONCE.
+                    // That matters because with the R-08 scope gate now on the manager branch above,
+                    // 8 separate isAdmin() evaluations pushed the whole rule past Firestore's per-
+                    // request rule-evaluation budget and denied even legitimate writes (a manager's
+                    // force-end). .get(...) defaults keep legacy docs writable (the dot-access trap).
+                    && (isAdmin() || (
+                        request.resource.data.get('role', '') == resource.data.get('role', '') &&
+                        request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []) &&
+                        request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false) &&
+                        request.resource.data.get('seniorManagerIds', []) == resource.data.get('seniorManagerIds', []) &&
+                        request.resource.data.get('defaultSeniorManager', '') == resource.data.get('defaultSeniorManager', '') &&
+                        request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}) &&
+                        request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false) &&
+                        request.resource.data.get('canEditOwnStartTime', false) == resource.data.get('canEditOwnStartTime', false) &&
+                        request.resource.data.get('isTest', false) == resource.data.get('isTest', false)
+                    ));
+      allow delete: if isAdmin();
+
+      // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
+      // Earned badges live HERE, not on the user doc — a worker can freely write
+      // its OWN /users/{uid} doc (see the update rule above), so storing badges
+      // on it would let anyone forge their own. Read is team-wide so peer trophy
+      // shelves render for any active member (same broad-read pattern as tasks/
+      // sessions). Write is denied to ALL clients incl. the owner: only the Admin
+      // SDK (a Cloud Function), which bypasses rules, grants/upgrades a tier.
+      match /achievements/{achievementId} {
+        allow read: if isUserActive();
+        allow write: if false;
+      }
+    }
+
+    // ---- TASKS --------------------------------------------------------------
+    match /tasks/{taskId} {
+      // Read: whole-team viewers see all; a scoped manager sees only their team (the row's
+      // denormalized teamManagerIds) or tasks they audit; the assignee sees their own. (ADR 0005)
+      allow read: if isUserActive() && canReadOwnedTask();
+      // Create: a worker self-assigns (covers normal create + call/quick-work auto-logs);
+      // whole-team viewers may assign to anyone; a scoped overseer may assign ONLY within their
+      // subtree (overseesUser checks the assignee's closure — also covers RESTORE of a team task).
+      allow create: if isUserActive() && taskFieldsOk(request.resource.data) && (
+                      request.resource.data.assignedUserId == request.auth.uid ||
+                      canSeeWholeTeam() ||
+                      (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
+                    );
+      // Update: whole-team viewers edit any; the task's named vadovas/auditor edits THEIR task even
+      // out of team scope; a scoped manager edits their team's tasks and may only reassign within
+      // their team; the assignee edits their own but may NOT flip the manager-only approval fields.
+      // taskFieldsOkForUpdate adds the priority/estimate shape guard (enforced only when this write
+      // changes those fields).
+      // The assignee branch pins the NEW assignedUserId to the caller: ownsAssignedUser() only proves
+      // the EXISTING owner is the caller, so without this a worker could rewrite assignedUserId to a
+      // colleague and inject their (self-forged) task into another user's queue — horizontal task
+      // ownership bypass (audit R-06). Legitimate reassignment is a manager action, handled by the
+      // whole-team / scoped-overseer branches above.
+      allow update: if isUserActive() && taskFieldsOkForUpdate() && (
+                      canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
+                      (isScopedOverseer() && inCallerTeam() &&
+                        (request.resource.data.assignedUserId == resource.data.assignedUserId ||
+                         overseesUser(request.resource.data.assignedUserId))) ||
+                      (ownsAssignedUser() &&
+                        request.resource.data.assignedUserId == request.auth.uid &&
+                        !changesApprovalFields())
+                    )
+                    // Pin the denormalized oversight key immutable on EVERY client update: only the
+                    // admin-SDK re-stamp trigger (stampTeamOnTaskWrite) sets teamManagerIds, exactly
+                    // like work_sessions/break_sessions (audit R-05). Without this a worker could
+                    // updateDoc {teamManagerIds: []} on their own task to opt it out of scoped-manager /
+                    // senior oversight (the inCallerTeam read + update/delete branches key on this
+                    // field), or inject a colleague's uid to grant them read — and the trigger's
+                    // owner-unchanged early-return never repairs the forged array.
+                    && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
+      allow delete: if isUserActive() && (
+                      ownsAssignedUser() ||
+                      canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
+                      (isScopedOverseer() && inCallerTeam())
+                    );
+    }
+
+    // ---- SHIFT LOGS (unused collection — locked) ----------------------------
+    match /shift_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    // ---- WORK SESSIONS ------------------------------------------------------
+    match /work_sessions/{sessionId} {
+      // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
+      allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
+      // Workers log their own; whole-team viewers create time corrections for anyone; a scoped
+      // manager only for their people. The duration guard rejects impossible credited time.
+      allow create:        if isUserActive() && (
+                              createOwnsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && overseesUser(request.resource.data.userId))
+                            ) && durationInRange(request.resource.data)
+                            // Audit P2 #10: the credited interval may not END in the server's future.
+                            && endTimeNotInServerFuture(request.resource.data)
+                            // Audit R-05 (create half of the teamManagerIds pin): the update branch
+                            // already pins the field immutable, but the CREATE was unguarded. The
+                            // stamp trigger is create-only and skips closure-less owners, so a forged
+                            // array written at create would persist forever — granting a colleague
+                            // read via inCallerTeam, or opting the row out of scoped oversight. No
+                            // client create-site writes the field, so requiring it absent/empty
+                            // costs no real path.
+                            && request.resource.data.get('teamManagerIds', []) == []
+                            // Audit R-04 (provenance pin): createdByAdmin is the manager correction
+                            // stamp (createWorkSession, the sole cross-user authoring tool). A NON-manager
+                            // self-logging their own time — gap-claim, backdate, and the legacy call/
+                            // quick-work/partial writers — never sets it. Requiring it ABSENT for a
+                            // non-manager forbids a worker forging admin authorship to disguise a
+                            // self-minted row as an approved correction, without touching any real path
+                            // (managers, whole-team or scoped, keep the stamp; only the self-owned branch
+                            // reached by a plain worker is constrained). Narrows R-04's forgery surface;
+                            // does NOT close it (the credited number is still client-authored — ADR 0021).
+                            && (canSeeWholeTeam() || isScopedOverseer()
+                                || request.resource.data.get('createdByAdmin', '') == '');
+      // Update carries THREE guards (composed with &&): the duration guard (main — rejects an
+      // impossible credited time, the >960-min corruption vector), the userId pin (full-sweep
+      // F5 — an owner or whole-team manager may NOT re-point the record to a colleague), and the
+      // teamManagerIds pin. The last one closes audit R-05: the team-visibility stamp is
+      // denormalized by a CREATE-ONLY Cloud Function (stampTeamOnWorkSessionCreate), so a forged
+      // teamManagerIds written on UPDATE would PERSIST — silently re-scoping who may read the row
+      // (adding an unrelated manager, or hiding it from a legitimate overseer). No client write-site
+      // ever changes this field on a session (only the admin-SDK trigger sets it), so pinning it
+      // unchanged breaks nothing. Delete is split out because it carries no request.resource.
+      // A FOURTH guard rides along: the one-way self-reduction check, which lets a worker shorten
+      // their own credited time without approval but never lengthen it. Applied here and NOT to
+      // break_sessions, because break time is an allowance, not payable — there is no incentive to
+      // inflate it, so it needs no direction.
+      allow update:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            ) && durationOkForUpdate()
+                            && endTimeOkForUpdate()
+                            && selfAdjustOkForUpdate()
+                            && request.resource.data.get('userId', '') == resource.data.get('userId', '')
+                            && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
+      allow delete:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            );
+    }
+
+    // ---- REVISIONED TIMER ENGINE --------------------------------------------
+    // One canonical active-session record per worker. Every transition carries the revision/run it
+    // was built from; the first accepted batch increments the revision, so a stale second device is
+    // rejected instead of silently overwriting the winner. The active record is written in the SAME
+    // batch as its task/user compatibility projection and deterministic ledger row (ADR 0020).
+    function validTimerRun(run) {
+      return run is map &&
+             run.runId is string &&
+             run.type in ['task', 'break', 'call', 'quickWork'] &&
+             run.startedAt is string &&
+             run.revision is int;
+    }
+
+    function validActiveSessionRecord(data, userId) {
+      return data.userId == userId &&
+             data.revision is int &&
+             data.revision > 0 &&
+             data.expectedRevision is int &&
+             (data.expectedRunId == null || data.expectedRunId is string) &&
+             data.status in ['active', 'idle'] &&
+             data.lastCommandId is string &&
+             data.updatedAt is string &&
+             data.engineVersion == 2 &&
+             ((data.status == 'active' && validTimerRun(data.run)) ||
+              (data.status == 'idle' && data.run == null));
+    }
+
+    // Audit R-12 — atomic-bundle binding. ADR-0020 invariant #6 requires the active-session revision
+    // bump and its credited-work ledger row to commit in ONE batch, but that was only a client-batch
+    // CONVENTION: each doc's rule was independent, so a custom/buggy client could advance the revision
+    // and omit the ledger, and every individual rule still passed (canonical state ↔ credited time then
+    // silently diverge). This binds them at the rule: when a transition CLOSES a task run (the pre-image
+    // is an active task run), the deterministic ledger work_sessions/sess_run_{runId} MUST exist in the
+    // SAME batch (getAfter) and carry the matching runId — a content check, not mere existence, so a
+    // decoy row cannot satisfy it. closeTaskWrites() emits that row UNCONDITIONALLY (even sub-minute),
+    // so the implication is total for the task path. Break/call/quick closes write a duration-gated or
+    // startMs-keyed ledger the rule cannot reconstruct, so they are deliberately NOT bound here and stay
+    // convention-enforced until the ADR-0020 migration folds them into the engine batch. Non-closing
+    // transitions (start-from-idle, resume) skip the check via the run.type guard. ⚠️ Any FUTURE
+    // task-run transition (e.g. undo-recovery, switch-session) that leaves an active task run MUST also
+    // write sess_run_{runId}, or this gate will correctly deny it. Emulator-proven not to trip the
+    // per-request evaluation budget, even stacked on the manager force-idle overseesUser() read
+    // (active_sessions is lean — unlike the users rule whose ~10 field pins hit the ceiling, L88-97).
+    function taskCloseLedgerBound() {
+      return !(resource.data.status == 'active' && resource.data.run.type == 'task') ||
+             (
+               existsAfter(/databases/$(database)/documents/work_sessions/$('sess_run_' + resource.data.run.runId)) &&
+               getAfter(/databases/$(database)/documents/work_sessions/$('sess_run_' + resource.data.run.runId)).data.runId == resource.data.run.runId
+             );
+    }
+
+    match /active_sessions/{userId} {
+      // READ is scoped exactly like the force-idle WRITE below. The broad-READ doctrine at L134-144
+      // exists for collections the app queries COLLECTION-WIDE (one unreadable row fails the whole
+      // query); it does not apply here — every client read of this collection is by DOCUMENT ID
+      // (own-session listener, manager force-end, command replay), so narrowing cannot break a query.
+      // The role set is unchanged (canSeeWholeTeam() || isScopedOverseer() == isManagerOrAdmin()); a
+      // scoped/senior manager now additionally needs the target in their overseer closure, so they can
+      // no longer watch ANOTHER team's live run. The own-uid branch is first, so the hot per-session
+      // listener short-circuits before any extra get().
+      allow read: if isUserActive() &&
+                  (request.auth.uid == userId ||
+                   canSeeWholeTeam() ||
+                   (isScopedOverseer() && overseesUser(userId)));
+      allow create: if isUserActive() &&
+                    request.auth.uid == userId &&
+                    validActiveSessionRecord(request.resource.data, userId) &&
+                    request.resource.data.revision == 1 &&
+                    request.resource.data.expectedRevision == 0;
+      allow update: if isUserActive() &&
+                    validActiveSessionRecord(request.resource.data, userId) &&
+                    request.resource.data.userId == resource.data.userId &&
+                    request.resource.data.revision == resource.data.revision + 1 &&
+                    request.resource.data.expectedRevision == resource.data.revision &&
+                    ((resource.data.status == 'active' &&
+                      request.resource.data.expectedRunId == resource.data.run.runId) ||
+                     (resource.data.status == 'idle' &&
+                      request.resource.data.expectedRunId == null)) &&
+                    (
+                      request.auth.uid == userId ||
+                      (
+                        // Audit R-08: a manager may force-idle a live session only within scope.
+                        // canSeeWholeTeam() = admin or unscoped manager (whole company, as before);
+                        // a scoped or senior manager must have the TARGET user in their overseer
+                        // closure (overseesUser reads users/{userId}.overseerIds). Previously the
+                        // bare isManagerOrAdmin() let a scoped manager idle ANOTHER team's session.
+                        (canSeeWholeTeam() || (isScopedOverseer() && overseesUser(userId))) &&
+                        request.resource.data.status == 'idle' &&
+                        request.resource.data.run == null
+                      )
+                    ) &&
+                    // Audit R-12: a task-run close must carry its ledger row in the same batch.
+                    taskCloseLedgerBound();
+      allow delete: if false;
+    }
+
+    // The committed-command marker is part of the transition batch. Its deterministic id lets a
+    // reboot distinguish "the original batch committed but this tab died before observing ACK" from
+    // "still queued", and makes replay idempotent. Client updates/deletes are forbidden.
+    match /users/{userId}/timer_commands/{commandId} {
+      // Same read/write symmetry as active_sessions above: reads are by document id only (the replay
+      // path's commandExists check), so scoping is safe, and a scoped/senior manager may only read the
+      // command log of a user inside their overseer closure.
+      allow read: if isUserActive() &&
+                  (userId == request.auth.uid ||
+                   canSeeWholeTeam() ||
+                   (isScopedOverseer() && overseesUser(userId)));
+      allow create: if isUserActive() &&
+                    request.resource.data.commandId == commandId &&
+                    request.resource.data.userId == userId &&
+                    request.resource.data.kind in [
+                      'start-task', 'resume-task', 'pause-task', 'end-task',
+                      'start-break', 'start-call', 'start-quick-work',
+                      'end-session', 'force-end-session', 'switch-session', 'recover', 'undo-recovery'
+                    ] &&
+                    (
+                      userId == request.auth.uid ||
+                      (
+                        // Audit R-08: a manager may issue a force-end-session command only within
+                        // scope — same partition as the active_sessions force-idle branch above.
+                        // A scoped/senior manager must oversee the TARGET user; admins and unscoped
+                        // managers keep whole-company reach. Was bare isManagerOrAdmin(), which let a
+                        // scoped manager force-end ANOTHER team's break/call/quick-work/task run.
+                        (canSeeWholeTeam() || (isScopedOverseer() && overseesUser(userId))) &&
+                        request.resource.data.kind == 'force-end-session' &&
+                        request.resource.data.actorId == request.auth.uid
+                      )
+                    ) &&
+                    request.resource.data.expectedRevision is int &&
+                    (request.resource.data.expectedRunId == null ||
+                     request.resource.data.expectedRunId is string) &&
+                    (request.resource.data.runId == null ||
+                     request.resource.data.runId is string) &&
+                    request.resource.data.appliedRevision is int &&
+                    request.resource.data.issuedAt is string &&
+                    request.resource.data.engineVersion == 2;
+      allow update, delete: if false;
+    }
+
+    // ---- BREAK SESSIONS -----------------------------------------------------
+    match /break_sessions/{sessionId} {
+      // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
+      allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
+      // Workers log their own breaks. A manager may author one as the TAIL OF A FORCE-END: the
+      // canonical settle records the break interval the stuck worker could never close themselves,
+      // and because every write of that settle commits as ONE batch, an owner-only create denied the
+      // WHOLE batch — leaving the worker permanently live with no route out of any UI (audit T-18,
+      // break arm). Scope mirrors work_sessions exactly: whole-team viewers for anyone, a scoped
+      // overseer only inside their subtree. The privilege this grants is narrow by construction —
+      // break time is NOT payable (it never enters a work_sessions total), so a manager-authored row
+      // can only alter break HISTORY and the day's break allowance, never pay. Duration guard (main)
+      // still applies to every branch — this is the exact collection the >960-min corruption landed in.
+      allow create:        if isUserActive() && (
+                              createOwnsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && overseesUser(request.resource.data.userId))
+                            ) && durationInRange(request.resource.data)
+                            // Audit P2 #10: a break cannot END in the server's future either. Break
+                            // time is not payable, but it IS the day's allowance — and an unbounded
+                            // clock here would leave one half of the session ledger unguarded.
+                            && endTimeNotInServerFuture(request.resource.data)
+                            // Audit R-05 (create half), mirroring work_sessions: the stamp trigger is
+                            // create-only and skips closure-less owners, so a teamManagerIds value
+                            // forged at create is never repaired. No client create-site writes it.
+                            && request.resource.data.get('teamManagerIds', []) == [];
+      // Update carries THREE guards (composed with &&): the duration guard (main), the userId pin
+      // (full-sweep F5 — no re-pointing the record to a colleague), and the teamManagerIds pin
+      // (audit R-05). break_sessions is stamped by a CREATE-ONLY Cloud Function too, so a forged
+      // team-visibility stamp on UPDATE would persist; no client write-site changes it on update,
+      // so pinning it unchanged is safe. Delete is split out (no request.resource to validate).
+      allow update:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            ) && durationOkForUpdate()
+                            && endTimeOkForUpdate()
+                            && request.resource.data.get('userId', '') == resource.data.get('userId', '')
+                            && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
+      allow delete:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            );
+    }
+
+    // ---- DAILY STATS (unused collection — locked) ---------------------------
+    match /daily_stats/{statId} {
+      allow read, write: if false;
+    }
+
+    // ---- WORK HOURS (Planner) ----------------------------------------------
+    match /work_hours/{docId} {
+      // Team-wide read (the team calendar / AllUsersCalendar listens to all hours by
+      // date and maps every userId into a whole-team view).
+      allow read:          if isUserActive();
+      // Workers plan their own hours; whole-team viewers write approved entries for anyone; a
+      // scoped overseer (scoped manager / senior manager) only for their people. This scopes the
+      // scoped-overseer the way work_sessions/break_sessions/tasks do, so a SCOPED manager cannot
+      // write OUTSIDE their subtree here while being correctly scoped everywhere else (ADR 0005/0007)
+      // — isManagerOrAdmin() would have let any scoped manager write ANY user's hours.
+      //
+      // NOTE — why overseesUser() and NOT inCallerTeam(): the sessions/tasks scoped branches lean on
+      // each row's denormalized `teamManagerIds` stamp, but work_hours is the ONE owned collection a
+      // Cloud Function never stamps (it is absent from functions OWNED_COLLECTIONS and has no
+      // stampTeamOn… trigger). inCallerTeam() would therefore always read [] here and silently deny
+      // every scoped-overseer write. overseesUser() instead reads the TARGET USER doc's overseerIds
+      // closure (one get(), write path only) — the same user-doc check the tasks/sessions CREATE
+      // branch uses — so it is correct without any row denormalization. On update/delete it is keyed
+      // on the EXISTING owner (resource.data.userId); the create branch keys on the incoming owner.
+      // The shape guard rejects a malformed start/end (non-string) so a bug can't poison reports.
+      allow create:        if isUserActive() && (
+                             createOwnsUserId() ||
+                             canSeeWholeTeam() ||
+                             (isScopedOverseer() && overseesUser(request.resource.data.userId))
+                           ) && workHoursShapeOk(request.resource.data);
+      // Update may NOT re-point the record's owner. ownsUserId() only checks the EXISTING
+      // owner, so without this pin an owner (or manager) could rewrite userId to a colleague
+      // and graft their planned/logged hours onto someone else's record (polluting that
+      // person's calendar + reports). Splitting update from delete is required because a
+      // delete carries no request.resource to compare. The .get() form tolerates any legacy
+      // doc that predates a userId field, matching the defensive idiom used elsewhere here.
+      allow update:        if isUserActive() && (
+                             ownsUserId() ||
+                             canSeeWholeTeam() ||
+                             (isScopedOverseer() && overseesUser(resource.data.userId))
+                           )
+                           && request.resource.data.get('userId', '') == resource.data.get('userId', '')
+                           && workHoursShapeOk(request.resource.data);
+      allow delete:        if isUserActive() && (
+                             ownsUserId() ||
+                             canSeeWholeTeam() ||
+                             (isScopedOverseer() && overseesUser(resource.data.userId))
+                           );
+    }
+
+    // ---- ARCHIVED TASKS -----------------------------------------------------
+    match /archived_tasks/{taskId} {
+      // Read/write scoping mirrors /tasks (ADR 0005): whole-team viewers see/act on all, a scoped
+      // manager only on their team, the assignee on their own.
+      allow read:   if isUserActive() && canReadOwnedTask();
+      allow create: if isUserActive() && (
+                      request.resource.data.assignedUserId == request.auth.uid ||
+                      canSeeWholeTeam() ||
+                      (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
+                    );
+      // Same NEW-assignee pin as /tasks: a worker editing their own archived task may not re-point it
+      // to a colleague (audit R-06). Reassignment stays a manager action via the branches above.
+      allow update: if isUserActive() && (
+                      canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
+                      (isScopedOverseer() && inCallerTeam() &&
+                        (request.resource.data.assignedUserId == resource.data.assignedUserId ||
+                         overseesUser(request.resource.data.assignedUserId))) ||
+                      (ownsAssignedUser() &&
+                        request.resource.data.assignedUserId == request.auth.uid &&
+                        !changesApprovalFields())
+                    )
+                    // Same teamManagerIds immutability pin as /tasks (audit R-05): only the admin-SDK
+                    // re-stamp trigger sets it; a worker must not forge it to escape/redirect oversight.
+                    && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
+      allow delete: if isUserActive() && (
+                      ownsAssignedUser() ||
+                      canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
+                      (isScopedOverseer() && inCallerTeam())
+                    );
+    }
+
+    // ---- DELETED TASKS (read-only legacy) -----------------------------------
+    // DailyStatistics still opens a collection-wide onSnapshot on this collection,
+    // so READ must be allowed (a locked read makes that listener throw permission-
+    // denied on every mount). Scoped to the caller's team like the other task collections.
+    // Nothing in the client WRITES it (the delete workflow uses archived_tasks), so writes stay
+    // locked — the re-stamp Cloud Function uses the admin SDK, which bypasses rules.
+    match /deleted_tasks/{taskId} {
+      allow read:  if isUserActive() && canReadOwnedTask();
+      allow write: if false;
+    }
+
+    // ---- SESSIONS (legacy audit log: write-own, manager/admin read) ---------
+    // Previously had NO rule, so every write was silently default-denied (the log
+    // doc was lost). Allow the owner to append and managers/admins to read it.
+    match /sessions/{sessionId} {
+      allow create:        if isUserActive() && createOwnsUserId();
+      allow read:          if isManagerOrAdmin();
+      allow update, delete: if false;
+    }
+
+    // ---- CALENDAR NOTIFICATIONS --------------------------------------------
+    // Managers monitor every worker's weekly calendar changes; a worker only its
+    // own. The worker appends changes (owner update); a manager dismisses.
+    match /calendar_notifications/{notifId} {
+      // READ stays broad: the manager bell queries the whole week (no subtree field exists on this
+      // doc to array-contains on) and filters to its subtree in the client, so a per-owner read rule
+      // would fail the whole query. The R-08 boundary here is WRITE authority (below), matched by the
+      // client only displaying/dismissing subtree rows (ManagerNotifications scopedCalendarNotifications).
+      allow read:   if isUserActive() &&
+                    (resource.data.get('userId', '') == request.auth.uid || isManagerOrAdmin());
+      // Worker creates its own; a manager also creates the FIRST notification of a worker's week when
+      // approving that worker's calendar change (the audit log carries the worker's userId). Audit
+      // R-08: a scoped/senior manager may create only for a worker in their subtree (the approve flow
+      // that reaches here is itself subtree-bounded via the scoped calendar_requests + work_hours rules).
+      allow create: if isUserActive() &&
+                    (createOwnsUserId() || canSeeWholeTeam() ||
+                     (isScopedOverseer() && overseesUser(request.resource.data.get('userId', ''))));
+      // Worker updates its own (append changes); a manager dismisses (dismissedBy). Audit R-08: a
+      // scoped/senior manager may dismiss only a subtree worker's notification — matched by the client,
+      // which never lists a non-subtree row for them to dismiss.
+      allow update: if isUserActive() &&
+                    (resource.data.get('userId', '') == request.auth.uid || canSeeWholeTeam() ||
+                     (isScopedOverseer() && overseesUser(resource.data.get('userId', '')))) &&
+                    // Owner pin — no re-pointing the record to a colleague. Authority above is read
+                    // from resource.data (the PRE-image), so without this the owner may rewrite
+                    // `userId` on the way out: the row then leaves their own manager's view (that
+                    // filter fails closed) and lands in the bell attributed to whoever they named,
+                    // falsifying the calendar-change audit trail. Same pin the sibling owned
+                    // collections already carry — work_sessions, break_sessions, work_hours and
+                    // calendar_requests — this collection was simply the one that was missed.
+                    request.resource.data.get('userId', '') == resource.data.get('userId', '');
+      allow delete: if isUserActive() &&
+                    (canSeeWholeTeam() ||
+                     (isScopedOverseer() && overseesUser(resource.data.get('userId', ''))));
+    }
+
+    // ---- CALENDAR REQUESTS (approval workflow) ------------------------------
+    match /calendar_requests/{requestId} {
+      // Team-wide read: the Reports "calendar change history" tab (worker-rendered)
+      // queries all requests by date and filters client-side, and managers query by
+      // managerId — both are collection-wide. Write stays owner/manager-scoped.
+      allow read:   if isUserActive();
+      allow create: if isUserActive() && createOwnsUserId();
+      // Worker edits its own request; managers approve/decline. Update may NOT re-point the
+      // record's owner: ownsUserId() only checks the EXISTING owner, so without this pin an owner
+      // (or manager) could rewrite userId to a colleague and graft a request onto someone else's
+      // calendar history (which the Reports tab queries by userId). The .get() form tolerates a
+      // legacy doc predating the userId field, matching the pin on work_sessions/break_sessions/
+      // work_hours. Split from delete because a delete carries no request.resource to compare.
+      // Audit R-08: a manager may approve/decline/delete a request only within scope. A scoped or
+      // senior manager must oversee the request's owner (the worker); admins and unscoped managers
+      // keep whole-company reach. The APPROVE path was already effectively bounded because it writes
+      // the worker's work_hours FIRST (that rule requires overseesUser too), but DECLINE touches only
+      // this status flip, so a scoped manager could previously decline ANY team's request. Keyed on
+      // the EXISTING owner (resource.data.userId); the userId pin below keeps it immutable on update.
+      // (calendar_notifications is deliberately NOT scoped the same way: a manager's notification bell
+      // lists the whole company by weekStart, so scoping its dismiss write would deny dismissing rows
+      // the UI legitimately shows — a read-breadth concern, not this write-authority one.)
+      allow update: if isUserActive()
+                    && (canSeeWholeTeam() ||
+                        (isScopedOverseer() && overseesUser(resource.data.userId)) ||
+                        (ownsUserId() && !changesCalendarApprovalFields()))
+                    && request.resource.data.get('userId', '') == resource.data.get('userId', '');
+      allow delete: if isUserActive()
+                    && (ownsUserId() || canSeeWholeTeam() ||
+                        (isScopedOverseer() && overseesUser(resource.data.userId)));
+    }
+
+    // ---- REQUEST NOTIFICATIONS (recipient = owner) --------------------------
+    // Created BY a worker/system FOR a manager (recipientId). The recipient reads
+    // and updates (mark read); any active user may create one to notify a manager.
+    //
+    // CREATE was previously `if isUserActive()` with NO shape check — yet every doc
+    // created here fires a Cloud Function that pushes an OS notification to the
+    // recipient's devices. That conflated "may write a doc" with "may ring someone's
+    // phone". The tightened create rule below cannot rate-limit (rules can't count over
+    // time — that needs a sender-side throttle), but it does:
+    //   * require a non-empty string recipientId (no malformed/auto-display abuse),
+    //   * bind provenance to the caller — the doc must stamp the caller's uid as either
+    //     `createdBy` (comment/approval writers) OR `userId` (completion/time-extension
+    //     writers), so a user cannot forge a notification "from" someone else,
+    //   * require it start unread, and
+    //   * clamp the only free-form, user-authored field (`commentText`) that crosses the
+    //     app boundary onto a lockscreen, so it can't carry an oversized/multiline payload.
+    // All four current client write-sites satisfy this (audited 2026-06-22).
+    match /request_notifications/{notifId} {
+      allow read:   if isUserActive() && resource.data.recipientId == request.auth.uid;
+      allow create: if isUserActive()
+                    && request.resource.data.recipientId is string
+                    && request.resource.data.recipientId.size() > 0
+                    && (request.resource.data.get('createdBy', '') == request.auth.uid ||
+                        request.resource.data.get('userId', '') == request.auth.uid)
+                    && request.resource.data.get('isRead', false) == false
+                    // SERVER-AUTHORED TYPES ARE NOT CLIENT-WRITABLE. Provenance above only proves the
+                    // caller stamped their OWN uid — it does not stop them choosing a `type` that the
+                    // UI renders as a privileged card. `account_approval` is the sharp one: a worker
+                    // could addDoc one naming any uid as targetUserId, and the admin tapping the
+                    // resulting (pixel-identical) card runs handleAccountDecision, re-enabling a
+                    // blocked account. The others would forge achievements, fake overdue/escalation
+                    // alerts, or spoof a system session close. Admin-SDK writes bypass rules entirely,
+                    // so the genuine server fan-out is unaffected by this clause.
+                    //
+                    // Deliberately a DENY-list of the 8 server-only types, not an allow-list of the 21
+                    // client ones: the rules suite runs ONLY under the Firestore emulator and `npm test`
+                    // skips it, so an allow-list would silently permission-deny any newly-added client
+                    // notification type with nothing in the default gate to catch it. Audited against
+                    // src/notifications/registry.js — every other registry type has a real client
+                    // write-site (notify(), taskFlags notifyType, or a direct addDoc).
+                    && !(request.resource.data.get('type', '') in [
+                          'account_approval', 'achievement', 'task_priority_escalated',
+                          'task_overdue', 'session_auto_closed', 'timer_running_check',
+                          'recurring_reassign', 'task_over_estimate'
+                        ])
+                    && (!('commentText' in request.resource.data) ||
+                        (request.resource.data.commentText is string &&
+                         request.resource.data.commentText.size() <= 2000))
+                    // A NAMED ROW MUST BE THE CALLER'S OWN. `sessionRef` is not decoration: the
+                    // manager's card applies the requested end to that exact work_session using the
+                    // MANAGER's authority. Provenance above only proves the caller stamped their own
+                    // uid on the notification — it says nothing about who owns the row it points at,
+                    // so a request could name a colleague's session and have an admin move somebody
+                    // else's paid time in one tap (a confused deputy; the client re-checks too).
+                    // Only the one client write-site that sets this field ("Koreguoti savo laiką")
+                    // is affected, and it always names the caller's own row.
+                    && (request.resource.data.get('sessionRef', null) == null ||
+                        (request.resource.data.sessionRef is string &&
+                         exists(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionRef)) &&
+                         get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionRef))
+                           .data.get('userId', '') == request.auth.uid));
+      allow update: if isUserActive() && resource.data.recipientId == request.auth.uid;
+      allow delete: if isUserActive() &&
+                    (resource.data.recipientId == request.auth.uid || isManagerOrAdmin());
+    }
+
+    // ---- TASK TEMPLATES -----------------------------------------------------
+    // Two kinds, told apart by `scope`:
+    //   * 'team'     — the shared, curated library ("how we do recurring jobs"). Created by an
+    //                  ADMIN; edited/deleted by an admin OR the original creator (so a manager who
+    //                  built the team set, e.g. the piro/kostiumai templates, keeps maintaining it
+    //                  without being locked out). Legacy templates written before `scope` existed
+    //                  carry NO field and are read as 'team' via .get('scope','team').
+    //   * 'personal' — one user's private quick-start templates: created/edited/deleted by their
+    //                  owner only.
+    // READ stays team-wide, exactly as it always was. Personal-template privacy is a UI concern
+    // (the client only surfaces a user's own personal ones), NOT a hard boundary — this is a small
+    // trusted team, and a per-scope read rule would force a production backfill of the legacy docs
+    // (which have no `scope` field, so a `where('scope','==','team')` query would silently drop
+    // them) purely to keep them queryable. Not worth the migration risk for this threat model.
+    match /task_templates/{templateId} {
+      function tmplScope(data) { return data.get('scope', 'team'); }
+
+      allow read: if isUserActive();
+
+      // Create: anyone active may add a PERSONAL template (stamped with their own uid); only an
+      // admin may create a TEAM (shared) template.
+      allow create: if isUserActive()
+                    && request.resource.data.createdBy == request.auth.uid
+                    && ( tmplScope(request.resource.data) == 'personal'
+                         || (tmplScope(request.resource.data) == 'team' && isAdmin()) );
+
+      // Update/Delete: a personal template only by its owner; a team template by an admin OR its
+      // creator. Ownership and scope are immutable on a normal edit — only an admin may re-scope
+      // (promote a personal template to team / demote one) or this would be a self-promotion hole.
+      allow update: if isUserActive()
+                    && request.resource.data.createdBy == resource.data.createdBy
+                    && ( isAdmin() || tmplScope(request.resource.data) == tmplScope(resource.data) )
+                    && ( (tmplScope(resource.data) == 'personal' && resource.data.createdBy == request.auth.uid)
+                         || (tmplScope(resource.data) == 'team' && (isAdmin() || resource.data.createdBy == request.auth.uid)) );
+      allow delete: if isUserActive()
+                    && ( (tmplScope(resource.data) == 'personal' && resource.data.createdBy == request.auth.uid)
+                         || (tmplScope(resource.data) == 'team' && (isAdmin() || resource.data.createdBy == request.auth.uid)) );
+    }
+
+    // ---- USER SETTINGS (doc id == owner uid) --------------------------------
+    match /user_settings/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ---- FCM TOKENS (doc id == owner uid) -----------------------------------
+    // Each user stores their own device push tokens (fcm_tokens/{uid} = { tokens: [] }).
+    // Only the owner reads/writes; the Cloud Functions sender reads via the admin SDK
+    // (which bypasses rules), so no cross-user read is ever needed here.
+    match /fcm_tokens/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ---- ERROR LOGS (durable crash log) -------------------------------------
+    // Any authenticated user may APPEND a crash report (kept permissive so a broken
+    // session can still record its failure); only managers/admins may read them.
+    // Entries are immutable; only admins may clear them.
+    //
+    // CREATE shape guards (full-sweep L2): the client (errorLog.js) clamps message<=2000 and
+    // stack/componentStack<=8000, but leaves url/userAgent UNbounded — so a compromised client
+    // could flood the manager-visible log with arbitrarily large strings. The bounds below sit
+    // ABOVE the client clamps so every legitimate append passes unchanged; they only reject the
+    // absurd/oversized payloads corruption produces (the request_notifications/decision_log idiom:
+    // each field is checked only when PRESENT). userId must be the caller's own uid OR null — the
+    // null branch is REQUIRED: errorLog.js writes userId=null when auth is not ready, which is the
+    // earliest-crash case the durable log exists to capture, so pinning to uid alone would silently
+    // drop the most important reports. Rules cannot rate-limit (no cross-write counting).
+    //
+    // `context` carries the per-call diagnostic keys (taskId/commandId/outcome/code) the logger used
+    // to discard — the fields that separate a genuine `rejected` from a `conflicted` on a report
+    // from the field. It is guarded by TYPE and KEY COUNT only: rules cannot iterate a map, and the
+    // clever alternatives (values().join() and friends) ERROR on a non-string value, and a rule
+    // evaluation error DENIES — which would silently kill the remote sink for exactly the enriched
+    // crashes this exists to capture. The client clamps each value to 500 chars and the map to 20
+    // keys; the bound below is that same ceiling, so every legitimate append passes unchanged.
+    match /error_logs/{logId} {
+      allow create: if isAuthenticated()
+                    && (!('message' in request.resource.data) ||
+                        (request.resource.data.message is string && request.resource.data.message.size() <= 4000))
+                    && (!('stack' in request.resource.data) ||
+                        (request.resource.data.stack is string && request.resource.data.stack.size() <= 16000))
+                    && (!('componentStack' in request.resource.data) ||
+                        (request.resource.data.componentStack is string && request.resource.data.componentStack.size() <= 16000))
+                    && (!('url' in request.resource.data) ||
+                        (request.resource.data.url is string && request.resource.data.url.size() <= 4000))
+                    && (!('userAgent' in request.resource.data) ||
+                        (request.resource.data.userAgent is string && request.resource.data.userAgent.size() <= 1000))
+                    && (!('source' in request.resource.data) ||
+                        (request.resource.data.source is string && request.resource.data.source.size() <= 200))
+                    && (!('context' in request.resource.data) ||
+                        (request.resource.data.context is map && request.resource.data.context.keys().size() <= 20))
+                    && (request.resource.data.get('userId', null) == null ||
+                        request.resource.data.userId == request.auth.uid);
+      allow read:   if isManagerOrAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---- DECISION LOG (AI-native command audit / event spine) ---------------
+    // Append-only audit of every consequential command run through the command layer (ADR 0015):
+    // who decided (actorType/actorId/actorName), what command against which target, why, and a
+    // compact before/after. This is the seam that makes an action — human OR agent — attributable
+    // and reversible, and the surface an analysis agent reads to reconstruct events.
+    //
+    // CREATE: any active user may APPEND, but ONLY as a HUMAN acting as themselves — the doc must
+    //   stamp the caller's uid as `actorId` AND declare `actorType:'human'`. Pinning the TYPE (not
+    //   just the id) is what stops a human from LAUNDERING a decision as if an AI agent or system job
+    //   made it — the attribution boundary ADR 0015 exists to harden. A non-human commit (agent/
+    //   system) runs server-side via the admin SDK, which bypasses these rules and stamps its own
+    //   actorType. Minimal, permissive shape guards (the request_notifications idiom) keep the audit
+    //   spine from being poisoned by a malformed/oversized free-form entry; the appender's payload
+    //   passes them unchanged (a null `reason` is tolerated; an absent field defaults-passes).
+    // UPDATE: false — entries are IMMUTABLE. The doc id is the command's idempotency key, so a
+    //   retried command re-issues setDoc against the same id, which evaluates as an update and is
+    //   DENIED here; the client appender swallows that denial (best-effort), leaving the original
+    //   entry intact rather than duplicating it.
+    // READ: managers/admins, so the audit trail is visible in-app. DELETE: admin only (log hygiene).
+    match /decision_log/{opId} {
+      allow create: if isUserActive()
+                    && request.resource.data.get('actorId', '') == request.auth.uid
+                    && request.resource.data.get('actorType', '') == 'human'
+                    && request.resource.data.get('command', '') is string
+                    && request.resource.data.get('command', '').size() > 0
+                    && request.resource.data.get('mode', '') is string
+                    && (!('reason' in request.resource.data) ||
+                        request.resource.data.reason == null ||
+                        (request.resource.data.reason is string &&
+                         request.resource.data.reason.size() <= 2000));
+      allow read:   if isManagerOrAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---- INTEGRITY REPORTS (durability monitor output) ----------------------
+    // The scheduled integrity-scan Cloud Function (admin SDK) writes one report doc here per run
+    // (integrity_reports/{YYYY-MM-DD}) plus a rolling baseline (integrity_reports/_counts): anomaly
+    // counts + a sudden-volume-drop canary that signals a possible mass-delete / wipe. Read by
+    // managers/admins so the safety net is visible in-app; no CLIENT may write — only the admin SDK,
+    // which bypasses rules. Recovery procedure: docs/runbooks/firestore-backup-recovery.md.
+    match /integrity_reports/{reportId} {
+      allow read:  if isManagerOrAdmin();
+      allow write: if false;
+    }
+
+    // ---- SYSTEM CONFIG (AI-agent kill-switch + future global toggles) --------
+    // system_config/agents = { enabled: boolean, updatedAt, updatedBy }: the AI-agent KILL-SWITCH
+    // (ADR 0015) — a single global brake. The command kernel mirrors this flag into memory and
+    // refuses EVERY agent command the instant it is engaged, so EVERY active session must be able to
+    // READ it (it carries no sensitive data — just a boolean toggle). CREATE/UPDATE (engaging or
+    // releasing the brake) is an ADMIN-only privileged safety action; the write must carry a boolean
+    // `enabled` (present + typed) so a malformed flag can't silently disable the brake. DELETE is
+    // explicitly forbidden (the flag is a permanent control, never removed) — split out from the
+    // create/update grant so a future refactor of the shape guard can't accidentally permit it. The
+    // future server-side agent surface reads this same doc and fails CLOSED.
+    match /system_config/{docId} {
+      allow read:          if isUserActive();
+      allow create, update: if isAdmin() && request.resource.data.enabled is bool;
+      allow delete:        if false;
+    }
+  }
+}

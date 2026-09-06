@@ -1,0 +1,13 @@
+
+> workz@0.0.0 test:functions
+> node functions/integrityScans.test.cjs && node functions/decisionLog.test.cjs && node functions/workDay.test.cjs && node functions/discovery.test.cjs
+
+integrityScans.test.cjs: all assertions passed
+integrityScans: counter-drift assertions passed
+{"err":"network","severity":"WARNING","message":"appendSystemDecision failed (audit lost, effect stands)"}
+{"command":"c","severity":"WARNING","message":"appendSystemDecision: missing idempotencyKey/command"}
+decisionLog.test.cjs: all assertions passed
+workDay.test.cjs: all assertions passed
+discovery.test: firebase-admin 14.3.0, firebase-functions 7.3.2
+discovery.test: OK — 24 endpoints (15 event, 3 callable, 6 schedule), all gcfv2 in europe-west1
+TEST_FNS_EXIT=0

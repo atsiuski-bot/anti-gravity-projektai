@@ -1,0 +1,39 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Task attachments live under a per-uploader folder: attachments/{uid}/<file>.
+    // Direct SDK access (read / list / upload / overwrite / delete) is scoped to the
+    // owner, so one user cannot enumerate or tamper with another user's files.
+    //
+    // Task VIEWERS (the assigned worker + managers/admins) still see attachments via
+    // the tokenized download URL stored on the task document - that URL is a capability
+    // that does not depend on these rules, so visibility correctly follows task access
+    // without Storage rules needing to read Firestore (which they cannot do).
+    //
+    // Legacy files uploaded before this change live at the old flat path
+    // attachments/<file>; they match no rule here (no SDK access) but remain viewable
+    // through their already-stored tokenized URLs.
+    match /attachments/{userId}/{fileName} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Delete (request.resource == null) stays unrestricted for the owner. Uploads must be
+      // images (the client only ever sends compressed JPEGs) and under 20 MB — this closes
+      // the client-side `accept="image/*"` bypass (a renamed .exe) and caps quota abuse.
+      allow write: if request.auth != null && request.auth.uid == userId
+                   && (request.resource == null
+                       || (request.resource.size < 20 * 1024 * 1024
+                           && request.resource.contentType.matches('image/.*')));
+    }
+
+    // Profile photos: a user uploads only their OWN avatar (owner-scoped write, capped and
+    // image-only). Read is allowed for any authenticated user so teammates can render each
+    // other's avatars (the photoURL stored on the user doc points here). Deletes (clearing a
+    // photo) stay owner-scoped too.
+    match /avatars/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId
+                   && (request.resource == null ||
+                       (request.resource.size < 5 * 1024 * 1024 &&
+                        request.resource.contentType.matches('image/.*')));
+    }
+  }
+}
