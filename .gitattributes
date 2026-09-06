@@ -9,3 +9,10 @@
 # difference that is not one — which would make a genuinely stale helper indistinguishable from
 # a freshly synced one.
 public/__/** -text
+
+# Agent tooling scripts must check out with LF on every platform. The Workflow runner refuses a
+# script containing control characters, and on a Windows checkout (core.autocrlf=true) a plain
+# `text` file arrives with CRLF — which made `/full-debug-sweep` unable to launch its own
+# reasoning workflow by name until the file was hand-normalised (full-sweep-2026-09-05).
+.claude/workflows/*.js text eol=lf
+.claude/commands/*.md text eol=lf

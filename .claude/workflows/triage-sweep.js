@@ -21,7 +21,7 @@ const ALL_DIMENSIONS = [
   { key: 'crashsafety', prompt: 'Crash-safety and session durability. errorLog.js is the durable crash log (localStorage ring buffer workz_error_log capped at 30 + fire-and-forget Firestore error_logs). Hunt: a running task/session left orphaned after reload or crash (timerStatus:"running" + a stale timerStartedAt) with NO automatic recovery, so the next pauseTask credits hours of "ghost time"; fire-and-forget Firestore writes whose failures are swallowed (.catch that only logs) causing silent data loss; throw paths in startSession/startTask/resumeTask that never reach logError or the global unhandledrejection handler; the single-level pausedSession nesting being overwritten when a session is interrupted twice.' },
   { key: 'session-color', prompt: 'The signature whole-screen session color (DESIGN_SYSTEM §2 Principle 1, §4 Rules A-D). Hunt: a colored session shell shown WITHOUT a persistent text label + icon (Rule A — color is never the sole signal, WCAG 1.4.1); a session color that does NOT come from the single SESSION_COLORS map in src/utils/sessionColors.js (Rule B drift); full-saturation red reused for anything but the quick-work state, especially an offline banner rendered red instead of the neutral feedback.offline slate (Rule C); body text/controls placed directly on the saturated shell instead of on a white surface card (Rule D contrast); the no-session state not using IDLE_SHELL.' },
   { key: 'security', prompt: 'Security. firestore.rules: collections with allow read, write: if isUserActive() and NO per-document ownership scope (any active worker can mutate any other user’s tasks/sessions/work_hours/calendar entries); the users collection read gated only by isAuthenticated() (not isUserActive()), so a disabled user still reads all records; any recursive =** wildcard or "if true". storage.rules: over-broad paths. Client input reaching a Firestore/Storage write unvalidated; worker-vs-manager authorization enforced only client-side with no matching rule. Hardcoded secrets committed to git (the src/firebase.js fallback config / API key).' },
-  { key: 'firebase-coupling', prompt: 'Firebase coupling drift. (1) A collection the client reads/writes that has NO matching rule in firestore.rules → Firestore default-deny rejects it at runtime (known live example: the "sessions" collection written in sessionActions.js with no rule, error swallowed = silent loss) — find every such gap. (2) A rule for a collection the client never touches (orphan rule, e.g. shift_logs, daily_stats). (3) There is NO firestore.indexes.json in the repo, so EVERY compound query (where + orderBy on different fields, multiple where, or where(...,"in",...)) is a FAILED_PRECONDITION risk at runtime — enumerate them with file:line. (4) A Storage ref(...) path with no matching storage.rules entry.' },
+  { key: 'firebase-coupling', prompt: 'Firebase coupling drift. (1) A collection the client reads/writes that has NO matching rule in firestore.rules → Firestore default-deny rejects it at runtime (the old "sessions" collection example is FIXED — do not re-report it; hunt for NEW gaps) — find every such gap. (2) A rule for a collection the client never touches (orphan rule, e.g. shift_logs, daily_stats). (3) firestore.indexes.json EXISTS and ships ~14 composite indexes: find compound queries (where + orderBy on different fields, multiple where, or where(...,"in",...)) that have NO matching entry in it — each is a runtime FAILED_PRECONDITION — and entries that match no query (dead index). Report with file:line. (4) A Storage ref(...) path with no matching storage.rules entry.' },
   { key: 'ux-a11y', prompt: 'Accessibility gaps visible in code, against DESIGN_SYSTEM §7 (WCAG 2.1 AA) and §9 (dual density). Hunt: clickable non-semantic <div>/<span> with onClick but no role + keyboard handler; icon-only buttons/IconButton usages with no aria-label (title= alone does not work on touch); interactive controls under 44px (p-1.5 ~28px, p-0.5 ~20px instead of min-h-touch/min-w-touch); readable text below 12px (text-[8px]..text-[11px]); interactive elements with no focus-visible ring; no prefers-reduced-motion handling for animate-pulse/animate-in; text-on-colored-shell contrast below 4.5:1; and on phones, a dense horizontally-scrolling table shown to a worker instead of cards (UserManagement, multi-user Reports, TaskHistory, MonthlyHours, calendar-history must each have a mobile card fallback).' },
   { key: 'i18n-brand', prompt: 'Copy voice and brand. User-facing strings (buttons, toasts, error banners, aria-labels, modal titles, empty/loading/skeleton states, placeholders) that are English or informal instead of Lithuanian formal "Jūs" — English leakage in UI copy is the violation here (this is the INVERSE of an English-only repo). Raw err.message rendered to a user instead of mapped friendly Lithuanian copy. The retired brand name "Viduramžiai" / "Viduramžiai.LT" appearing anywhere in user-facing src/ or index.html (it is allowed ONLY as documentary prose in docs/, CLAUDE.md, AGENTS.md — WORKZ is the only product name).' },
   { key: 'perf', prompt: 'Performance smells. WORKZ is onSnapshot-heavy: every onSnapshot subscription in a useEffect MUST return its unsubscribe() in the cleanup — a missing cleanup is a listener + memory + Firestore-read-cost leak (flag high). Also: expensive work in render without memo/useMemo/useCallback; dynamic lists keyed by array index or unkeyed; N+1 Firestore reads issued inside a loop/map; unbounded collection queries with no limit()/pagination; heavy synchronous work or stacked setInterval timers blocking the main thread.' },
@@ -151,7 +151,7 @@ if (bgt.total && perFindAgent > 0 && toVerify.length) {
     toVerify = toVerify.slice(0, affordable)
   }
 }
-if (!toVerify.length) return { confirmed: [], rejected: [], note: 'No findings to verify (or budget-trimmed to zero).', tokens: { find: findSpend, verify: 0, total: bgt.spent() - spendStart } }
+if (!toVerify.length) return { confirmed: [], rejected: [], unverified: deduped, note: 'No findings to verify (or budget-trimmed to zero) — every finding is UNVERIFIED, not cleared.', tokens: { find: findSpend, verify: 0, total: bgt.spent() - spendStart } }
 
 // --- Verify (each finding: N skeptics try to REFUTE; majority "real" survives)
 phase('Verify')
@@ -183,10 +183,25 @@ const judged = await parallel(
 )
 
 const all = judged.filter(Boolean)
-const confirmed = all.filter((f) => f.confirmed).sort((a, b) => ({ high: 0, medium: 1, low: 2 })[a.severity] - ({ high: 0, medium: 1, low: 2 })[b.severity])
-const rejected = all.filter((f) => !f.confirmed)
+const bySeverity = (a, b) => ({ high: 0, medium: 1, low: 2 })[a.severity] - ({ high: 0, medium: 1, low: 2 })[b.severity]
+// A skeptic that never ran is NOT a vote against. When the verify fan-out is cut short — a usage
+// limit, a budget trim, an agent error — those findings came back with votesTotal 0 and landed in
+// `rejected`, indistinguishable from a claim three skeptics actually refuted. In the 2026-09-05
+// sweep that silently mislabelled 16 findings as false positives that nobody had looked at, four
+// of which were real. Anything the skeptics did not actually decide is now reported separately, so
+// the caller knows it still owes those findings a verdict.
+const unverified = all.filter((f) => f.votesTotal === 0)
+const decided = all.filter((f) => f.votesTotal > 0)
+const confirmed = decided.filter((f) => f.confirmed).sort(bySeverity)
+const rejected = decided.filter((f) => !f.confirmed)
 const totalSpend = bgt.spent() - spendStart
 const verifySpend = totalSpend - findSpend
-log(`Verify: ${confirmed.length} confirmed, ${rejected.length} rejected as false positives. Verify spend ~${fmt(verifySpend)} tok · sweep total ~${fmt(totalSpend)} output tokens (${dims.length} finder(s) + ${toVerify.length}×${SKEPTICS} verifier(s)).`)
+log(`Verify: ${confirmed.length} confirmed, ${rejected.length} rejected as false positives${unverified.length ? `, ${unverified.length} UNVERIFIED (no skeptic completed — verify these by hand, they are NOT cleared)` : ''}. Verify spend ~${fmt(verifySpend)} tok · sweep total ~${fmt(totalSpend)} output tokens (${dims.length} finder(s) + ${toVerify.length}×${SKEPTICS} verifier(s)).`)
 
-return { confirmed, rejected, counts: { raw: raw.length, deduped: deduped.length, verified: all.length, confirmed: confirmed.length }, tokens: { find: findSpend, verify: verifySpend, total: totalSpend } }
+return {
+  confirmed,
+  rejected,
+  unverified: unverified.sort(bySeverity),
+  counts: { raw: raw.length, deduped: deduped.length, verified: decided.length, confirmed: confirmed.length, unverified: unverified.length },
+  tokens: { find: findSpend, verify: verifySpend, total: totalSpend },
+}
