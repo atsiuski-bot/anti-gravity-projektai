@@ -1,6 +1,6 @@
 ---
 description: Read-only Firebase health check for WORKZ via the Firebase MCP. Pulls the live project config, the live Firestore/Storage security rules and active indexes, deployed Cloud Functions, and deploy status — then diffs the live security rules AND the live function set against the repo (firestore.rules / storage.rules / functions exports) and reports any drift. Pure inspection: makes NO writes and triggers NO deploy. Use to answer "is what's live the same as the repo?" without pasting console commands or keys.
-allowed-tools: mcp__firebase__firebase_get_project, mcp__firebase__firebase_get_sdk_config, mcp__firebase__firebase_get_security_rules, mcp__firebase__firebase_validate_security_rules, mcp__firebase__firebase_deploy_status, mcp__firebase__firestore_list_indexes, mcp__firebase__functions_list_functions, Read, Grep, Glob
+allowed-tools: mcp__firebase__firebase_get_project, mcp__firebase__firebase_get_sdk_config, mcp__firebase__firebase_get_security_rules, mcp__firebase__firebase_validate_security_rules, mcp__firebase__firebase_deploy_status, mcp__firebase__firestore_list_indexes, mcp__firebase__functions_list_functions, Bash(node scripts/live-rules-check.cjs*), Read, Grep, Glob
 ---
 
 # /firebase-status — live Firebase vs. repo (read-only)
@@ -21,10 +21,18 @@ or never ran at all. This command makes that drift visible on demand, cheaply, b
 1. **Project + config.** `firebase_get_project` and `firebase_get_sdk_config` — confirm the
    active project is `darbo-planavimas` and report the app config the browser actually uses.
    (These values are public client config, not secrets — print them plainly.)
-2. **Live security rules.** `firebase_get_security_rules` for both Firestore and Storage. Read
-   the repo's `firestore.rules` and `storage.rules` and **diff live vs. repo**. Report each
-   difference precisely (added/removed/changed match blocks or conditions). If they are
-   identical, say so explicitly.
+2. **Live security rules — the authoritative diff is the script.** Run
+   `node scripts/live-rules-check.cjs` (Bash). It reads the released Firestore + Storage rulesets
+   through the Rules REST API with the **CLI's own stored credential** (the account `firebase login`
+   pinned to this directory — the same one a deploy would use), diffs them byte-for-byte against
+   `firestore.rules` / `storage.rules`, prints `IN SYNC` / `DRIFT` per surface with the first
+   differing line, and exits non-zero on drift. Report its output verbatim.
+   Why not the MCP: on 2026-09-07 the MCP process held a different credential than the CLI and
+   `firebase_get_security_rules` 403'd against a foreign quota project — the tool meant to answer
+   "is what's live the same as the repo?" could not. The script works exactly when the deploy
+   works. Use `firebase_get_security_rules` only as a secondary read if the script cannot
+   authenticate (its exit 2 names the `firebase login` fix); never report a rules verdict from the
+   deploy log alone.
 3. **Validate the repo rules.** `firebase_validate_security_rules` against the repo files so a
    syntactically broken ruleset is caught before anyone tries to deploy it.
 4. **Function-set parity (live ↔ repo).** `functions_list_functions` for the LIVE deployed set,

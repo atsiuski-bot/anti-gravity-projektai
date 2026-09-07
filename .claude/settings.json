@@ -28,6 +28,7 @@
       "Bash(git fetch:*)",
       "Bash(git remote:*)",
       "Bash(git stash list:*)",
+      "Bash(node scripts/live-rules-check.cjs*)",
       "mcp__firebase__firebase_get_project",
       "mcp__firebase__firebase_list_projects",
       "mcp__firebase__firebase_list_apps",
