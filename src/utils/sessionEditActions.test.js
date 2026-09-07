@@ -27,6 +27,14 @@ vi.mock('firebase/firestore', () => ({
     increment: vi.fn((n) => ({ _increment: n })),
     query: vi.fn((...args) => ({ _query: args })),
     where: vi.fn((field, op, value) => ({ field, op, value })),
+    // The default transaction fake routes tx.get/set/update through the SAME mocks as the plain
+    // calls, so a test that scripts getDoc/setDoc keeps driving a transactional path unchanged.
+    // The concurrency suite below swaps in a stateful, serializing fake instead.
+    runTransaction: vi.fn(async (_db, fn) => fn({
+        get: (ref) => getDoc(ref),
+        set: (ref, data, opts) => setDoc(ref, data, opts),
+        update: (ref, data) => updateDoc(ref, data),
+    })),
 }));
 
 // notify()/notifyMany() are exercised in their own surface; here we only assert the action layer
@@ -37,7 +45,7 @@ vi.mock('./notify', () => ({
     notifyMany: vi.fn(() => Promise.resolve()),
 }));
 
-import { updateDoc, addDoc, setDoc, deleteDoc, doc, getDoc, getDocs } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, deleteDoc, doc, getDoc, getDocs, runTransaction } from 'firebase/firestore';
 import { notify, notifyMany } from './notify';
 import {
     deriveSessionFields,
@@ -1206,5 +1214,90 @@ describe('applyRequestedSessionEnd (one-tap approval of a requested end)', () =>
     it('refuses without a session id or a requested end', async () => {
         expect((await applyRequestedSessionEnd({ endTime: 'x', expectedUserId: 'u1' })).error).toBe('missing');
         expect((await applyRequestedSessionEnd({ sessionId: 's', expectedUserId: 'u1' })).error).toBe('missing');
+    });
+});
+
+// Audit 2026-09-07 L1 — the existence read and the row write of a recovered-gap claim share ONE
+// transaction, so two callers (two tabs on the same saved offer) cannot BOTH observe the row as
+// absent and each credit the task counter. Modelled with a stateful fake whose transactions run
+// serially — the property Firestore guarantees by retrying the loser — and both claims launched
+// concurrently so their reads genuinely interleave before the fix would have let them.
+describe('claimRecoveredGap — concurrent claims of the same gap credit the counter ONCE', () => {
+    const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+    const taskWrites = () => updateDoc.mock.calls.filter(([ref]) => String(ref._path || '').startsWith('tasks/'));
+
+    // vi.clearAllMocks keeps implementations, so put the module-level defaults back after each case.
+    afterEach(() => {
+        getDoc.mockImplementation(() => Promise.resolve({ exists: () => false }));
+        getDocs.mockImplementation(() => Promise.resolve({ forEach: () => {} }));
+        runTransaction.mockImplementation(async (_db, fn) => fn({
+            get: (ref) => getDoc(ref),
+            set: (ref, data, opts) => setDoc(ref, data, opts),
+            update: (ref, data) => updateDoc(ref, data),
+        }));
+    });
+
+    it('two concurrent claims → one ledger row, exactly one +delta on the task', async () => {
+        const store = new Map(); // path → data (the work_sessions ledger)
+        let chain = Promise.resolve();
+        runTransaction.mockImplementation((_db, fn) => {
+            // Serialize: each transaction starts only after the previous one committed.
+            const run = chain.then(() => fn({
+                // A real snapshot is immutable: capture existence at READ time, not lazily.
+                get: async (ref) => {
+                    const has = store.has(ref._path);
+                    const data = store.get(ref._path);
+                    return { exists: () => has, data: () => data };
+                },
+                set: (ref, data) => { store.set(ref._path, { ...(store.get(ref._path) || {}), ...data }); },
+                update: () => {},
+            }));
+            chain = run.catch(() => {});
+            return run;
+        });
+        // The task exists (counter at 60); the worker's broad sessions read is denied → delta mode.
+        getDoc.mockImplementation(async (ref) =>
+            String(ref._path).startsWith('tasks/')
+                ? { exists: () => true, data: () => ({ timerMinutes: 60 }) }
+                : { exists: () => store.has(ref._path), data: () => store.get(ref._path) }
+        );
+        getDocs.mockImplementation(async (q) => {
+            const isBroad = (q._query || []).filter((w) => w && w.field).length === 1;
+            if (isBroad) throw denied;
+            return { forEach: () => {} };
+        });
+
+        const args = {
+            task: { id: 't1', title: 'Kostiumai' },
+            worker: { uid: 'u1', displayName: 'Simona' },
+            startTime: '2026-06-23T11:00:00.000Z',
+            endTime: '2026-06-23T11:30:00.000Z', // 30 min
+        };
+        const [a, b] = await Promise.all([claimRecoveredGap(args), claimRecoveredGap(args)]);
+
+        expect(a.ok).toBe(true);
+        expect(b.ok).toBe(true);
+        expect(store.size).toBe(1); // one deterministic row
+        const increments = taskWrites().map(([, data]) => data.timerMinutes);
+        expect(increments).toEqual([{ _increment: 30 }]); // credited once, not twice
+        expect(setDoc).not.toHaveBeenCalled(); // the fallback write never ran — the transaction did
+    });
+
+    it('when the transaction cannot run (offline), the row is still written and NO delta is claimed', async () => {
+        runTransaction.mockRejectedValueOnce(Object.assign(new Error('unavailable'), { code: 'unavailable' }));
+        getDoc.mockResolvedValue({ exists: () => true, data: () => ({ timerMinutes: 60 }) });
+        getDocs.mockRejectedValueOnce(denied).mockResolvedValueOnce({ forEach: () => {} });
+
+        const res = await claimRecoveredGap({
+            task: { id: 't1', title: 'Kostiumai' },
+            worker: { uid: 'u1' },
+            startTime: '2026-06-23T11:00:00.000Z',
+            endTime: '2026-06-23T11:30:00.000Z',
+        });
+
+        expect(res.ok).toBe(true);
+        expect(setDoc).toHaveBeenCalledTimes(1); // the old fail-closed merge
+        expect(setDoc.mock.calls[0][2]).toEqual({ merge: true });
+        expect(taskWrites()).toEqual([]); // not provably new → no counter credit
     });
 });

@@ -15,6 +15,7 @@ import { lt } from 'date-fns/locale';
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import IconButton from './IconButton';
+import Modal from './Modal';
 import { getLithuanianDateString } from '../../utils/timeUtils';
 
 /**
@@ -87,10 +88,26 @@ export default function DatePicker({
     ...rest
 }) {
     const [open, setOpen] = useState(false);
+    const [isMobile, setIsMobile] = useState(false);
     const containerRef = useRef(null);
     const triggerRef = useRef(null);
     const gridRef = useRef(null);
     const dialogId = useId();
+
+    // Two presentations, one behaviour (mirrors Select): an anchored popover on wide screens, and
+    // on a phone (<640px, Tailwind `sm`) the calendar rides in the canonical centred Modal sheet.
+    // The anchored popover is 344px wide (see the width-floor note below) and is absolutely
+    // positioned INSIDE the field's dialog, whose card is ~328px at 360px and `overflow-hidden` —
+    // so on a phone its right-hand columns were simply cut off (audit 2026-09-07 U1). No z-index
+    // escapes overflow clipping; only rendering through the portalled Modal does.
+    const useSheet = isMobile;
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width: 639px)');
+        const update = () => setIsMobile(mq.matches);
+        update();
+        mq.addEventListener('change', update);
+        return () => mq.removeEventListener('change', update);
+    }, []);
 
     const selectedDate = parseDateStr(value);
     const todayStr = getLithuanianDateString();
@@ -110,9 +127,10 @@ export default function DatePicker({
         setFocusedDate(seed);
     }, [open, value, todayStr]);
 
-    // Dismiss on outside pointer-down / Escape, and restore focus to the trigger on Escape.
+    // Anchored popover: dismiss on outside pointer-down. (The sheet's Modal owns its own backdrop
+    // and Escape dismissal, and its portal is outside containerRef, so this must not run there.)
     useEffect(() => {
-        if (!open) return undefined;
+        if (!open || useSheet) return undefined;
         const onPointerDown = (e) => {
             if (containerRef.current && !containerRef.current.contains(e.target)) {
                 setOpen(false);
@@ -120,7 +138,25 @@ export default function DatePicker({
         };
         document.addEventListener('pointerdown', onPointerDown);
         return () => document.removeEventListener('pointerdown', onPointerDown);
-    }, [open]);
+    }, [open, useSheet]);
+
+    const closeAndRefocus = useCallback(() => {
+        setOpen(false);
+        // Return focus to the trigger so keyboard users keep their place.
+        requestAnimationFrame(() => triggerRef.current?.focus());
+    }, []);
+
+    // Anchored popover: Escape closes the calendar — and STOPS there. The form this field sits in
+    // is a Modal whose Escape handler listens on the document, so an un-stopped keypress closed the
+    // calendar AND discarded the whole unsaved form behind it (audit 2026-09-07 U2). Handled on the
+    // popover wrapper (not only the day grid) so it also works from the month-nav buttons. The
+    // sheet path needs nothing: its own Modal is the topmost dialog and closes only itself.
+    const onPopoverKeyDown = (e) => {
+        if (e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopPropagation();
+        closeAndRefocus();
+    };
 
     // Move DOM focus to the focused day whenever it changes while open (roving tabindex).
     useEffect(() => {
@@ -180,10 +216,6 @@ export default function DatePicker({
                 if (!isOutOfRange(ds, min, max)) commit(focusedDate);
                 break;
             }
-            case 'Escape':
-                setOpen(false);
-                requestAnimationFrame(() => triggerRef.current?.focus());
-                break;
             default:
                 handled = false;
         }
@@ -204,6 +236,81 @@ export default function DatePicker({
     // and the trigger reserves right padding so the label never slides under it.
     const showClear = clearable && !!selectedDate && !disabled;
 
+    // The calendar body is shared by both presentations (anchored popover / phone sheet).
+    const calendar = (
+        <>
+                        {/* Month navigation */}
+                        <div className="mb-2 flex items-center justify-between">
+                            <IconButton
+                                icon={ChevronLeft}
+                                label="Ankstesnis mėnuo"
+                                onClick={() => setViewMonth((m) => addMonths(m, -1))}
+                            />
+                            <span className="text-body font-bold text-ink-strong capitalize" aria-live="polite">
+                                {format(viewMonth, 'LLLL yyyy', { locale: lt })}
+                            </span>
+                            <IconButton
+                                icon={ChevronRight}
+                                label="Kitas mėnuo"
+                                onClick={() => setViewMonth((m) => addMonths(m, 1))}
+                            />
+                        </div>
+
+                        {/* Weekday header */}
+                        <div className="grid grid-cols-7 gap-0.5" aria-hidden="true">
+                            {WEEKDAY_LABELS.map((wd) => (
+                                <div key={wd} className="py-1 text-center text-caption font-semibold text-ink-muted">
+                                    {wd}
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Day grid */}
+                        <div
+                            ref={gridRef}
+                            role="grid"
+                            onKeyDown={onGridKeyDown}
+                            className="grid grid-cols-7 gap-0.5"
+                        >
+                            {days.map((day) => {
+                                const dayStr = toDateStr(day);
+                                const inMonth = isSameMonth(day, viewMonth);
+                                const isSelected = selectedDate && isSameDay(day, selectedDate);
+                                const isToday = dayStr === todayStr;
+                                const isFocused = isSameDay(day, focusedDate);
+                                const outOfRange = isOutOfRange(dayStr, min, max);
+
+                                return (
+                                    <button
+                                        key={dayStr}
+                                        type="button"
+                                        role="gridcell"
+                                        data-date={dayStr}
+                                        tabIndex={isFocused ? 0 : -1}
+                                        disabled={outOfRange}
+                                        aria-selected={isSelected || undefined}
+                                        aria-current={isToday ? 'date' : undefined}
+                                        aria-label={format(day, 'PPPP', { locale: lt })}
+                                        onClick={() => commit(day)}
+                                        className={cn(
+                                            'flex h-11 w-full items-center justify-center rounded-input text-body tabular-nums',
+                                            'transition duration-fast',
+                                            'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
+                                            'disabled:opacity-30 disabled:pointer-events-none',
+                                            !inMonth && 'text-ink-muted/60',
+                                            inMonth && !isSelected && 'text-ink hover:bg-surface-sunken',
+                                            isSelected && 'bg-brand text-white font-bold',
+                                            isToday && !isSelected && 'ring-1 ring-inset ring-brand font-bold'
+                                        )}
+                                    >
+                                        {day.getDate()}
+                                    </button>
+                                );
+                            })}
+                        </div>
+        </>
+    );
+
     return (
         <div ref={containerRef} className="relative">
             <button
@@ -214,7 +321,7 @@ export default function DatePicker({
                 onClick={() => setOpen((o) => !o)}
                 aria-haspopup="dialog"
                 aria-expanded={open}
-                aria-controls={open ? dialogId : undefined}
+                aria-controls={open && !useSheet ? dialogId : undefined}
                 className={cn(
                     'flex w-full items-center justify-between gap-2 min-h-touch',
                     'rounded-input border border-line bg-surface-card py-2 pl-3 text-body-lg text-left',
@@ -250,12 +357,13 @@ export default function DatePicker({
                 </button>
             )}
 
-            {open && (
+            {open && !useSheet && (
                 <div
                     id={dialogId}
                     role="dialog"
                     aria-modal="false"
                     aria-label="Pasirinkite datą"
+                    onKeyDown={onPopoverKeyDown}
                     className={cn(
                         // WIDTH FLOOR IS LOAD-BEARING, not decoration. The day grid is grid-cols-7
                         // with gap-0.5 inside p-3, and each day is `h-11 w-full` — so only the WIDTH
@@ -267,86 +375,34 @@ export default function DatePicker({
                         // backdate/session dialogs, less in WorkPlanner's 3/4-column ones), which
                         // collapses the cells to ~27px. Mis-tapping a day here writes work time onto
                         // the wrong date, so the floor wins over the container fit.
-                        // KNOWN GAP (follow-up): because the popover is left-anchored to the field,
-                        // a field in the right half of a narrow card can still overhang. The real
-                        // fix is to route the calendar through the canonical centred Modal sheet
-                        // when it does not fit, mirroring Select's `alwaysSheet` path — not a width
-                        // clamp, which cannot express "anchor elsewhere".
+                        // Phones (<640px) never reach this branch — they get the sheet below, which
+                        // is what makes the left-anchored overhang inside a narrow card moot there.
                         'absolute left-0 top-full z-toast mt-1 w-[22rem] min-w-[21.5rem] max-w-[calc(100vw-1rem)]',
                         'rounded-card border border-line bg-surface-card p-3 shadow-lg',
                         'animate-in fade-in slide-in-from-top-2 duration-150'
                     )}
                 >
-                    {/* Month navigation */}
-                    <div className="mb-2 flex items-center justify-between">
-                        <IconButton
-                            icon={ChevronLeft}
-                            label="Ankstesnis mėnuo"
-                            onClick={() => setViewMonth((m) => addMonths(m, -1))}
-                        />
-                        <span className="text-body font-bold text-ink-strong capitalize" aria-live="polite">
-                            {format(viewMonth, 'LLLL yyyy', { locale: lt })}
-                        </span>
-                        <IconButton
-                            icon={ChevronRight}
-                            label="Kitas mėnuo"
-                            onClick={() => setViewMonth((m) => addMonths(m, 1))}
-                        />
-                    </div>
-
-                    {/* Weekday header */}
-                    <div className="grid grid-cols-7 gap-0.5" aria-hidden="true">
-                        {WEEKDAY_LABELS.map((wd) => (
-                            <div key={wd} className="py-1 text-center text-caption font-semibold text-ink-muted">
-                                {wd}
-                            </div>
-                        ))}
-                    </div>
-
-                    {/* Day grid */}
-                    <div
-                        ref={gridRef}
-                        role="grid"
-                        onKeyDown={onGridKeyDown}
-                        className="grid grid-cols-7 gap-0.5"
-                    >
-                        {days.map((day) => {
-                            const dayStr = toDateStr(day);
-                            const inMonth = isSameMonth(day, viewMonth);
-                            const isSelected = selectedDate && isSameDay(day, selectedDate);
-                            const isToday = dayStr === todayStr;
-                            const isFocused = isSameDay(day, focusedDate);
-                            const outOfRange = isOutOfRange(dayStr, min, max);
-
-                            return (
-                                <button
-                                    key={dayStr}
-                                    type="button"
-                                    role="gridcell"
-                                    data-date={dayStr}
-                                    tabIndex={isFocused ? 0 : -1}
-                                    disabled={outOfRange}
-                                    aria-selected={isSelected || undefined}
-                                    aria-current={isToday ? 'date' : undefined}
-                                    aria-label={format(day, 'PPPP', { locale: lt })}
-                                    onClick={() => commit(day)}
-                                    className={cn(
-                                        'flex h-11 w-full items-center justify-center rounded-input text-body tabular-nums',
-                                        'transition duration-fast',
-                                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
-                                        'disabled:opacity-30 disabled:pointer-events-none',
-                                        !inMonth && 'text-ink-muted/60',
-                                        inMonth && !isSelected && 'text-ink hover:bg-surface-sunken',
-                                        isSelected && 'bg-brand text-white font-bold',
-                                        isToday && !isSelected && 'ring-1 ring-inset ring-brand font-bold'
-                                    )}
-                                >
-                                    {day.getDate()}
-                                </button>
-                            );
-                        })}
-                    </div>
+                    {calendar}
                 </div>
+            )}
+
+            {/* Phone: the calendar rides in the canonical centred Modal sheet (portalled to <body>,
+                so no ancestor's overflow can clip it), stacked as the topmost dialog above the form
+                that owns this field. `bare` drops the Modal's body padding: the card is viewport-32px
+                wide, and every pixel goes to the day grid so the cells stay as close to 44px as the
+                phone allows (≥45px from 375px up; ~43px wide × 44px tall on a 360px device — the
+                full-width fallback beats the previous clipped, unreachable right-hand columns). */}
+            {open && useSheet && (
+                <Modal
+                    open
+                    onClose={closeAndRefocus}
+                    ariaLabel="Pasirinkite datą"
+                    size="sm"
+                    level="top"
+                    bare
+                >
+                    <div className="p-2">{calendar}</div>
+                </Modal>
             )}
         </div>
     );

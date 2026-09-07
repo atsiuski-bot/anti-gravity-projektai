@@ -1256,7 +1256,12 @@ async function stampOwnedDoc(event, ownerField) {
 
     const desired = await overseersFor(ownerUid);
     if (sameSet(hasStamp ? data.teamManagerIds : [], desired)) return; // already correct
-    await writeStamp(after.ref, desired);
+    // Owner-guarded (audit 2026-09-07 S3): trigger deliveries are not ordered. A task reassigned
+    // A→B and then B→C fires two invocations, and if the A→B one finishes LAST its unconditional
+    // write would stamp B's team onto a task now owned by C — and stay there, because the next
+    // routine edit sees "owner unchanged + stamp present" and never revisits it. The guard commits
+    // the stamp only while the row still names the owner it was computed for.
+    await writeStamp(after.ref, desired, { ownerField, ownerUid });
 }
 
 // Apply the stamp, treating "the row is gone" as DONE rather than as a failure.
@@ -1266,9 +1271,29 @@ async function stampOwnedDoc(event, ownerField) {
 // session within seconds), and an un-guarded NOT_FOUND would then be retried for days against a
 // document that will never exist again. A deleted row has no visibility to maintain, so stopping is
 // the correct outcome, not a swallowed error.
-async function writeStamp(ref, desired) {
+//
+// With an `owner` guard the write runs in a transaction that re-reads the row and skips when the
+// owner field no longer equals the owner the stamp was derived from (a newer event owns the row —
+// its own invocation stamps it). Without a guard (session creates, where the owner never changes)
+// the plain update is kept.
+async function writeStamp(ref, desired, owner) {
     try {
-        await ref.update({ teamManagerIds: desired });
+        if (!owner) {
+            await ref.update({ teamManagerIds: desired });
+            return;
+        }
+        await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) return; // gone — nothing to stamp
+            const current = snap.data() || {};
+            if (current[owner.ownerField] !== owner.ownerUid) {
+                logger.info('stamp skipped: owner changed under a stale event', {
+                    path: ref.path, computedFor: owner.ownerUid, nowOwnedBy: current[owner.ownerField] || null,
+                });
+                return;
+            }
+            tx.update(ref, { teamManagerIds: desired });
+        });
     } catch (err) {
         if (err && (err.code === 5 || err.code === 'not-found')) return;
         throw err;
@@ -3150,6 +3175,25 @@ async function isUserAbsentOn(uid, dayStr) {
     }
 }
 
+// May `createdBy` have a task materialized for `assignee`? Mirrors the tasks CREATE rule
+// (self-assign | whole-team viewer | scoped overseer inside the assignee's closure). Returns
+// { ok, reason } — the reason is surfaced in the scheduler log so a refused template is visible.
+async function recurringCreatorScope(createdBy, assignee) {
+    if (!createdBy) return { ok: false, reason: 'no-creator' };
+    const cSnap = await db.collection('users').doc(createdBy).get();
+    if (!cSnap.exists) return { ok: false, reason: 'creator-missing' };
+    const creator = cSnap.data() || {};
+    if (creator.isDisabled === true) return { ok: false, reason: 'creator-disabled' };
+    if (!assignee || assignee === createdBy) return { ok: true };
+    const role = creator.role || 'worker';
+    if (!OVERSEER_ROLES.includes(role)) return { ok: false, reason: 'creator-not-overseer' };
+    const scoped = role === 'seniorManager' || creator.scopedManager === true;
+    if (!scoped) return { ok: true }; // admin / unscoped manager — whole-company reach
+    const aSnap = await db.collection('users').doc(assignee).get();
+    const closure = aSnap.exists && Array.isArray(aSnap.data().overseerIds) ? aSnap.data().overseerIds : [];
+    return closure.includes(createdBy) ? { ok: true } : { ok: false, reason: 'assignee-out-of-scope' };
+}
+
 // Materialize one template's task for `dayStr` (Vilnius). Idempotent via the deterministic id.
 // `force` (run-now) bypasses the fires-today / paused checks so a manager can fire on demand.
 async function generateOneRecurring(templateId, template, dayStr, force, source) {
@@ -3163,6 +3207,22 @@ async function generateOneRecurring(templateId, template, dayStr, force, source)
     const data = template.data || {};
     const assignee = data.assignedUserId || data.assignedWorkerId || '';
     const managerId = data.managerId || template.createdBy || null;
+
+    // Creator-scope gate (audit 2026-09-07 S2). This function writes the task with Admin SDK
+    // authority, so it must enforce the SAME assignment boundary firestore.rules puts on a direct
+    // task create — otherwise any active user could create a personal template naming a colleague
+    // and let the scheduler inject a task into that colleague's queue. The rules now also pin a
+    // non-manager template to its creator, but a rule is a client-write boundary: legacy rows and
+    // Admin-SDK writes bypass it, so the materializer re-checks at the point of authority.
+    //   * creator must exist and be active;
+    //   * a non-overseer creator may only assign to themselves (or nobody);
+    //   * a SCOPED/senior creator may only assign inside their overseer closure (an unscoped
+    //     manager/admin keeps whole-company reach, exactly like the tasks create rule).
+    const scope = await recurringCreatorScope(template.createdBy, assignee);
+    if (!scope.ok) {
+        logger.warn('recurring template refused: creator out of scope', { templateId, reason: scope.reason, createdBy: template.createdBy || null, assignee });
+        return { created: false, reason: scope.reason };
+    }
 
     // Resolve the assignee's display name (the app denormalizes assignedUserName onto task rows).
     let assignedUserName = '';

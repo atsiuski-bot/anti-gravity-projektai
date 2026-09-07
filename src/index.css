@@ -76,6 +76,27 @@
   }
 }
 
+/* `:focus-visible` fallback (audit 2026-09-07 U3). Several controls (DatePicker trigger/days,
+   the backdate inputs, StatGroup headers) remove the native outline with `focus:outline-none` and
+   draw their ring with `focus-visible:ring-*`; `:focus-visible` needs Safari 15.4, so on the
+   declared iOS/Safari 14 floor the ring rule is dropped and keyboard focus is INVISIBLE (WCAG
+   2.4.7). The first rule restores an outline on plain `:focus`; the second is parsed only by
+   engines that know `:focus-visible` and cancels that outline in BOTH of its states there (a
+   visible focus keeps the component's own ring, a pointer focus gets nothing) — so modern engines
+   are untouched, and an engine that cannot parse it keeps the outline on every focus, pointer
+   included: the same trade-off as the `:has()` fallback above. Deliberately NOT wrapped in
+   `@supports selector()` — Safari 14.0–14.4 cannot parse that either and would drop the whole
+   block, which is exactly where the fallback is needed. */
+.focus\:outline-none:focus {
+  outline: 2px solid rgb(var(--brand-ring));
+  outline-offset: 2px;
+}
+.focus\:outline-none:focus-visible,
+.focus\:outline-none:focus:not(:focus-visible) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
 /* Range-slider thumb (UserManagement ColorSlider). `appearance-none` removes the native handle in
    EVERY engine, so a thumb must be redrawn explicitly per-engine or it's invisible — WebKit reads
    ::-webkit-slider-thumb, Gecko reads ::-moz-range-thumb (neither inherits from the other, and

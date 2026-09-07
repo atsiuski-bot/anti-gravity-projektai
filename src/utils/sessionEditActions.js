@@ -1,4 +1,4 @@
-import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, increment, query, where } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, increment, query, where, runTransaction } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
@@ -848,13 +848,22 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
         // ledger. Prove the row is genuinely new before treating this as an addition — and if the
         // read cannot answer (offline, denied), claim nothing and fall back to the old fail-closed
         // behaviour. Over-stating a task's time is worse than a stale, repairable counter.
+        // The existence read and the write share ONE transaction (audit 2026-09-07 L1): two
+        // callers (two tabs on the same saved offer) that both read "absent" and then both wrote
+        // would converge on one row but each credit the counter — Firestore serializes the
+        // transactions instead, so exactly one of them observes the row as new. If the
+        // transaction cannot run at all (offline / denied read), keep the old fail-closed write:
+        // the merge still lands (queued offline like before) and no delta is claimed.
         let isNewClaim = false;
         try {
-            isNewClaim = !(await getDoc(ref)).exists();
+            isNewClaim = await runTransaction(db, async (tx) => {
+                const isNew = !(await tx.get(ref)).exists();
+                tx.set(ref, payload, { merge: true });
+                return isNew;
+            });
         } catch {
-            // unreadable → not provably new → no delta
+            await setDoc(ref, payload, { merge: true });
         }
-        await setDoc(ref, payload, { merge: true });
         // Fold the just-claimed offline gap into the task counter so its sheet/earnings/monitor match
         // the report (recovery already credited the pre-gap segments; this adds the remainder). The
         // worker's own uid keeps the sessions read inside what the rules grant them.

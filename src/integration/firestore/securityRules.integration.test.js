@@ -432,8 +432,10 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
     });
 
     it('TS-1: a legitimate task edit that leaves teamManagerIds untouched is allowed', async () => {
+        // A checklist tick, not a retitle: since audit 2026-09-07 S4 the assignee may no longer
+        // rewrite the definition (title/priority/managerId) of a task that is past 'unapproved'.
         await assertSucceeds(
-            updateDoc(doc(workerDb(), 'tasks', 'task-a'), { title: 'Task A (edited)' })
+            updateDoc(doc(workerDb(), 'tasks', 'task-a'), { checklist: [{ text: 'Step 1', done: true }] })
         );
     });
 
@@ -1285,5 +1287,105 @@ describeEmulator('firestore.rules — R-10: pay rate is readable only by the own
 
     it('an admin may write it (the legitimate editor flow)', async () => {
         await assertSucceeds(setDoc(doc(authedDb(WHOLE_TEAM_ADMIN), PAY_RATE_PATH), { tiers: [{ fromHours: 0, netRate: 12 }] }));
+    });
+});
+
+// ---- Audit 2026-09-07 (S1 / S2 / S4 / S5) -------------------------------------------------------
+// S1 — a DISABLED overseer keeps closure membership (nothing strips a disabled uid from overseerIds),
+//      so the closure branches of the users update + private read must ALSO require an active caller.
+// S2 — a non-manager's task template may only point at themselves (or nobody): the recurring
+//      scheduler materializes `data.assignedUserId` under Admin SDK authority.
+// S4 — once a task is out of the worker's own 'unapproved' window, the assignee may not rewrite the
+//      definition fields the UI locks (title / priority / managerId). The estimate stays writable —
+//      the 100% time-limit popup is the worker's own self-extension write.
+// S5 — the named-overseer exception keeps out-of-scope approve/edit, but a REASSIGNMENT must land in
+//      the caller's subtree.
+describeEmulator('firestore.rules — audit 2026-09-07 authorization boundaries', () => {
+    const DISABLED_MGR = 'rules-mgr-disabled';
+    const NAMED_MGR = 'rules-mgr-named';      // scoped manager named on a task OUTSIDE their team
+    const NAMED_SUB = 'rules-named-sub';      // a worker inside NAMED_MGR's subtree
+    const APPROVED = 'tasks/task-approved';
+    const DRAFT = 'tasks/task-own-unapproved';
+    const NAMED_TASK = 'tasks/task-named';
+
+    beforeEach(async () => {
+        if (!emulatorAvailable) return;
+        await seed({
+            [`users/${WORKER_ID}`]: { id: WORKER_ID, role: 'worker', isDisabled: false, displayName: 'Rules Worker', overseerIds: [IN_SCOPE_MGR, DISABLED_MGR] },
+            [`users/${OTHER_ID}`]: { id: OTHER_ID, role: 'worker', isDisabled: false, overseerIds: [] },
+            [`users/${NAMED_SUB}`]: { id: NAMED_SUB, role: 'worker', isDisabled: false, overseerIds: [NAMED_MGR] },
+            [`users/${IN_SCOPE_MGR}`]: { id: IN_SCOPE_MGR, role: 'manager', scopedManager: true, isDisabled: false },
+            [`users/${DISABLED_MGR}`]: { id: DISABLED_MGR, role: 'manager', scopedManager: true, isDisabled: true, displayName: 'Blocked' },
+            [`users/${NAMED_MGR}`]: { id: NAMED_MGR, role: 'manager', scopedManager: true, isDisabled: false },
+            [PAY_RATE_PATH]: SAMPLE_RATE,
+            [APPROVED]: { id: 'task-approved', title: 'Approved', assignedUserId: WORKER_ID, managerId: IN_SCOPE_MGR, status: 'pending', priority: 'MEDIUM', estimatedTime: '1h', estimatedTimeMinutes: 60, createdBy: IN_SCOPE_MGR, teamManagerIds: [IN_SCOPE_MGR] },
+            [DRAFT]: { id: 'task-own-unapproved', title: 'Draft', assignedUserId: WORKER_ID, status: 'unapproved', priority: 'LOW', createdBy: WORKER_ID, teamManagerIds: [IN_SCOPE_MGR] },
+            [NAMED_TASK]: { id: 'task-named', title: 'Named', assignedUserId: WORKER_ID, managerId: NAMED_MGR, status: 'pending', priority: 'MEDIUM', teamManagerIds: [IN_SCOPE_MGR] },
+        });
+    });
+
+    describe('S1: a disabled overseer loses closure-based access', () => {
+        it("the exploit: a DISABLED scoped manager cannot read a former subordinate's pay rate", async () => {
+            await assertFails(getDoc(doc(authedDb(DISABLED_MGR), PAY_RATE_PATH)));
+        });
+        it("the exploit: a DISABLED scoped manager cannot edit a former subordinate's profile", async () => {
+            await assertFails(updateDoc(doc(authedDb(DISABLED_MGR), 'users', WORKER_ID), { displayName: 'Renamed' }));
+        });
+        it('positive control: the ACTIVE in-scope manager still reads the rate and edits the profile', async () => {
+            await assertSucceeds(getDoc(doc(authedDb(IN_SCOPE_MGR), PAY_RATE_PATH)));
+            await assertSucceeds(updateDoc(doc(authedDb(IN_SCOPE_MGR), 'users', WORKER_ID), { displayName: 'Renamed' }));
+        });
+        it('preserved: a disabled account may still write its OWN document (the provisioning path)', async () => {
+            await assertSucceeds(updateDoc(doc(authedDb(DISABLED_MGR), 'users', DISABLED_MGR), { displayName: 'Still me' }));
+        });
+    });
+
+    describe("S2: a template's assignee is bounded like a direct task create", () => {
+        const personal = (assignee) => ({ scope: 'personal', createdBy: WORKER_ID, templateName: 'T', recurrence: { freq: 'daily', active: true }, data: { title: 'Injected', assignedUserId: assignee } });
+        it('the exploit: a worker cannot create a template that names a colleague', async () => {
+            await assertFails(setDoc(doc(workerDb(), 'task_templates', 'tmpl-w-1'), personal(OTHER_ID)));
+        });
+        it('a worker may create a template pointing at themselves, or at nobody', async () => {
+            await assertSucceeds(setDoc(doc(workerDb(), 'task_templates', 'tmpl-w-2'), personal(WORKER_ID)));
+            await assertSucceeds(setDoc(doc(workerDb(), 'task_templates', 'tmpl-w-3'), { scope: 'personal', createdBy: WORKER_ID, templateName: 'T', data: { title: 'Plain' } }));
+            await assertSucceeds(setDoc(doc(workerDb(), 'task_templates', 'tmpl-w-4'), { scope: 'personal', createdBy: WORKER_ID, templateName: 'T', data: { title: 'Null', assignedUserId: null } }));
+        });
+        it('the exploit via UPDATE: a worker cannot re-point an existing own template at a colleague', async () => {
+            await seed({ 'task_templates/tmpl-w-5': personal(WORKER_ID) });
+            await assertFails(updateDoc(doc(workerDb(), 'task_templates', 'tmpl-w-5'), { data: { title: 'Injected', assignedUserId: OTHER_ID } }));
+        });
+        it('a manager may still name a colleague on their template (the scheduler re-checks their scope)', async () => {
+            await assertSucceeds(setDoc(doc(authedDb(IN_SCOPE_MGR), 'task_templates', 'tmpl-m-1'), { scope: 'personal', createdBy: IN_SCOPE_MGR, templateName: 'T', data: { title: 'Team', assignedUserId: OTHER_ID } }));
+        });
+    });
+
+    describe('S4: the approved task definition is locked for the assignee at the rules boundary', () => {
+        it('the exploit: the assignee cannot retitle / reprioritize / re-manage an approved task', async () => {
+            await assertFails(updateDoc(doc(workerDb(), APPROVED), { title: 'Renamed' }));
+            await assertFails(updateDoc(doc(workerDb(), APPROVED), { priority: 'URGENT' }));
+            await assertFails(updateDoc(doc(workerDb(), APPROVED), { managerId: OTHER_ID }));
+        });
+        it('preserved: the assignee still runs the task (status) and self-extends the estimate (the 100% popup)', async () => {
+            await assertSucceeds(updateDoc(doc(workerDb(), APPROVED), { status: 'in-progress' }));
+            await assertSucceeds(updateDoc(doc(workerDb(), APPROVED), { estimatedTime: '1h 30m', estimatedTimeMinutes: 90 }));
+        });
+        it('preserved: a worker fully edits their OWN still-unapproved task', async () => {
+            await assertSucceeds(updateDoc(doc(workerDb(), DRAFT), { title: 'Better title', priority: 'HIGH' }));
+        });
+        it('preserved: the manager edits the approved definition', async () => {
+            await assertSucceeds(updateDoc(doc(authedDb(IN_SCOPE_MGR), APPROVED), { title: 'Renamed by vadovas' }));
+        });
+    });
+
+    describe('S5: a named scoped overseer may reassign only inside their subtree', () => {
+        it("the exploit: reassigning the named task to a worker outside the caller's scope is denied", async () => {
+            await assertFails(updateDoc(doc(authedDb(NAMED_MGR), NAMED_TASK), { assignedUserId: OTHER_ID, assignedUserName: 'Other' }));
+        });
+        it('preserved: the named overseer still edits / approves the task without reassigning it', async () => {
+            await assertSucceeds(updateDoc(doc(authedDb(NAMED_MGR), NAMED_TASK), { title: 'Edited by the named vadovas', status: 'confirmed' }));
+        });
+        it('preserved: the named overseer reassigns INSIDE their own subtree', async () => {
+            await assertSucceeds(updateDoc(doc(authedDb(NAMED_MGR), NAMED_TASK), { assignedUserId: NAMED_SUB, assignedUserName: 'Sub' }));
+        });
     });
 });

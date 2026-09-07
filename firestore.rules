@@ -95,9 +95,16 @@ service cloud.firestore {
     // ~10 field pins, and inlining this multi-term OR at the statement level pushed the whole rule
     // past the rules engine's per-request evaluation limit (empirically it denied a logically-true
     // write; the same OR shape works inline on break_sessions/work_sessions, which have far fewer pins).
+    // Audit 2026-09-07 S1: the closure branch is ALSO gated on the caller being ACTIVE. The users
+    // update rule deliberately admits a disabled caller (isAuthenticated, not isUserActive) so a
+    // blocked account can still write its OWN provisioning doc — but that admission leaked into
+    // this branch: a DISABLED manager kept subordinate profile writes on closure membership alone,
+    // because nothing removes a disabled uid from the closures it sits in (the re-stamp trigger
+    // watches membership/role, not isDisabled). canSeeWholeTeam() is already active-gated through
+    // isAdmin()/isManager(); this makes the closure branch match.
     function overseesUserDoc() {
       return canSeeWholeTeam() ||
-             (request.auth.uid in resource.data.get('overseerIds', []));
+             (isUserActive() && request.auth.uid in resource.data.get('overseerIds', []));
     }
     // A private row (task/session) is readable by: whole-team viewers, its owner, the caller's
     // team membership, or (tasks only) the manager/auditor named on the row.
@@ -468,8 +475,11 @@ service cloud.firestore {
       // and overseesUser() — the one branch that reads the TARGET's doc — is evaluated last.
       // WRITE stays admin-only, mirroring the payRate pin on the user-doc update rule above.
       match /private/{docId} {
+        // The overseer branch is active-gated (audit 2026-09-07 S1): a DISABLED manager still sits
+        // in their former subordinates' closures, and this read must not hand them the salary.
         allow read: if isAuthenticated() &&
-                    (request.auth.uid == userId || canSeeWholeTeam() || overseesUser(userId));
+                    (request.auth.uid == userId || canSeeWholeTeam() ||
+                     (isUserActive() && overseesUser(userId)));
         allow write: if isAdmin();
       }
     }
@@ -497,15 +507,29 @@ service cloud.firestore {
       // colleague and inject their (self-forged) task into another user's queue — horizontal task
       // ownership bypass (audit R-06). Legitimate reassignment is a manager action, handled by the
       // whole-team / scoped-overseer branches above.
+      // Audit 2026-09-07 S5: the named-overseer branch keeps its out-of-scope approve/edit right but
+      // a REASSIGNMENT must land inside the caller's reach — an unscoped manager already passes via
+      // canSeeWholeTeam, so the destination check only binds a scoped/senior manager, who could
+      // otherwise use the one task they were named on to hand work to anyone in the company.
+      // Audit 2026-09-07 S4: once a task has left the worker's own 'unapproved' window (the ONLY
+      // state canWorkerEditTask lets them edit the definition in), the assignee branch pins the
+      // definition fields the UI locks — title, priority, designated vadovas. The estimate is
+      // deliberately NOT pinned: the 100% time-limit popup is the worker's own self-extension write.
       allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
-                      isNamedTaskOverseer() ||
+                      (isNamedTaskOverseer() &&
+                        (request.resource.data.assignedUserId == resource.data.assignedUserId ||
+                         overseesUser(request.resource.data.assignedUserId))) ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
                       (ownsAssignedUser() &&
                         request.resource.data.assignedUserId == request.auth.uid &&
-                        !changesApprovalFields())
+                        !changesApprovalFields() &&
+                        (resource.data.get('status', 'pending') == 'unapproved' ||
+                         (request.resource.data.get('title', '') == resource.data.get('title', '') &&
+                          request.resource.data.get('priority', '') == resource.data.get('priority', '') &&
+                          request.resource.data.get('managerId', '') == resource.data.get('managerId', ''))))
                     )
                     // Pin the denormalized oversight key immutable on EVERY client update: only the
                     // admin-SDK re-stamp trigger (stampTeamOnTaskWrite) sets teamManagerIds, exactly
@@ -836,9 +860,12 @@ service cloud.firestore {
                     );
       // Same NEW-assignee pin as /tasks: a worker editing their own archived task may not re-point it
       // to a colleague (audit R-06). Reassignment stays a manager action via the branches above.
+      // Named-overseer reassignment is destination-scoped here too (audit 2026-09-07 S5).
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
-                      isNamedTaskOverseer() ||
+                      (isNamedTaskOverseer() &&
+                        (request.resource.data.assignedUserId == resource.data.assignedUserId ||
+                         overseesUser(request.resource.data.assignedUserId))) ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
@@ -1032,8 +1059,20 @@ service cloud.firestore {
 
       // Create: anyone active may add a PERSONAL template (stamped with their own uid); only an
       // admin may create a TEAM (shared) template.
+      // Audit 2026-09-07 S2: a template's `data.assignedUserId` is materialized into a REAL task by
+      // the recurring scheduler under Admin SDK authority, so a NON-manager may only point a
+      // template at themselves (or nobody) — the same boundary the tasks create rule enforces on
+      // their direct writes. Managers keep naming colleagues (the scheduler re-checks their scope).
+      function tmplSelfOrNone(v) { return v == null || v == '' || v == request.auth.uid; }
+      function tmplAssigneeOk(data) {
+        return isManagerOrAdmin() ||
+               (tmplSelfOrNone(data.get('data', {}).get('assignedUserId', '')) &&
+                tmplSelfOrNone(data.get('data', {}).get('assignedWorkerId', '')));
+      }
+
       allow create: if isUserActive()
                     && request.resource.data.createdBy == request.auth.uid
+                    && tmplAssigneeOk(request.resource.data)
                     && ( tmplScope(request.resource.data) == 'personal'
                          || (tmplScope(request.resource.data) == 'team' && isAdmin()) );
 
@@ -1042,6 +1081,7 @@ service cloud.firestore {
       // (promote a personal template to team / demote one) or this would be a self-promotion hole.
       allow update: if isUserActive()
                     && request.resource.data.createdBy == resource.data.createdBy
+                    && tmplAssigneeOk(request.resource.data)
                     && ( isAdmin() || tmplScope(request.resource.data) == tmplScope(resource.data) )
                     && ( (tmplScope(resource.data) == 'personal' && resource.data.createdBy == request.auth.uid)
                          || (tmplScope(resource.data) == 'team' && (isAdmin() || resource.data.createdBy == request.auth.uid)) );

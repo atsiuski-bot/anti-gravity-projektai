@@ -133,6 +133,18 @@ export default function Select({
         return () => cancelAnimationFrame(raf);
     }, [open, useSheet]);
 
+    // Keep the active option on screen (audit 2026-09-07 U4). The list owns DOM focus and the
+    // keyboard only moves aria-activedescendant, so the browser never scrolls for us: on a long
+    // person/task list, End activated an option far below the fold and Enter picked it unseen.
+    // `nearest` scrolls the minimum — a visible option does not jump.
+    useEffect(() => {
+        if (!open || activeIndex < 0) return;
+        const el = document.getElementById(optionId(activeIndex));
+        el?.scrollIntoView?.({ block: 'nearest' });
+        // optionId is a stable derivation of the render-constant reactId.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, activeIndex]);
+
     // Anchored panel dismissal on outside pointer-down. (The sheet's Modal owns its own
     // backdrop/Escape dismissal, so this listener never runs in that mode.)
     useEffect(() => {

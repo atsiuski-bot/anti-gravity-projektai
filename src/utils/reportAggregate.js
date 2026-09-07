@@ -91,16 +91,28 @@ function formatMetric(value, kind) {
 // to [0, 16h] before it can seed or be priced — otherwise earnings would over-pay (un-clamped
 // magnitude) or under-price (a negative prior-month row lowering the cumulative tier seed), and
 // disagree with both the report's own hours total and the worker-facing EarningsBreakdown.
-function computePeriodEarnings(workSessions, window, payRate, taskPayRateIds = {}) {
+//
+// Manual task minutes are PAID (founder, 2026-09-07 — audit L2): a finished plain task's own
+// `manualMinutes` is worked time every hours surface counts (aggregateDaily, DailyStatistics, the
+// worker's EarningsBreakdown prices the task's full total), so the payroll money must price it too.
+// The SAME eligibility guard (eligibleManualTaskMinutes) feeds both the hours and the money, so the
+// two can never disagree about which manual minutes exist; they land on the task's finish work-day
+// under the task's own tariff, and seed the monthly tier walk exactly like a session.
+function computePeriodEarnings(workSessions, window, payRate, taskPayRateIds = {}, tasks = []) {
     const { startStr, endStr } = window;
     const monthFloor = firstOfMonthStr(startStr);
     const prior = {}; // month -> worked minutes before the window, within the start month
     const inPeriod = {}; // month -> [{ date, startTime, minutes, payRateId }] inside the window
 
-    for (const s of workSessions) {
+    const contributions = [
+        ...workSessions.map((s) => ({ date: s.date, startTime: s.startTime || '', minutes: sanitizeReportMinutes(s.durationMinutes), taskId: s.taskId })),
+        // No allowLarge: the earnings clamp mirrors the analysis total (see the header).
+        ...eligibleManualTaskMinutes(tasks).map((c) => ({ date: c.date, startTime: c.finishedAt, minutes: sanitizeReportMinutes(c.minutes), taskId: c.taskId })),
+    ];
+    for (const s of contributions) {
         const d = s.date;
         if (!d) continue;
-        const min = sanitizeReportMinutes(s.durationMinutes);
+        const min = s.minutes;
         if (d >= monthFloor && d < startStr) {
             prior[monthKey(d)] = (prior[monthKey(d)] || 0) + min;
         } else if (d >= startStr && d <= endStr) {
@@ -108,7 +120,7 @@ function computePeriodEarnings(workSessions, window, payRate, taskPayRateIds = {
             if (!inPeriod[m]) inPeriod[m] = [];
             inPeriod[m].push({
                 date: d,
-                startTime: s.startTime || '',
+                startTime: s.startTime,
                 minutes: min,
                 // Unknown taskId (quick-work/call/manual synthetic ids, or a task the viewer did not
                 // fetch) resolves to the worker's default tariff — the pre-existing behaviour.
@@ -191,6 +203,19 @@ function aggregateDaily(workSessions, breakSessions, tasks, window, { allowLarge
     //   • `timeChanged` means the time was re-derived from work_sessions into timerMinutes
     //     (reconcileTaskTimerFromSessions), so the sessions loop above already carries it;
     //   • no finish instant ⇒ no day to bucket into, so an unfinished task contributes nothing.
+    for (const c of eligibleManualTaskMinutes(tasks)) {
+        if (!inWin(c.date)) continue;
+        bump(c.date, 'work', sanitizeReportMinutes(c.minutes, { allowLarge }));
+    }
+    return days;
+}
+
+// The ONE eligibility guard for a plain task's own manualMinutes (see the note in aggregateDaily),
+// shared by the hours bucketing AND the earnings pricing so both count exactly the same minutes.
+// Returns raw (unclamped) minutes on the task's finish WORK day — the caller applies its own clamp
+// policy — with the finish instant as the in-day ordering key.
+function eligibleManualTaskMinutes(tasks) {
+    const out = [];
     for (const t of tasks || []) {
         if (!t || !t.manualMinutes) continue;
         if (t.isSystemTask || t.isQuickWork || t.timeChanged) continue;
@@ -198,11 +223,9 @@ function aggregateDaily(workSessions, breakSessions, tasks, window, { allowLarge
         if (!finishedAt || Number.isNaN(new Date(finishedAt).getTime())) continue;
         // The WORK day it finished in — the same key the task's own sessions carry, so typed-in
         // manual minutes and timer minutes land in one day bucket instead of two.
-        const date = getWorkDayString(finishedAt);
-        if (!inWin(date)) continue;
-        bump(date, 'work', sanitizeReportMinutes(t.manualMinutes, { allowLarge }));
+        out.push({ date: getWorkDayString(finishedAt), finishedAt, minutes: t.manualMinutes, taskId: t.id });
     }
-    return days;
+    return out;
 }
 
 // Planned minutes for one worker over the window: calendar shifts (excluding approved leave),
@@ -267,7 +290,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
 
         const earnings =
             includeEarnings && hasPayRate(w.payRate)
-                ? computePeriodEarnings(raw.workSessions, window, w.payRate, w.taskPayRateIds)
+                ? computePeriodEarnings(raw.workSessions, window, w.payRate, w.taskPayRateIds, raw.tasks)
                 : null;
 
         const recognition = w.recognition
@@ -454,9 +477,10 @@ export function renderReportJSON(report) {
 // "Viso" row, never on the daily rows: the net rate is marginal over CUMULATIVE monthly hours
 // (see computePeriodEarnings), so a per-day price would mis-tier and read as fact. Workers without
 // a pay rate, or whose window earns nothing, leave both money cells blank — same null policy as
-// buildReport. The earnings figure uses the analysis 16h clamp (no allowLarge) and prices only
-// work_sessions, so it can differ from the "Veikla" total above; it mirrors what EarningsBreakdown
-// showed the worker, including the per-task tariff.
+// buildReport. The earnings figure uses the analysis 16h clamp (no allowLarge), so it can differ
+// from the "Veikla" total above on an over-16h manual adjustment; it prices work_sessions PLUS the
+// same eligible manual task minutes the hours count (founder, 2026-09-07), and mirrors what
+// EarningsBreakdown showed the worker, including the per-task tariff.
 export function renderTimesheetCSV(workers, window, { includeEarnings = false } = {}) {
     const escape = (str) => {
         if (str === null || str === undefined) return '';
@@ -493,7 +517,7 @@ export function renderTimesheetCSV(workers, window, { includeEarnings = false } 
         const totalCells = [escape(w.name), escape('Viso'), escape(csvMinutes(totalWork)), escape(csvMinutes(totalBreak)), escape(plannedCell), escape(skirtumasCell)];
         if (includeEarnings) {
             const earnings = hasPayRate(w.payRate)
-                ? computePeriodEarnings(w.workSessions, window, w.payRate, w.taskPayRateIds)
+                ? computePeriodEarnings(w.workSessions, window, w.payRate, w.taskPayRateIds, w.tasks)
                 : null;
             totalCells.push(escape(earnings ? String(earnings.netEur) : ''), escape(earnings ? String(earnings.grossEur) : ''));
         }

@@ -429,3 +429,45 @@ describe('buildReport — the summary total agrees with the daily log and the ti
         expect(totalRow).toContain('07:00'); // 420 min
     });
 });
+
+describe('buildReport — manual task minutes are PAID (founder 2026-09-07, audit L2)', () => {
+    // A finished plain task whose time was typed in (manualMinutes) and has no work_sessions row.
+    const manualTask = (over) => ({
+        id: 'task-manual', manualMinutes: 120, completedAt: '2026-06-10T15:00:00.000Z', ...over,
+    });
+    const june = { startStr: '2026-06-01', endStr: '2026-06-30' };
+    const may = { startStr: '2026-05-02', endStr: '2026-05-31' };
+
+    it("prices a completed plain task's manualMinutes exactly like the hours it already counts", () => {
+        const report = buildOne(baseWorker({ tasks: [manualTask()] }), june, may);
+        expect(report.workers[0].earnings.netEur).toBe(20); // 2 h @ €10 — was null before the fix
+    });
+
+    it('the CSV money column carries the same 2 h', () => {
+        const csv = renderTimesheetCSV([baseWorker({ tasks: [manualTask()] })], june, { includeEarnings: true });
+        const total = csv.split('\n').find((l) => l.includes(',Viso,'));
+        expect(total).toContain('02:00');
+        expect(total.split(',').slice(-2)[0]).toBe('20'); // Neto (€)
+    });
+
+    it('applies the SAME guards as the hours: quick-work / timeChanged / unfinished contribute nothing', () => {
+        const report = buildOne(baseWorker({ tasks: [
+            manualTask({ id: 'q', isQuickWork: true }),      // its time is already a work_session
+            manualTask({ id: 'r', timeChanged: true }),       // re-derived into timerMinutes from sessions
+            manualTask({ id: 'u', completedAt: undefined }),  // no finish instant → no day
+        ] }), june, may);
+        expect(report.workers[0].earnings).toBeNull();
+    });
+
+    it('seeds the monthly tier walk, so manual time before the window moves later sessions up a tier', () => {
+        // 15 h manual (under the 16 h clamp), finished before the window but in the same month → the
+        // in-window 6 h session spans the 20 h boundary: 5 h @10 + 1 h @15 = 65 € (a walk that
+        // ignored the manual seed would price 6 h @10 = 60 €).
+        const worker = baseWorker({
+            tasks: [manualTask({ manualMinutes: 15 * 60, completedAt: '2026-06-02T15:00:00.000Z' })],
+            workSessions: [session('2026-06-20', 6)],
+        });
+        const report = buildOne(worker, { startStr: '2026-06-15', endStr: '2026-06-30' }, { startStr: '2026-06-01', endStr: '2026-06-14' });
+        expect(report.workers[0].earnings.netEur).toBe(65);
+    });
+});
