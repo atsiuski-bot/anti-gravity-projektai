@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
@@ -290,7 +291,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
 });
 QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
-export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
+export default function QuickWorkTimer({ compact = false, hideLabel = false, errorSlot = null }) {
     const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { usersMap, activeUsers } = useUsers();
@@ -710,6 +711,16 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
 
     // Render Compact (Mobile)
     if (compact) {
+        // The error rides in the host's row (errorSlot: above the bottom dock / beside the side
+        // rail) instead of under this narrow column, where a wrapped message grew the bar and
+        // knocked the neighbouring buttons out of line. Opaque soft surface + shadow because it
+        // now floats over page content and the session shell, not on the dock's own card.
+        const errorAlert = error && (
+            <div className="flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-2 shadow-lg wz-shake" role="alert">
+                <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
+                <p className="text-caption text-feedback-danger-text">{error}</p>
+            </div>
+        );
         return (
             <div className="flex flex-col items-center">
                 {/* Live time is surfaced by ActiveSessionReadout above the bar, so the column
@@ -737,12 +748,8 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                     <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greita</span>
                 )}
 
-                {error && (
-                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2 wz-shake" role="alert">
-                        <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-caption text-feedback-danger">{error}</p>
-                    </div>
-                )}
+                {/* A host with no slot still gets the alert inline, so an error is never hidden. */}
+                {errorAlert && (errorSlot ? createPortal(errorAlert, errorSlot) : <div className="mt-2">{errorAlert}</div>)}
 
                 {renderModal}
             </div>
