@@ -928,7 +928,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     /* Start removed once the time limit is exceeded (occupies the primary slot). */
                     <div
                         role="status"
-                        className="flex min-h-touch flex-[2] items-center justify-center gap-1.5 rounded-control border border-feedback-danger/20 bg-feedback-danger/10 px-2 text-body font-semibold text-feedback-danger"
+                        className="flex min-h-touch flex-[2] items-center justify-center gap-1.5 rounded-control border border-feedback-danger-border bg-feedback-danger-soft px-2 text-body font-semibold text-feedback-danger-text"
                     >
                         <Clock className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
                         Laikas išnaudotas

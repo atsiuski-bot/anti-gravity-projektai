@@ -15,7 +15,7 @@ export default function DeletedBadge({ inline = false, className }) {
         <span
             className={cn(
                 'inline-block px-1.5 py-0.5 text-caption font-bold uppercase rounded',
-                'bg-feedback-danger/10 text-feedback-danger border border-feedback-danger/20',
+                'bg-feedback-danger-soft text-feedback-danger-text border border-feedback-danger-border',
                 inline && 'align-middle no-underline',
                 className
             )}

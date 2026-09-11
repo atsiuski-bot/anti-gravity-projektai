@@ -1332,7 +1332,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {actionError && (
                 <div
                     role="alert"
-                    className="flex items-start justify-between gap-3 rounded-card border border-feedback-danger bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
+                    className="flex items-start justify-between gap-3 rounded-card border border-feedback-danger bg-feedback-danger-soft px-4 py-3 text-body text-feedback-danger-text"
                 >
                     <span>{actionError}</span>
                     <IconButton

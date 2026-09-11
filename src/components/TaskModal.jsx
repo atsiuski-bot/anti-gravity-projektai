@@ -1549,7 +1549,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                             id={FORM_ERROR_ID}
                             role="alert"
                             aria-live="assertive"
-                            className="mb-4 rounded-control bg-feedback-danger/10 border border-feedback-danger/30 p-3 text-body text-feedback-danger"
+                            className="mb-4 rounded-control bg-feedback-danger-soft border border-feedback-danger/30 p-3 text-body text-feedback-danger-text"
                         >
                             {formError}
                         </div>

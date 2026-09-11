@@ -1160,7 +1160,7 @@ export default function ManagerNotifications({ onClose }) {
                 <div
                     role="alert"
                     aria-live="assertive"
-                    className="rounded-control border border-feedback-danger/30 bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
+                    className="rounded-control border border-feedback-danger/30 bg-feedback-danger-soft px-4 py-3 text-body text-feedback-danger-text"
                 >
                     {actionError}
                 </div>

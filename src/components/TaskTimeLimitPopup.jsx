@@ -158,7 +158,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                     </div>
                 )}
 
-                <div className="flex items-center gap-2 rounded-control bg-feedback-danger/10 px-3 py-2 text-body font-semibold text-feedback-danger">
+                <div className="flex items-center gap-2 rounded-control bg-feedback-danger-soft px-3 py-2 text-body font-semibold text-feedback-danger-text">
                     <PauseCircle className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
                     Veikla automatiškai sustabdyta.
                 </div>
