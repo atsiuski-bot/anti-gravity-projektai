@@ -515,6 +515,31 @@ service cloud.firestore {
       // state canWorkerEditTask lets them edit the definition in), the assignee branch pins the
       // definition fields the UI locks — title, priority, designated vadovas. The estimate is
       // deliberately NOT pinned: the 100% time-limit popup is the worker's own self-extension write.
+      // Quick-work naming carve-out (2026-09-11): an UNNAMED quick-work entry (placeholder title +
+      // autoStopped:true — the worker deferred naming, or the session was closed on another device)
+      // is logged already 'completed', so the S4 title pin denied the worker's own "describe later"
+      // write and the live finish landing on a server-net placeholder. Naming it is the deferred half
+      // of logging the quick work, not a rewrite of an approved definition, so the assignee may set
+      // the title ONCE: the stored row must be an unnamed quick-work entry that never passed the
+      // creation-approval gate, the write must clear autoStopped (no reuse), and priority/managerId
+      // stay pinned.
+      function namesQuickWorkPlaceholder() {
+        return resource.data.get('isQuickWork', false) == true &&
+               resource.data.get('autoStopped', false) == true &&
+               resource.data.get('approvedBy', null) == null &&
+               request.resource.data.get('autoStopped', true) == false &&
+               request.resource.data.get('priority', '') == resource.data.get('priority', '') &&
+               request.resource.data.get('managerId', '') == resource.data.get('managerId', '');
+      }
+      // The carve-out keys on markers the assignee could otherwise write, which would reopen S4 in
+      // two steps (stamp isQuickWork+autoStopped onto an approved task, then rename it). So the
+      // assignee may never change isQuickWork nor turn autoStopped ON: the quick-work loggers set
+      // them at create, and only the Admin SDK flags a forgotten timer.
+      function assigneeKeepsQuickWorkMarkers() {
+        return request.resource.data.get('isQuickWork', false) == resource.data.get('isQuickWork', false) &&
+               (request.resource.data.get('autoStopped', false) != true ||
+                resource.data.get('autoStopped', false) == true);
+      }
       allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
                       (isNamedTaskOverseer() &&
@@ -526,7 +551,9 @@ service cloud.firestore {
                       (ownsAssignedUser() &&
                         request.resource.data.assignedUserId == request.auth.uid &&
                         !changesApprovalFields() &&
+                        assigneeKeepsQuickWorkMarkers() &&
                         (resource.data.get('status', 'pending') == 'unapproved' ||
+                         namesQuickWorkPlaceholder() ||
                          (request.resource.data.get('title', '') == resource.data.get('title', '') &&
                           request.resource.data.get('priority', '') == resource.data.get('priority', '') &&
                           request.resource.data.get('managerId', '') == resource.data.get('managerId', ''))))
