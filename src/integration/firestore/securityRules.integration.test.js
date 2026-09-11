@@ -1377,6 +1377,79 @@ describeEmulator('firestore.rules — audit 2026-09-07 authorization boundaries'
         });
     });
 
+    // The S4 title pin also caught the "describe later" flow: an unnamed quick-work entry is logged
+    // already 'completed' with a placeholder title, so naming it afterwards is a title change past
+    // 'unapproved' — every worker's "Išsaugoti" in the describe dialog was permission-denied.
+    describe('S4 carve-out: the worker names their own unnamed quick-work entry exactly once', () => {
+        const PLACEHOLDER = 'tasks/sess_qw_task_rules-worker_1757000000000';
+        const placeholder = (overrides = {}) => ({
+            title: 'Greita veikla (Automatiškai išsaugota)',
+            description: '14:32 (Automatiškai sukurtas)',
+            status: 'completed',
+            priority: 'MEDIUM',
+            assignedUserId: WORKER_ID,
+            createdBy: WORKER_ID,
+            completed: true,
+            confirmedBy: null,
+            confirmedAt: null,
+            taskAuditor: IN_SCOPE_MGR,
+            managerId: IN_SCOPE_MGR,
+            manualMinutes: 25,
+            isQuickWork: true,
+            autoStopped: true,
+            workSessionId: 'sess_qw_ws_rules-worker_1757000000000',
+            teamManagerIds: [IN_SCOPE_MGR],
+            ...overrides,
+        });
+
+        it('the reported bug: the describe dialog write (addQuickWorkDescription) succeeds', async () => {
+            await seed({ [PLACEHOLDER]: placeholder() });
+            await assertSucceeds(updateDoc(doc(workerDb(), PLACEHOLDER), {
+                title: 'Tvarkiau sandėlį',
+                description: '14:32',
+                autoStopped: false,
+                updatedAt: '2026-09-11T10:00:00.000Z',
+            }));
+        });
+        it('the live finish naming a placeholder the server net already wrote (merge set) succeeds', async () => {
+            await seed({ [PLACEHOLDER]: placeholder() });
+            await assertSucceeds(setDoc(doc(workerDb(), PLACEHOLDER), {
+                title: 'Tvarkos',
+                description: 'rakinau garažą\n14:32',
+                status: 'completed',
+                priority: 'MEDIUM',
+                managerId: IN_SCOPE_MGR,
+                isQuickWork: true,
+                autoStopped: false,
+            }, { merge: true }));
+        });
+        it('one-shot: once named, the entry is locked like any other past-unapproved task', async () => {
+            await seed({ [PLACEHOLDER]: placeholder({ title: 'Tvarkiau sandėlį', autoStopped: false }) });
+            await assertFails(updateDoc(doc(workerDb(), PLACEHOLDER), { title: 'Renamed later' }));
+        });
+        it('the exploit: re-flagging a named entry as unnamed (to reopen the rename) is denied', async () => {
+            await seed({ [PLACEHOLDER]: placeholder({ title: 'Tvarkiau sandėlį', autoStopped: false }) });
+            await assertFails(updateDoc(doc(workerDb(), PLACEHOLDER), { autoStopped: true }));
+        });
+        it('the exploit: stamping the quick-work markers onto an approved task is denied', async () => {
+            await assertFails(updateDoc(doc(workerDb(), APPROVED), { isQuickWork: true, autoStopped: true }));
+        });
+        it('the exploit: naming may not also change the priority or the confirming vadovas', async () => {
+            await seed({ [PLACEHOLDER]: placeholder() });
+            await assertFails(updateDoc(doc(workerDb(), PLACEHOLDER), { title: 'X', autoStopped: false, priority: 'URGENT' }));
+            await assertFails(updateDoc(doc(workerDb(), PLACEHOLDER), { title: 'X', autoStopped: false, managerId: OTHER_ID }));
+        });
+        it('the exploit: a flagged task that passed the creation-approval gate cannot be renamed', async () => {
+            await seed({ [PLACEHOLDER]: placeholder({ status: 'approved', isApproved: true, approvedBy: IN_SCOPE_MGR }) });
+            await assertFails(updateDoc(doc(workerDb(), PLACEHOLDER), { title: 'Renamed after approval', autoStopped: false }));
+        });
+        it('preserved: a server auto-stopped ORDINARY task (no isQuickWork) is not renameable', async () => {
+            await seed({ [APPROVED]: { ...placeholder(), title: 'Approved', isQuickWork: false, createdBy: IN_SCOPE_MGR, status: 'pending' } });
+            await assertFails(updateDoc(doc(workerDb(), APPROVED), { title: 'Renamed', autoStopped: false }));
+            await assertSucceeds(updateDoc(doc(workerDb(), APPROVED), { status: 'in-progress' }));
+        });
+    });
+
     describe('S5: a named scoped overseer may reassign only inside their subtree', () => {
         it("the exploit: reassigning the named task to a worker outside the caller's scope is denied", async () => {
             await assertFails(updateDoc(doc(authedDb(NAMED_MGR), NAMED_TASK), { assignedUserId: OTHER_ID, assignedUserName: 'Other' }));

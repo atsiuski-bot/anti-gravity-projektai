@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Zap, Check, PencilLine, Mic } from 'lucide-react';
+import { Zap, Check, PencilLine, Mic, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
@@ -33,7 +33,7 @@ function formatCompletedTime(iso) {
 // turns into an optional comment) over an uncontrolled textarea (ref-driven, so typing never
 // re-renders the parent's live task subscription). The manager picker and "defer" path are absent
 // here — the routing was already chosen when the session was logged; this step only adds a title.
-const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClose, isSubmitting, templateOptions = [], roster = [] }) {
+const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClose, isSubmitting, error = '', templateOptions = [], roster = [] }) {
     const textareaRef = useRef(null);
     const minutes = task?.manualMinutes || 0;
 
@@ -170,6 +170,16 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                     )}
                 </div>
 
+                {/* A failed save is explained HERE, next to the button that was tapped: the Modal
+                    portals over the banner, so an alert rendered there sits behind the scrim and the
+                    worker only sees "Saugoma..." revert with no reason. */}
+                {error && (
+                    <div role="alert" className="mt-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-3">
+                        <AlertTriangle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-body text-feedback-danger-text">{error}</p>
+                    </div>
+                )}
+
                 <div className="mt-6 flex gap-3 justify-end">
                     <Button type="button" variant="secondary" onClick={onClose}>
                         Praleisti
@@ -280,7 +290,9 @@ export default function QuickWorkDescribePrompt() {
                         })}
                     </ul>
 
-                    {error && (
+                    {/* Only while no dialog is open (the dialog shows its own alert) — i.e. a save the
+                        worker dismissed mid-flight that then failed. */}
+                    {error && !activeTask && (
                         <p className="mt-2 text-caption text-feedback-danger" role="alert">{error}</p>
                     )}
                 </div>
@@ -291,8 +303,9 @@ export default function QuickWorkDescribePrompt() {
                     key={activeTask.id}
                     task={activeTask}
                     onSubmit={handleSubmit}
-                    onClose={() => setActiveTask(null)}
+                    onClose={() => { setError(''); setActiveTask(null); }}
                     isSubmitting={isSubmitting}
+                    error={error}
                     templateOptions={templateOptions}
                     roster={roster}
                 />
