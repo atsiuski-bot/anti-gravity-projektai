@@ -56,6 +56,8 @@ function SideRail() {
     const sections = useMemo(() => getNavSections(userRole), [userRole]);
     const RoleIcon = ROLE_GLYPHS[userRole];
     const [collapsed, setCollapsed] = useState(readStoredCollapsed);
+    // DOM node beside the rail that the compact timers portal their errors into.
+    const [timerErrorSlot, setTimerErrorSlot] = useState(null);
 
     const toggleCollapsed = useCallback(() => {
         setCollapsed((prev) => {
@@ -200,11 +202,16 @@ function SideRail() {
             <div className={cn('shrink-0 pb-2.5', collapsed ? 'px-2' : 'px-2.5')}>
                 <div className="flex flex-col gap-1.5 border-t border-line pt-2">
                     <div className={cn('flex gap-1', collapsed ? 'flex-col items-center' : 'items-start justify-around')}>
-                        <QuickWorkTimer compact hideLabel={collapsed} />
-                        <CallTimer compact hideLabel={collapsed} />
-                        <BreakTimer currentUser={currentUser} compact hideLabel={collapsed} />
+                        <QuickWorkTimer compact hideLabel={collapsed} errorSlot={timerErrorSlot} />
+                        <CallTimer compact hideLabel={collapsed} errorSlot={timerErrorSlot} />
+                        <BreakTimer currentUser={currentUser} compact hideLabel={collapsed} errorSlot={timerErrorSlot} />
                     </div>
                 </div>
+                {/* The timers' errors float beside the rail (portaled in via errorSlot) at a
+                    readable width: under a ~60 px timer column, or the 48 px collapsed strip, a
+                    message wrapped word by word and stretched the footer. Positioned against the
+                    sticky rail; non-interactive, so clicks pass through to the content beneath. */}
+                <div ref={setTimerErrorSlot} className="pointer-events-none absolute bottom-2 left-full ml-2 flex w-72 flex-col gap-2" />
             </div>
         </div>
     );

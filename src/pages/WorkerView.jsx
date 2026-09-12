@@ -338,7 +338,7 @@ export default function WorkerView() {
             {error && (
                 <div className="mb-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-feedback-danger-soft p-4 wz-shake" role="alert">
                     <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-feedback-danger">{error}</p>
+                    <p className="text-body text-feedback-danger-text">{error}</p>
                 </div>
             )}
 
