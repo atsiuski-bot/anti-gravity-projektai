@@ -767,12 +767,12 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 even when the archive panel is collapsed (the default), instead of reading as an
                 empty archive. Mapped LT copy, replaces the banned alert() (§10). */}
             {error && (
-                <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4" role="alert">
+                <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-4" role="alert">
                     <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-feedback-danger">{error}</p>
+                    <p className="text-body text-feedback-danger-text">{error}</p>
                     <button
                         onClick={() => setError('')}
-                        className="ml-auto text-body font-medium text-feedback-danger underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring rounded"
+                        className="ml-auto text-body font-medium text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring rounded"
                     >
                         Uždaryti
                     </button>
