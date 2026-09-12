@@ -20,6 +20,8 @@ const BottomNavigation = () => {
     const { activeTab, setActiveTab } = useNavigation();
     const pendingApprovals = usePendingApprovalsCount();
     const [moreOpen, setMoreOpen] = useState(false);
+    // DOM node of the row above the dock that the compact timers portal their errors into.
+    const [timerErrorSlot, setTimerErrorSlot] = useState(null);
 
     // Pending-approval count for a tab (admin-only Vartotojai; 0 elsewhere) and its capped label.
     const badgeFor = (tabId) => (tabId === 'users' ? pendingApprovals : 0);
@@ -77,14 +79,20 @@ const BottomNavigation = () => {
                 className="fixed left-0 right-0 z-nav flex w-full flex-col items-center gap-2 px-3 pb-3 pointer-events-none"
                 style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
             >
+                {/* Full-width row for the compact timers' errors (portaled in via errorSlot).
+                    Under its own narrow column a wrapped message grew the dock and pushed the
+                    neighbouring buttons out of line. This wrapper is bottom-anchored, so an alert
+                    grows upward and the dock never moves; `empty:hidden` keeps the idle row from
+                    adding a gap. */}
+                <div ref={setTimerErrorSlot} className="flex w-full max-w-md flex-col gap-2 empty:hidden" />
                 <div
                     className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-card border border-line bg-surface-card/95 px-3 py-1.5 ring-1 ring-black/[0.04] backdrop-blur-sm"
                     style={{ boxShadow: '0 12px 28px -8px rgba(15, 23, 42, 0.28), 0 4px 10px -4px rgba(15, 23, 42, 0.16)' }}
                 >
                     {showCreateButton && <CreateButton />}
-                    <QuickWorkTimer compact={true} />
-                    <CallTimer compact={true} />
-                    <BreakTimer currentUser={currentUser} compact={true} />
+                    <QuickWorkTimer compact={true} errorSlot={timerErrorSlot} />
+                    <CallTimer compact={true} errorSlot={timerErrorSlot} />
+                    <BreakTimer currentUser={currentUser} compact={true} errorSlot={timerErrorSlot} />
                 </div>
             </div>
 
