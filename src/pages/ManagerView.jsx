@@ -333,7 +333,7 @@ export default function ManagerView() {
         <div className="pt-1 sm:pt-2">
             {error && (
                 <div className="mb-6 bg-feedback-danger-soft border-l-4 border-feedback-danger p-4" role="alert">
-                    <p className="text-body text-feedback-danger">{error}</p>
+                    <p className="text-body text-feedback-danger-text">{error}</p>
                 </div>
             )}
 
