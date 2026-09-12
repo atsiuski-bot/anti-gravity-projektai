@@ -6,7 +6,7 @@ import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiv
 import { evaluateSecondaryStart } from '../utils/sessionNesting';
 import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
-import { Zap, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
+import { Zap, Square, Check, ShieldAlert, Mic, Clock, AlertTriangle } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
 import { serverNowISO } from '../utils/serverClock';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
@@ -58,7 +58,7 @@ async function loadTaskForTimer(taskId) {
 }
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', templateOptions = [], roster = [] }) => {
+const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, error = '', managers = [], defaultManagerId = '', templateOptions = [], roster = [] }) => {
     const textareaRef = useRef(null);
     // Which manager confirms this work. Primary pre-selected so the common case is one tap;
     // the worker can switch before saving. Initialized once — by the time the prompt opens the
@@ -267,6 +267,16 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                     <p className="mt-5 text-caption text-ink-muted">
                         Bus pateikta tvirtinti: <span className="font-semibold text-ink">{managers[0].name}</span>
                     </p>
+                )}
+
+                {/* A failed save is explained HERE, next to the button that was tapped: the Modal
+                    portals over the timer, so an alert rendered there sits behind the scrim and the
+                    worker only sees "Saugoma..." revert with no reason. */}
+                {error && (
+                    <div role="alert" className="mt-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-3">
+                        <AlertTriangle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-body text-feedback-danger-text">{error}</p>
+                    </div>
                 )}
 
                 <div className="mt-6 flex flex-col gap-2">
@@ -614,6 +624,9 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false, err
             }
 
             SoundManager.playQuickTaskSound();
+            // The dialog's alert speaks only for THIS finish: an older start/stop error must not
+            // greet the worker inside a freshly opened dialog.
+            setError('');
             setShowTitleModal(true);
         } finally {
             clearTimeout(guardTimer);
@@ -698,10 +711,11 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false, err
     const renderModal = showTitleModal && (
         <QuickWorkModalComponent
             onSubmit={handleCompleteQuickWork}
-            onClose={() => setShowTitleModal(false)}
+            onClose={() => { setError(''); setShowTitleModal(false); }}
             onDefer={handleDeferQuickWork}
             currentSessionMinutes={currentSessionMinutes}
             isSubmitting={isSubmitting}
+            error={error}
             managers={managers}
             defaultManagerId={defaultManagerId}
             templateOptions={templateOptions}
@@ -748,8 +762,10 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false, err
                     <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greita</span>
                 )}
 
-                {/* A host with no slot still gets the alert inline, so an error is never hidden. */}
-                {errorAlert && (errorSlot ? createPortal(errorAlert, errorSlot) : <div className="mt-2">{errorAlert}</div>)}
+                {/* Only while the finish dialog is closed (it shows its own alert) — start/stop
+                    errors, or a finish the worker dismissed mid-flight that then failed. A host
+                    with no slot still gets the alert inline, so an error is never hidden. */}
+                {errorAlert && !showTitleModal && (errorSlot ? createPortal(errorAlert, errorSlot) : <div className="mt-2">{errorAlert}</div>)}
 
                 {renderModal}
             </div>
@@ -794,7 +810,8 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false, err
                 </span>
             </button>
 
-            {error && (
+            {/* Only while the finish dialog is closed (it shows its own alert). */}
+            {error && !showTitleModal && (
                 <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-3 wz-shake" role="alert">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
                     <p className="text-body text-feedback-danger">{error}</p>
