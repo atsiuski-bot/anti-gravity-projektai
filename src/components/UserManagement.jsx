@@ -1179,7 +1179,7 @@ export default function UserManagement() {
     return (
         <Card as="section" className="mb-8 overflow-hidden">
             {error && (
-                <div className="m-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-4">
+                <div className="m-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-4" role="alert">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
                     <p className="text-body text-feedback-danger-text">{error}</p>
                 </div>

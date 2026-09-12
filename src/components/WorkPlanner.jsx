@@ -1220,9 +1220,9 @@ export default function WorkPlanner() {
             {/* Floating button removed */}
 
             {error && (
-                <div role="alert" className="mb-3 bg-feedback-danger/10 border-l-4 border-feedback-danger p-3 rounded-card flex items-start gap-2">
+                <div role="alert" className="mb-3 bg-feedback-danger-soft border-l-4 border-feedback-danger p-3 rounded-card flex items-start gap-2">
                     <AlertCircle className="w-5 h-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-feedback-danger">
+                    <p className="text-body text-feedback-danger-text">
                         <span className="font-semibold">Klaida: </span>{error}
                     </p>
                 </div>

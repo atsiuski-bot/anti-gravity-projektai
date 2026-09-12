@@ -177,7 +177,7 @@ export default function CalendarChangeHistory({ users = [] }) {
 
         const getActionColor = (action) => {
             if (action === 'add') return 'text-feedback-success bg-feedback-success-soft border-feedback-success-border';
-            if (action === 'delete') return 'text-feedback-danger bg-feedback-danger-soft border-feedback-danger-border';
+            if (action === 'delete') return 'text-feedback-danger-text bg-feedback-danger-soft border-feedback-danger-border';
             return 'text-feedback-info bg-feedback-info-soft border-feedback-info-border';
         };
         const getActionText = (action) => {

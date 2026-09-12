@@ -266,7 +266,7 @@ export default function AllUsersCalendar() {
             {error && (
                 <div
                     role="alert"
-                    className="mx-4 mt-4 flex items-start gap-2 rounded-card border border-feedback-danger-border bg-feedback-danger-soft px-3 py-2.5 text-body text-feedback-danger"
+                    className="mx-4 mt-4 flex items-start gap-2 rounded-card border border-feedback-danger-border bg-feedback-danger-soft px-3 py-2.5 text-body text-feedback-danger-text"
                 >
                     <AlertTriangle className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                     <span>{error}</span>

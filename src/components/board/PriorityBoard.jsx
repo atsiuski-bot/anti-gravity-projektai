@@ -298,7 +298,7 @@ export default function PriorityBoard({ tasks, onEditTask }) {
     return (
         <div ref={bleedRef} style={bleedStyle || undefined} className="px-3 sm:px-4 lg:px-6">
             {error && (
-                <p role="alert" className="mb-3 rounded-control border border-feedback-danger/30 bg-feedback-danger-soft px-3 py-2 text-caption font-medium text-feedback-danger">
+                <p role="alert" className="mb-3 rounded-control border border-feedback-danger/30 bg-feedback-danger-soft px-3 py-2 text-caption font-medium text-feedback-danger-text">
                     {error}
                 </p>
             )}

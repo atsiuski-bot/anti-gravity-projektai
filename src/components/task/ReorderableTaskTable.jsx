@@ -90,7 +90,7 @@ export default function ReorderableTaskTable({ dragEnabled = true, ...tableProps
             {reorder.error && (
                 <p
                     role="alert"
-                    className="rounded-control border border-feedback-danger/30 bg-feedback-danger-soft px-3 py-2 text-caption font-medium text-feedback-danger"
+                    className="rounded-control border border-feedback-danger/30 bg-feedback-danger-soft px-3 py-2 text-caption font-medium text-feedback-danger-text"
                 >
                     {reorder.error}
                 </p>
