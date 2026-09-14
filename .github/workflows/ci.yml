@@ -25,12 +25,16 @@ jobs:
       - run: npm run build
 
   # The security-critical job: runs the Firestore rules against the emulator (the R-01..R-06
-  # oracles live here). Java is preinstalled on ubuntu-latest; firebase-tools is not a repo dep,
-  # so install it for the emulator runner.
+  # oracles live here). firebase-tools requires JDK 21+ (the runner's default Java is older), so
+  # set it up explicitly; firebase-tools is not a repo dep, so install it for the emulator runner.
   firestore-rules:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
