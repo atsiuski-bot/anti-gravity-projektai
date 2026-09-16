@@ -205,7 +205,17 @@ export function AuthProvider({ children }) {
                 pendingErr.code = 'app/pending-approval';
                 throw pendingErr;
             } else {
-                const data = userSnap.data();
+                let data = userSnap.data();
+                // Same rule for a cached "disabled" hit: it may predate the admin's approval.
+                if (data.isDisabled && userSnap.metadata.fromCache) {
+                    try {
+                        data = (await getDocFromServer(userRef)).data() ?? data;
+                    } catch {
+                        const offlineErr = new Error('Account state could not be verified (server unreachable)');
+                        offlineErr.code = 'app/verification-unavailable';
+                        throw offlineErr;
+                    }
+                }
                 if (data.isDisabled) {
                     // A DISABLED account that signs in again is re-surfaced for approval instead of
                     // hitting a silent dead end. Any account that is not already awaiting its first
@@ -355,7 +365,9 @@ export function AuthProvider({ children }) {
                         };
                         setUserDataMetadata(metadata);
 
-                        if (data.isDisabled) {
+                        // A cache-sourced snapshot can carry a pre-approval isDisabled:true; only a
+                        // server-confirmed one may sign the user out, or approved accounts get kicked.
+                        if (data.isDisabled && !docSnap.metadata.fromCache) {
                             // Defer to the login flow while it is provisioning/evaluating this
                             // account: signing out here would race its in-flight pending-doc write
                             // (this snapshot fires from the OPTIMISTIC local cache before the server
