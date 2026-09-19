@@ -116,6 +116,27 @@ describe('recurrenceFiresOn', () => {
         expect(recurrenceFiresOn(rEnd, '2025-01-31')).toBe(true);  // real 31st
     });
 
+    it('every 3 months fires only in months on the anchor phase', () => {
+        const r = { active: true, freq: 'monthly', byMonthDay: 5, monthInterval: 3, monthAnchor: '2025-01-20' };
+        expect(recurrenceFiresOn(r, '2025-01-05')).toBe(true);  // anchor month
+        expect(recurrenceFiresOn(r, '2025-02-05')).toBe(false);
+        expect(recurrenceFiresOn(r, '2025-03-05')).toBe(false);
+        expect(recurrenceFiresOn(r, '2025-04-05')).toBe(true);
+        expect(recurrenceFiresOn(r, '2025-04-06')).toBe(false); // wrong day of an on-phase month
+        expect(recurrenceFiresOn(r, '2026-01-05')).toBe(true);  // crosses the year boundary
+        expect(recurrenceFiresOn(r, '2024-10-05')).toBe(true);  // before the anchor too
+
+        const noAnchor = { active: true, freq: 'monthly', byMonthDay: 5, monthInterval: 3 };
+        expect(recurrenceFiresOn(noAnchor, '2025-02-05')).toBe(true); // no phase → every month
+    });
+
+    it('describes a quarterly rule in both registers', () => {
+        const r = { active: true, freq: 'monthly', byMonthDay: 5, monthInterval: 3, monthAnchor: '2025-01-20' };
+        expect(describeRecurrence(r)).toBe('Kas 3 mėn., 5 d.');
+        expect(describeRecurrence(r, { long: true })).toBe('Kas 3 mėnesius, 5 d.');
+        expect(describeRecurrence({ active: true, freq: 'monthly', byMonthDay: 5 })).toBe('Kas mėnesį, 5 d.');
+    });
+
     it('a paused recurrence never fires', () => {
         const r = { active: false, freq: 'daily' };
         expect(recurrenceFiresOn(r, '2024-01-01')).toBe(false);

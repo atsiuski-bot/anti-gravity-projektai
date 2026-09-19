@@ -22,6 +22,15 @@ export const RECURRENCE_INTERVALS = [
     { value: 4, label: 'Kas 4 savaites' },
 ];
 
+// Multi-month cadence for the monthly frequency: fire on the chosen day every N months. Like the
+// weekly interval it needs a phase, so the rule carries a `monthAnchor` (YYYY-MM-DD) whose MONTH is
+// cycle month 0. A separate field from the weekly `interval`/`anchorDate` so switching a rule
+// between weekly and monthly never silently turns "every 2 weeks" into "every 2 months".
+export const RECURRENCE_MONTH_INTERVALS = [
+    { value: 1, label: 'Kas mėnesį' },
+    { value: 3, label: 'Kas 3 mėnesius' },
+];
+
 // ISO weekday convention: 1=Mon … 7=Sun. The recurring roster is overwhelmingly "weekly on
 // Monday", so weekday selection is the core of the model. `plural` is the instrumental plural used
 // when a sentence names the days a rule fires on ("Kas savaitę, pirmadieniais"); `short` is the
@@ -64,6 +73,14 @@ export function weekIndex(dateStr) {
     return Math.floor((dayNum + 3) / 7);
 }
 
+// Absolute month index of a YYYY-MM-DD (year*12 + month). Two dates share an index iff they fall
+// in the same calendar month. Used to phase an "every N months" cadence against a rule's anchor.
+export function monthIndex(dateStr) {
+    const [y, m] = String(dateStr).split('-').map(Number);
+    if (!y || !m) return null;
+    return y * 12 + (m - 1);
+}
+
 // A fresh recurrence object for a new recurring template — weekly on Monday, every week, active.
 export function defaultRecurrence() {
     return {
@@ -73,6 +90,8 @@ export function defaultRecurrence() {
         interval: 1,        // weeks between firings (weekly freq only); 1 = every week
         anchorDate: null,   // YYYY-MM-DD whose week is cycle week 0 — only used when interval > 1
         byMonthDay: 1,
+        monthInterval: 1,   // months between firings (monthly freq only); 1 = every month
+        monthAnchor: null,  // YYYY-MM-DD whose month is cycle month 0 — only used when monthInterval > 1
         skipDates: [],
         lastGeneratedDate: null,
     };
@@ -110,7 +129,15 @@ export function recurrenceFiresOn(recurrence, dateStr) {
         case 'monthly': {
             const [y, m, d] = dateStr.split('-').map(Number);
             const target = Math.min(recurrence.byMonthDay || 1, daysInMonth(y, m));
-            return d === target;
+            if (d !== target) return false;
+            // Multi-month cadence (e.g. quarterly): only fire in months a whole multiple of
+            // `monthInterval` away from the anchor month. A missing interval/anchor = every month.
+            const every = Math.floor(Number(recurrence.monthInterval) || 1);
+            if (every <= 1 || !recurrence.monthAnchor) return true;
+            const mi = monthIndex(dateStr);
+            const ai = monthIndex(recurrence.monthAnchor);
+            if (mi == null || ai == null) return true;
+            return (((mi - ai) % every) + every) % every === 0;
         }
         default:
             return false;
@@ -183,8 +210,12 @@ export function describeRecurrence(recurrence, { long = false } = {}) {
             if (long) return `${cadence}, ${joinLithuanian(picked.map((w) => w.plural))}`;
             return `${cadence}: ${picked.map((w) => w.short).join(', ')}`;
         }
-        case 'monthly':
-            return `Kas mėnesį, ${recurrence.byMonthDay || 1} d.`;
+        case 'monthly': {
+            const every = Math.floor(Number(recurrence.monthInterval) || 1);
+            const label = RECURRENCE_MONTH_INTERVALS.find((o) => o.value === every)?.label;
+            const cadence = every > 1 ? (long ? (label || `Kas ${every} mėn.`) : `Kas ${every} mėn.`) : 'Kas mėnesį';
+            return `${cadence}, ${recurrence.byMonthDay || 1} d.`;
+        }
         default:
             return '';
     }

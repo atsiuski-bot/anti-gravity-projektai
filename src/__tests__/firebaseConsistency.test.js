@@ -322,6 +322,9 @@ describe('recurrence firing lockstep (functions recurringFiresOn ↔ client recu
     { active: true, freq: 'monthly', byMonthDay: 1 },
     { active: true, freq: 'monthly', byMonthDay: 31 },     // clamps in short months
     { active: true, freq: 'monthly', byMonthDay: 29 },     // Feb leap-year edge
+    { active: true, freq: 'monthly', byMonthDay: 16, monthInterval: 3, monthAnchor: '2025-11-03' }, // quarterly, on-phase in Feb
+    { active: true, freq: 'monthly', byMonthDay: 1, monthInterval: 3, monthAnchor: '2026-01-10' },  // quarterly, off-phase in Mar
+    { active: true, freq: 'monthly', byMonthDay: 1, monthInterval: 3 },                            // no anchor → monthly
     { active: true, freq: 'daily', skipDates: ['2026-02-16'] },
     { active: true, freq: 'unknown-future-freq' },         // unsupported → both return false
     null,

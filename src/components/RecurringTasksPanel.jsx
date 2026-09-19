@@ -14,6 +14,7 @@ import { formatDisplayName } from '../utils/formatters';
 import {
     RECURRENCE_FREQS,
     RECURRENCE_INTERVALS,
+    RECURRENCE_MONTH_INTERVALS,
     WEEKDAYS,
     defaultRecurrence,
     describeRecurrence,
@@ -31,6 +32,7 @@ import { useListSearchFilter } from '../hooks/useListSearchFilter';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
 const INTERVAL_OPTIONS = RECURRENCE_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
+const MONTH_INTERVAL_OPTIONS = RECURRENCE_MONTH_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
 
 // How the shared search/filter hook reads a TEMPLATE, which is a task wrapped in a name rather
 // than a task itself. Module-level so they are stable memo dependencies inside the hook.
@@ -333,15 +335,52 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                     )}
 
                     {draft.freq === 'monthly' && (
-                        <div className="max-w-[12rem]">
-                            <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Mėnesio diena</span>
-                            <Select
-                                value={String(draft.byMonthDay || 1)}
-                                onChange={(val) => setDraft((d) => ({ ...d, byMonthDay: Number(val) }))}
-                                options={MONTH_DAYS}
-                                label="Mėnesio diena"
-                                alwaysSheet
-                            />
+                        <div className="space-y-4">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                    <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Pasikartojimas</span>
+                                    <Select
+                                        value={String(draft.monthInterval || 1)}
+                                        onChange={(val) => setDraft((d) => {
+                                            const monthInterval = Number(val) || 1;
+                                            // Same phase-seeding as the weekly interval: the first time the manager
+                                            // leaves "every month", the cycle starts from the current month.
+                                            const monthAnchor = monthInterval > 1 ? (d.monthAnchor || getLithuanianDateString()) : d.monthAnchor;
+                                            return { ...d, monthInterval, monthAnchor };
+                                        })}
+                                        options={MONTH_INTERVAL_OPTIONS}
+                                        label="Pasikartojimas"
+                                        alwaysSheet
+                                    />
+                                </div>
+                                <div>
+                                    <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Mėnesio diena</span>
+                                    <Select
+                                        value={String(draft.byMonthDay || 1)}
+                                        onChange={(val) => setDraft((d) => ({ ...d, byMonthDay: Number(val) }))}
+                                        options={MONTH_DAYS}
+                                        label="Mėnesio diena"
+                                        alwaysSheet
+                                    />
+                                </div>
+                            </div>
+
+                            {Number(draft.monthInterval || 1) > 1 && (
+                                <div className="max-w-[16rem]">
+                                    <label htmlFor={`month-anchor-${template.id}`} className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">
+                                        Ciklo pradžios mėnuo
+                                    </label>
+                                    <DatePicker
+                                        id={`month-anchor-${template.id}`}
+                                        value={draft.monthAnchor || getLithuanianDateString()}
+                                        onChange={(val) => setDraft((d) => ({ ...d, monthAnchor: val }))}
+                                        aria-label="Ciklo pradžios mėnuo"
+                                    />
+                                    <p className="mt-1 text-caption text-ink-muted">
+                                        Ciklas skaičiuojamas nuo šio mėnesio; veikla kuriama kas {Number(draft.monthInterval)} mėn. pasirinktą dieną.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     )}
 

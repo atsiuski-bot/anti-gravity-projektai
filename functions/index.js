@@ -3127,6 +3127,12 @@ function recurringWeekIndex(dateStr) {
     const dayNum = Math.floor(Date.UTC(y, m - 1, d) / 86400000);
     return Math.floor((dayNum + 3) / 7);
 }
+// MIRROR of src/utils/recurrence.js monthIndex — absolute month index (year*12 + month).
+function recurringMonthIndex(dateStr) {
+    const [y, m] = String(dateStr).split('-').map(Number);
+    if (!y || !m) return null;
+    return y * 12 + (m - 1);
+}
 // MIRROR of src/utils/recurrence.js recurrenceFiresOn — keep both copies identical.
 function recurringFiresOn(recurrence, dateStr) {
     if (!recurrence || recurrence.active === false) return false;
@@ -3148,7 +3154,13 @@ function recurringFiresOn(recurrence, dateStr) {
         case 'monthly': {
             const [y, m, d] = dateStr.split('-').map(Number);
             const target = Math.min(recurrence.byMonthDay || 1, recurringDaysInMonth(y, m));
-            return d === target;
+            if (d !== target) return false;
+            const every = Math.floor(Number(recurrence.monthInterval) || 1);
+            if (every <= 1 || !recurrence.monthAnchor) return true;
+            const mi = recurringMonthIndex(dateStr);
+            const ai = recurringMonthIndex(recurrence.monthAnchor);
+            if (mi == null || ai == null) return true;
+            return (((mi - ai) % every) + every) % every === 0;
         }
         default:
             return false;
