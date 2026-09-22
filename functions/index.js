@@ -3667,7 +3667,7 @@ exports.notifyOverdueTasks = onSchedule(
 // ---------------------------------------------------------------------------
 //
 // Mirrors the GODSGLOOM AI pattern: the key NEVER touches the client — a callable forwards to
-// OpenRouter (model google/gemini-2.5-flash) using a server-side secret. The model extracts a
+// OpenRouter (model google/gemini-3.1-flash-lite) using a server-side secret. The model extracts a
 // DRAFT only; the client opens it in the normal create flow for the manager to confirm, so AI
 // never writes a task and the userId-pin / scoping rules are untouched. The assignee is resolved
 // SERVER-side from the caller-supplied roster (the model returns a name, not an id, so it can't
@@ -3675,7 +3675,9 @@ exports.notifyOverdueTasks = onSchedule(
 
 const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const PARSE_MODEL = 'google/gemini-2.5-flash';
+// gemini-2.5-flash is retired on OpenRouter 2026-10-20. 3.1-flash-lite keeps temperature 0 on
+// every Google route and spends no hidden reasoning tokens against the 300-token budget.
+const PARSE_MODEL = 'google/gemini-3.1-flash-lite';
 const MAX_PARSE_INPUT = 2000;
 // MIRROR of ALL_TIMES in src/components/TaskModal.jsx — the canonical estimate chips. A model
 // guess is clamped to this set so it always lands on a real chip; keep both copies in lockstep.
