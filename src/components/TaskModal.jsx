@@ -183,7 +183,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
     // on the title field so the error is attached to the control it is about, not only announced.
     const [titleInvalid, setTitleInvalid] = useState(false);
     // AI draft-fill: "✨ AI" beside the title turns the typed natural-language line into the
-    // structured fields (server callable → OpenRouter/gemini-2.5-flash returns a DRAFT only; it
+    // structured fields (server callable → OpenRouter/gemini-3.1-flash-lite returns a DRAFT only; it
     // never creates the task). aiMsg is the inline status/result note.
     const [aiBusy, setAiBusy] = useState(false);
     const [aiMsg, setAiMsg] = useState(null); // { text, tone: 'ok' | 'err' }

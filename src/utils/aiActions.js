@@ -3,7 +3,7 @@ import { functions } from '../firebase';
 
 /**
  * Parse a manager's free-text into a structured task DRAFT via the server callable (which forwards
- * to OpenRouter / google/gemini-2.5-flash with a server-side key — same pattern as GODSGLOOM).
+ * to OpenRouter / google/gemini-3.1-flash-lite with a server-side key — same pattern as GODSGLOOM).
  * The draft is filled into the create form for the manager to confirm; AI never writes a task.
  *
  * @param {string} text - the manager's natural-language line (e.g. "rytoj Giedriui 2h mašinų patikra").
