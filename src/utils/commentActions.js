@@ -21,9 +21,13 @@ export const getCommentKey = (comment) => comment?.id ?? comment?.createdAt;
  * @param {Array} _currentComments - the caller's snapshot of the thread. Deliberately UNUSED: the
  *   write appends server-side (see arrayUnion below). Kept in the signature so the existing
  *   positional call sites stay valid.
+ * @param {string} [collectionName]
+ * @param {Object} [options]
+ * @param {boolean} [options.notify=true] - false when the caller sends its own, richer notice that
+ *   already carries this text (the shelf's "Grąžinti papildyti"), so the recipient is pinged once.
  * @returns {Promise<void>}
  */
-export const addComment = async (taskId, text, currentUser, _currentComments = null, collectionName = 'tasks') => {
+export const addComment = async (taskId, text, currentUser, _currentComments = null, collectionName = 'tasks', { notify: shouldNotify = true } = {}) => {
     try {
         // Read the task only for the notification below (title + the two parties). The comment
         // WRITE deliberately does not depend on this read — see arrayUnion.
@@ -58,7 +62,7 @@ export const addComment = async (taskId, text, currentUser, _currentComments = n
         // when the commenter isn't the manager, AND the worker when the commenter isn't the
         // worker. This makes a manager's comment reach the worker (two-way) without ever echoing
         // back to the author (notifyMany drops the actor and de-dupes).
-        if (taskData) {
+        if (taskData && shouldNotify) {
             await notifyMany([taskData.managerId, taskData.assignedUserId], {
                 type: 'new_comment',
                 taskId,

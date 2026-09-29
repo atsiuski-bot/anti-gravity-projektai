@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import {
     Pencil, Trash2, Undo2, CheckCircle2, CheckCheck, Check, Clock, MessageSquare, ListChecks,
     Link as LinkIcon, ImageIcon, ImagePlus, Camera, ZoomIn, Send, X, ChevronDown,
-    Calendar, Timer, Hourglass, UserCog, Square, CheckSquare,
+    Calendar, Timer, Hourglass, UserCog, Square, CheckSquare, Bookmark, BookmarkCheck,
 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -35,6 +35,7 @@ import { notifyMany } from '../../utils/notify';
 import { logError } from '../../utils/errorLog';
 import { hapticTap } from '../../utils/haptics';
 import { preventEnterSubmit } from '../../utils/formUtils';
+import { useReviewShelf } from '../../hooks/useReviewShelf';
 
 /**
  * TaskDetailModal — the single "open the task" surface for both the desktop list (row click) and
@@ -103,6 +104,7 @@ export default function TaskDetailModal({
     const titleId = useId();
     const { currentUser, userData } = useAuth();
     const { users } = useUsers();
+    const reviewShelf = useReviewShelf();
 
     // Recipients for the approval-free backdate FYI: every ACTIVE admin (legacy spelling included),
     // computed from the roster the worker can already read.
@@ -366,7 +368,24 @@ export default function TaskDetailModal({
                     {typeIcon && <SessionTypeIcon type={typeIcon} className="mt-0.5 h-5 w-5 flex-shrink-0" />}
                     <h2 id={titleId} className="text-h3 font-bold leading-snug text-ink-strong">{task.title}</h2>
                 </div>
-                <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-1" />
+                <div className="-mr-2 -mt-1 flex flex-shrink-0 items-center">
+                    {/* "Peržiūrai" — a koordinatorius keeps this task on their personal review shelf
+                        (Kom. veiklos → Peržiūrai), whatever status it moves through. Offered on every
+                        surface that opens this preview, so it can be set before, at or after sign-off. */}
+                    {reviewShelf.enabled && !isDeleted && (() => {
+                        const shelved = reviewShelf.isShelved(task.id);
+                        return (
+                            <IconButton
+                                icon={shelved ? BookmarkCheck : Bookmark}
+                                label={shelved ? 'Pašalinti iš „Peržiūrai“' : 'Pasilikti peržiūrai'}
+                                aria-pressed={shelved}
+                                variant={shelved ? 'primary' : 'default'}
+                                onClick={() => reviewShelf.toggle(task)}
+                            />
+                        );
+                    })()}
+                    <IconButton icon={X} label="Uždaryti" onClick={onClose} />
+                </div>
             </div>
 
             {/* Body — scrolls; fade signals more content toward the sticky footer */}

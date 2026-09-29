@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3, LayoutGrid, ClipboardList } from 'lucide-react';
+import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3, LayoutGrid, ClipboardList, Bookmark } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import TaskCard from '../components/TaskCard';
@@ -46,6 +46,7 @@ import { useTaskFiltering } from '../hooks/useTaskFiltering';
 import { useListSearchFilter } from '../hooks/useListSearchFilter';
 import useFullBleed from '../hooks/useFullBleed';
 import { useRovingFocus } from '../hooks/useRovingFocus';
+import { useReviewShelf } from '../hooks/useReviewShelf';
 import { scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
 import { lazyWithRecovery } from '../utils/appUpdate';
@@ -57,6 +58,7 @@ import { lazyWithRecovery } from '../utils/appUpdate';
 const AllUsersCalendar = lazyWithRecovery(() => import('../components/AllUsersCalendar'));
 const WorkPlanner = lazyWithRecovery(() => import('../components/WorkPlanner'));
 const Reports = lazyWithRecovery(() => import('../components/Reports'));
+const ReviewShelf = lazyWithRecovery(() => import('../components/ReviewShelf'));
 const CalendarChangeHistory = lazyWithRecovery(() => import('../components/CalendarChangeHistory'));
 const AuditDashboard = lazyWithRecovery(() => import('../components/AuditDashboard'));
 // The priority board pulls in @dnd-kit; lazy-load it so that weight enters the bundle only when a
@@ -98,6 +100,8 @@ export default function ManagerView() {
 
     // Arrow-key + single-Tab-stop behaviour for the two `role="tablist"` strips below (APG).
     const teamTasksTabs = useRovingFocus();
+    // The manager's own "Peržiūrai" shelf — only its size is needed here, for the sub-tab badge.
+    const reviewShelf = useReviewShelf();
     const teamCalendarTabs = useRovingFocus();
 
     // Use custom hooks
@@ -469,6 +473,35 @@ export default function ManagerView() {
                             <button
                                 type="button"
                                 role="tab"
+                                id="team-review-shelf-tab"
+                                aria-selected={teamTasksSubTab === 'reviewShelf'}
+                                aria-controls="team-review-shelf-panel"
+                                onClick={() => setTeamTasksSubTab('reviewShelf')}
+                                className={cn(
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                    teamTasksSubTab === 'reviewShelf' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
+                                )}
+                            >
+                                <Bookmark className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span>Peržiūrai</span>
+                                {reviewShelf.ids.length > 0 && (
+                                    <span
+                                        className={cn(
+                                            'ml-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-caption font-bold leading-none',
+                                            teamTasksSubTab === 'reviewShelf'
+                                                ? 'bg-brand-hover text-white'
+                                                : 'bg-surface-card text-ink'
+                                        )}
+                                    >
+                                        {reviewShelf.ids.length}
+                                    </span>
+                                )}
+                            </button>
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
                                 id="team-recurring-tab"
                                 aria-selected={teamTasksSubTab === 'recurring'}
                                 aria-controls="team-recurring-panel"
@@ -768,6 +801,19 @@ export default function ManagerView() {
                         <ErrorBoundary boundaryName="manager:team-signoff-history">
                             <React.Suspense fallback={<Spinner />}>
                                 <Reports users={reportRoster} canExport views={['history']} />
+                            </React.Suspense>
+                        </ErrorBoundary>
+                    </div>
+                )}
+
+                {/* Sub-tab 7 — Peržiūrai: the manager's own shelf of tasks kept for a later look
+                    (ReviewShelf). Conditionally mounted like Pridavimas / Istorija, so its per-task
+                    listeners run only while the tab is open. */}
+                {teamTasksSubTab === 'reviewShelf' && (
+                    <div id="team-review-shelf-panel" role="tabpanel" aria-labelledby="team-review-shelf-tab" className="animate-in fade-in duration-150">
+                        <ErrorBoundary boundaryName="manager:team-review-shelf">
+                            <React.Suspense fallback={<Spinner />}>
+                                <ReviewShelf onEditTask={handleEditTask} />
                             </React.Suspense>
                         </ErrorBoundary>
                     </div>

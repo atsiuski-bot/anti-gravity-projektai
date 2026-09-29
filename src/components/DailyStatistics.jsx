@@ -17,6 +17,7 @@ import TaskActionRow from './task/TaskActionRow';
 import TaskCard from './TaskCard';
 import TaskDetailModal from './task/TaskDetailModal';
 import { buildReviewActions } from '../utils/taskActionVisibility';
+import { useReviewShelf } from '../hooks/useReviewShelf';
 import { addComment } from '../utils/commentActions';
 import { notifyMany } from '../utils/notify';
 import { logError } from '../utils/errorLog';
@@ -2564,6 +2565,9 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
     // card opens (canManage gates accept/re-open; restore mirrors the row's Grąžinti).
     const [detailTask, setDetailTask] = useState(null);
     const detailIsManager = isManagerRole(userRole);
+    // The viewer's "Peržiūrai" shelf: both review phases offer "keep for a later look" beside
+    // Priimti / Atnaujinti, so a result needed later never has to be dug out of Istorija.
+    const reviewShelf = useReviewShelf();
 
     return (
         <>
@@ -2608,6 +2612,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                             canRestore: true,
                             onToggleConfirm,
                             onRestore,
+                            shelf: reviewShelf,
                         });
                         return (
                             <li key={task.id}>
@@ -2659,6 +2664,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                                         canRestore: true,
                                         onToggleConfirm,
                                         onRestore,
+                                        shelf: reviewShelf,
                                     });
 
                                     return (

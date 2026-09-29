@@ -1435,6 +1435,11 @@ export default function ManagerNotifications({ onClose }) {
                                     <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
                                         <p>{(notif.createdBy || notif.createdByName) ? <UserChip userId={notif.createdBy} name={notif.createdByName} /> : <span className="font-semibold">Koordinatorius</span>} grąžino užduotį tobulinti:</p>
                                         <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
+                                        {/* The koordinatorius's note from "Grąžinti papildyti" (review
+                                            shelf) — what to add. Also saved as a comment on the task. */}
+                                        {notif.commentText && (
+                                            <p className="mt-2 break-words text-ink">{notif.commentText}</p>
+                                        )}
                                     </div>
                                 </div>
                                 {!readOnly && (

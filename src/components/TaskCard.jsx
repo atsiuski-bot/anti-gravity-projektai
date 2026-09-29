@@ -694,6 +694,10 @@ export default React.memo(TaskCard, (prevProps, nextProps) => {
     // never skip a re-render while one is present, or the handle would keep stale drag state.
     // In every other surface this is undefined === undefined, so the memo is unaffected.
     if (prevProps.leadingHandle !== nextProps.leadingHandle) return false;
+    // A caller-supplied action row can change while the task does not (e.g. the "Peržiūrai" shelf
+    // toggle flips its label) — re-render when the visible set of actions changes.
+    const actionsSig = (acts) => (acts || []).map((a) => `${a.key}:${a.label}:${a.disabled ? 1 : 0}`).join('|');
+    if (actionsSig(prevProps.actions) !== actionsSig(nextProps.actions)) return false;
     const prev = prevProps.task;
     const next = nextProps.task;
     if (!prev || !next) return prev === next;

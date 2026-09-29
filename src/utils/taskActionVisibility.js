@@ -1,4 +1,4 @@
-import { CheckCircle2, RefreshCw, RotateCcw } from 'lucide-react';
+import { CheckCircle2, RefreshCw, RotateCcw, Bookmark, BookmarkCheck } from 'lucide-react';
 import { isManagerRole } from './formatters';
 import { canSeeWholeTeam } from './teamScope';
 
@@ -88,9 +88,28 @@ export function canRevertTask({ task, role, userRole }) {
  * @param {boolean}  args.canRestore      may send an awaiting task back to the active list
  * @param {Function} args.onToggleConfirm (task) => void — toggles confirmed ⇄ completed
  * @param {Function} args.onRestore       (task) => void — restore to the active list
+ * @param {Object}   [args.shelf]         the viewer's "Peržiūrai" shelf (useReviewShelf) — when
+ *        enabled, both phases end with a toggle that keeps the task for a later look, so a manager
+ *        can accept now and still find the result without digging through Istorija.
  * @returns {Array<{key,label,icon,variant,disabled?,onClick}>}
  */
-export function buildReviewActions({ task, isManager, canRestore, onToggleConfirm, onRestore }) {
+export function buildReviewActions({ task, isManager, canRestore, onToggleConfirm, onRestore, shelf = null }) {
+    const acts = buildAcceptanceActions({ task, isManager, canRestore, onToggleConfirm, onRestore });
+    if (shelf?.enabled && !task.isDeleted && task.status !== 'deleted') {
+        const shelved = shelf.isShelved(task.id);
+        acts.push({
+            key: 'shelf',
+            label: shelved ? 'Peržiūroje' : 'Peržiūrai',
+            icon: shelved ? BookmarkCheck : Bookmark,
+            // Always secondary: Priimti must stay the dominant action (§8); the label + glyph carry the state.
+            variant: 'secondary',
+            onClick: () => shelf.toggle(task),
+        });
+    }
+    return acts;
+}
+
+function buildAcceptanceActions({ task, isManager, canRestore, onToggleConfirm, onRestore }) {
     const isConfirmed = task.status === 'confirmed';
     const acts = [];
     if (isConfirmed) {

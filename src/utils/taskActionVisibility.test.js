@@ -101,6 +101,48 @@ describe('taskActionVisibility', () => {
             expect(acts[0].key).toBe('confirm');
             expect(acts[0].disabled).toBe(true);
         });
+
+        // The "Peržiūrai" shelf toggle rides at the END of both phases, never displacing Priimti.
+        describe('shelf toggle', () => {
+            const shelfWith = (ids) => ({ enabled: true, isShelved: (id) => ids.includes(id), toggle: () => {} });
+
+            it('is appended after Priimti / Grąžinti on an awaiting task', () => {
+                const acts = buildReviewActions({
+                    task: { id: 't1', status: 'completed' }, isManager: true, canRestore: true,
+                    onToggleConfirm: noop, onRestore: noop, shelf: shelfWith([]),
+                });
+                expect(acts.map(a => a.key)).toEqual(['confirm', 'restore', 'shelf']);
+                expect(acts[2].label).toBe('Peržiūrai');
+                expect(acts[2].variant).toBe('secondary');
+            });
+
+            it('shows the shelved state on an accepted task', () => {
+                const acts = buildReviewActions({
+                    task: { id: 't1', status: 'confirmed' }, isManager: true, canRestore: true,
+                    onToggleConfirm: noop, onRestore: noop, shelf: shelfWith(['t1']),
+                });
+                expect(acts.map(a => a.key)).toEqual(['reopen', 'shelf']);
+                expect(acts[1].label).toBe('Peržiūroje');
+            });
+
+            it('is absent without an enabled shelf, and on a deleted task', () => {
+                const base = { isManager: true, canRestore: true, onToggleConfirm: noop, onRestore: noop };
+                expect(buildReviewActions({ ...base, task: { id: 't1', status: 'completed' } }).map(a => a.key)).toEqual(['confirm', 'restore']);
+                expect(buildReviewActions({ ...base, task: { id: 't1', status: 'completed' }, shelf: { ...shelfWith([]), enabled: false } }).map(a => a.key)).toEqual(['confirm', 'restore']);
+                expect(buildReviewActions({ ...base, task: { id: 't1', status: 'completed', isDeleted: true }, shelf: shelfWith([]) }).map(a => a.key)).toEqual(['confirm', 'restore']);
+            });
+
+            it('calls the shelf toggle with the task', () => {
+                let toggled = null;
+                const acts = buildReviewActions({
+                    task: { id: 't9', status: 'completed' }, isManager: true, canRestore: false,
+                    onToggleConfirm: noop, onRestore: noop,
+                    shelf: { enabled: true, isShelved: () => false, toggle: (t) => { toggled = t; } },
+                });
+                acts.find(a => a.key === 'shelf').onClick();
+                expect(toggled).toEqual({ id: 't9', status: 'completed' });
+            });
+        });
     });
 
     // The koordinatorius's closing door for a Meistras's still-open task. The timer's own "Užbaigti"

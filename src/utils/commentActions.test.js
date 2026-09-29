@@ -74,4 +74,16 @@ describe('addComment', () => {
         expect(updateDoc.mock.calls[0][1].comments.__arrayUnion[0].text).toBe('labas');
         expect(notifyMany).not.toHaveBeenCalled(); // no task data -> nobody to address
     });
+
+    it('writes but does not ping when the caller sends its own notice ({ notify: false })', async () => {
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ title: 'Stogas', managerId: 'm1', assignedUserId: 'w1', comments: [] }),
+        });
+
+        await addComment('t1', 'papildykite', { uid: 'm1', displayName: 'Vadovas' }, null, 'tasks', { notify: false });
+
+        expect(updateDoc.mock.calls[0][1].comments.__arrayUnion[0].text).toBe('papildykite');
+        expect(notifyMany).not.toHaveBeenCalled();
+    });
 });
