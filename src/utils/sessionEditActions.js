@@ -534,6 +534,147 @@ export const applyRequestedSessionEnd = async ({ sessionId, endTime, reason, edi
     });
 };
 
+/**
+ * Apply a worker's requested new START and END to their session — the manager's "Taip" on a
+ * time_correction_request of kind 'wrong_time'. The start+end generalisation of
+ * applyRequestedSessionEnd, with the same two guarantees and for the same reasons: the row is RE-READ
+ * (the request may be days old), and it must belong to the worker who asked (the write carries the
+ * manager's authority, the named row comes from a worker-authored document). It replays through
+ * editWorkSession, so the audit snapshot, counter re-derive and the worker's "your paid time was
+ * corrected" notice are identical to a hand-made correction.
+ *
+ * @param {Object} args - { sessionId, startTime, endTime, reason, editor, expectedUserId }
+ * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string}>}
+ *   error 'gone' / 'owner' — as applyRequestedSessionEnd.
+ */
+export const applyRequestedSessionTimes = async ({ sessionId, startTime, endTime, reason, editor, expectedUserId } = {}) => {
+    if (!sessionId || !startTime || !endTime) return { ok: false, error: 'missing' };
+    if (!expectedUserId) return { ok: false, error: 'owner' };
+    let session;
+    try {
+        const snap = await getDoc(doc(db, 'work_sessions', sessionId));
+        if (!snap.exists()) return { ok: false, error: 'gone' };
+        session = { id: snap.id, ...snap.data() };
+    } catch (err) {
+        logError(err, { source: 'readFail:applyRequestedSessionTimes', sessionId });
+        return { ok: false, error: 'write' };
+    }
+    if (session.isDeleted) return { ok: false, error: 'gone' };
+    if (session.userId !== expectedUserId) return { ok: false, error: 'owner' };
+    return editWorkSession(session, {
+        startTime,
+        endTime,
+        reason: (reason || '').trim() || 'Patvirtintas meistro prašymas pataisyti laiką',
+        editor,
+    });
+};
+
+// A synthetic taskId (quick_/call_/manual_…) names no task document: its time is session-only. Only a
+// REAL task id is re-read and owner-checked before a manager credits time against it.
+const isSyntheticTaskId = (taskId) => /^(quick_|call_|manual_)/.test(String(taskId || ''));
+
+/**
+ * Credit a session the worker FORGOT TO START — the manager's "Taip" on a time_correction_request of
+ * kind 'missed_start'. The creditRefusedGap shape, generalised to any interval the worker named:
+ *
+ *  • OWNERSHIP. A real task must be assigned to the requester (re-read, never trusted from the
+ *    notification); no task, or a synthetic one, becomes a session-only row on the requester — the
+ *    notification rules already proved the requester is the author, so userId cannot be forged.
+ *  • NO DOUBLE CREDIT. The requester's rows on that work day are read and an overlapping interval is
+ *    refused ('overlap'): paid time already recorded must never be credited twice. A read the rules
+ *    deny (a scoped manager's query) cannot run the check, so it falls through — the worker's form
+ *    runs the same check against the same day before sending.
+ *  • IDEMPOTENT. The row id is derived from (worker, start), so a double tap, or two managers each
+ *    answering their own copy of the request, land on ONE row.
+ *
+ * @param {Object} args - { taskId, taskTitle, expectedUserId, workerName, startTime, endTime, reason, editor }
+ * @returns {Promise<{ok:boolean, error?:string, id?:string, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ *   error 'gone' — the task no longer exists; 'owner' — the task is not the requester's;
+ *   'overlap' — the interval collides with time already recorded.
+ */
+export const creditRequestedSession = async ({
+    taskId, taskTitle, expectedUserId, workerName, startTime, endTime, reason, editor,
+} = {}) => {
+    if (!expectedUserId || !startTime || !endTime) return { ok: false, error: 'missing' };
+    const derived = deriveSessionFields(startTime, endTime);
+    if (!derived.ok) return { ok: false, error: derived.error };
+
+    const realTaskId = taskId && !isSyntheticTaskId(taskId) ? taskId : null;
+    let task = null;
+    if (realTaskId) {
+        try {
+            const snap = await getDoc(doc(db, 'tasks', realTaskId));
+            if (!snap.exists()) return { ok: false, error: 'gone' };
+            task = snap.data();
+        } catch (err) {
+            logError(err, { source: 'readFail:creditRequestedSession', taskId: realTaskId });
+            return { ok: false, error: 'write' };
+        }
+        if (task.assignedUserId !== expectedUserId) return { ok: false, error: 'owner' };
+    }
+
+    const startMs = new Date(startTime).getTime();
+    const endMs = new Date(endTime).getTime();
+    const rowId = `sess_req_${expectedUserId}_${startMs}`;
+    // A session is filed under the work day it ENDS in, so the rows that could collide sit on the
+    // start's day or the end's day.
+    const days = [...new Set([getWorkDayString(startTime), derived.date])];
+    try {
+        for (const day of days) {
+            const snap = await getDocs(query(
+                collection(db, 'work_sessions'),
+                where('userId', '==', expectedUserId),
+                where('date', '==', day)
+            ));
+            let clash = false;
+            snap.forEach((d) => {
+                if (d.id === rowId) return;
+                const s = d.data();
+                if (s.isDeleted || !s.startTime || !s.endTime) return;
+                const a = new Date(s.startTime).getTime();
+                const b = new Date(s.endTime).getTime();
+                if (a < endMs && b > startMs) clash = true;
+            });
+            if (clash) return { ok: false, error: 'overlap' };
+        }
+    } catch (err) {
+        if (err?.code !== 'permission-denied') {
+            logError(err, { source: 'readFail:creditRequestedSession:overlap' });
+            return { ok: false, error: 'write' };
+        }
+    }
+
+    const nowIso = new Date().toISOString();
+    const payload = {
+        taskId: realTaskId || `manual_req_${startMs}`,
+        taskTitle: (taskTitle || task?.title || '').trim() || 'Rankinė sesija',
+        userId: expectedUserId,
+        userName: workerName || task?.assignedUserName || null,
+        startTime,
+        endTime,
+        durationMinutes: derived.durationMinutes,
+        date: derived.date,
+        createdAt: nowIso,
+        isManualSession: true,
+        isCorrectionRequest: true,
+        createdByAdmin: editor?.uid || 'unknown',
+        createdByAdminName: editor?.displayName || editor?.email || 'Nežinomas',
+        editReason: (reason || '').trim() || 'Patvirtintas meistro prašymas: pamiršo paleisti laikmatį',
+    };
+    try {
+        const ref = doc(db, 'work_sessions', rowId);
+        await setDoc(ref, payload, { merge: true });
+        // No delta on purpose — the manager's broad read re-derives the whole total, so a repeat tap
+        // recomputes the same number instead of incrementing past the ledger (creditRefusedGap).
+        const rec = await reconcileTaskTimerFromSessions(payload.taskId, expectedUserId);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:creditRequestedSession', taskId: payload.taskId });
+        return { ok: true, id: rowId, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
+    } catch (err) {
+        logError(err, { source: 'writeFail:creditRequestedSession' });
+        return { ok: false, error: 'write' };
+    }
+};
+
 // ── Worker self-service REDUCTION (one-way, approval-free) ──────────────────────────────────────
 // The commonest honest error in the field is a timer left running: the worker finished at 16:00 and
 // noticed at 18:30. Until now they could only FLAG the row and wait for a manager, so over-credited

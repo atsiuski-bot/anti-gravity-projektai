@@ -76,12 +76,14 @@ for (const name of names) {
 // If this stops resolving, parseTaskDraft deploys without its key and fails at runtime, not deploy.
 const draftSecrets = (mod.parseTaskDraft.__endpoint.secretEnvironmentVariables || []).map((s) => s.key);
 assert.deepStrictEqual(draftSecrets, ['OPENROUTER_API_KEY'], 'parseTaskDraft lost its defineSecret binding');
+const suggestSecrets = (mod.suggestTimeCorrection.__endpoint.secretEnvironmentVariables || []).map((s) => s.key);
+assert.deepStrictEqual(suggestSecrets, ['OPENROUTER_API_KEY'], 'suggestTimeCorrection lost its defineSecret binding');
 
 // SHAPE LEDGER — update these four numbers deliberately when a function is added or removed.
 // The counts are not busywork: they are the only thing that catches an export DISAPPEARING (a bad
 // merge, a rename, a module-scope throw swallowed by a refactor). Without them, "every export has
 // an __endpoint" stays trivially true for the survivors while the deploy quietly drops a function.
-const EXPECTED = { total: 24, eventTrigger: 15, callableTrigger: 3, scheduleTrigger: 6 };
+const EXPECTED = { total: 25, eventTrigger: 15, callableTrigger: 4, scheduleTrigger: 6 };
 assert.strictEqual(names.length, EXPECTED.total, `expected ${EXPECTED.total} deployable functions, found ${names.length} — if this change was intentional, update the ledger in ${path.basename(__filename)}`);
 assert.strictEqual(counts.eventTrigger, EXPECTED.eventTrigger, `eventTrigger count moved to ${counts.eventTrigger} — update the ledger if intentional`);
 assert.strictEqual(counts.callableTrigger, EXPECTED.callableTrigger, `callableTrigger count moved to ${counts.callableTrigger} — update the ledger if intentional`);

@@ -36,6 +36,7 @@ import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
 import BackdateTimeModal from './BackdateTimeModal';
+import TimeCorrectionSheet from './TimeCorrectionSheet';
 import ListFilterBar from './ui/ListFilterBar';
 import { useListSearchFilter } from '../hooks/useListSearchFilter';
 
@@ -175,6 +176,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         !isManagerRole(userRole) &&
         userData?.canEditOwnStartTime === true &&
         selectedUserId === currentUser?.uid;
+    // "Pranešti apie laiko klaidą" — the day-level correction request (TimeCorrectionSheet). Offered
+    // to a worker on their OWN single day only; managers correct time with the session editor.
+    const canRequestDayCorrection =
+        !isManagerRole(userRole) &&
+        selectedUserId === currentUser?.uid &&
+        !(dateRange && dateRange.start && dateRange.end);
+    const [dayCorrectionOpen, setDayCorrectionOpen] = useState(false);
     const adminUids = useMemo(
         () => (users || [])
             .filter((u) => (u.role === 'admin' || u.role === 'Administratorius') && !u.isDisabled)
@@ -1546,8 +1554,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {/* Timeline Table or Worker Summary */}
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 {selectedUserId !== 'all' && (
-                    <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
+                    <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
                         <h3 className="font-semibold">Veiklų eiga</h3>
+                        {canRequestDayCorrection && (
+                            <Button variant="secondary" icon={Flag} onClick={() => setDayCorrectionOpen(true)}>
+                                Pranešti apie klaidą
+                            </Button>
+                        )}
                     </div>
                 )}
 
@@ -2086,6 +2099,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     canEditStart={canEditOwnStart}
                     onSubmit={handleSubmitTimeCorrection}
                     onClose={() => setErrorReportTarget(null)}
+                />
+            )}
+
+            {/* Worker → manager day-level correction request: five choices, pre-filled from this
+                day's own rows. The live listeners refresh the timeline after an on-the-spot fix. */}
+            {dayCorrectionOpen && (
+                <TimeCorrectionSheet
+                    open
+                    onClose={() => setDayCorrectionOpen(false)}
+                    day={selectedDate}
+                    worker={{
+                        uid: currentUser?.uid,
+                        displayName: currentUser?.displayName,
+                        email: currentUser?.email,
+                        name: formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '',
+                    }}
+                    workRows={sessions.filter((s) => resolveUserId(s) === currentUser?.uid && !s.isDeleted && s.endTime)}
+                    breakRows={breakSessions.filter((b) => resolveUserId(b) === currentUser?.uid && b.endTime)}
+                    managerIds={myManagerIds}
+                    adminUids={adminUids}
                 />
             )}
 

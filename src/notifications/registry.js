@@ -122,6 +122,20 @@ export const NOTIFICATIONS = {
         }),
     },
 
+    // Worker → ALL of their managers: "Pranešti apie laiko klaidą". The request IS this document —
+    // its machine-readable fields (correctionKind, requestedStartTime/EndTime, sessionRef, taskId) are
+    // what the manager's Taip applies; commentText is the same fix as one human line.
+    time_correction_request: {
+        category: 'action',
+        sound: 'alert',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({
+            title: 'Prašymas pataisyti laiką',
+            body: n.commentText ? clamp(n.commentText) : (n.day || 'Veiklos laikas'),
+        }),
+    },
+
     // Worker (via recovery) → ALL of their team's managers: a stretch of work the timer could not
     // record, that the system REFUSED to auto-credit (over MAX_UNTRACKED_GAP_MINUTES, or spanning two
     // work days). The refusal is correct — such an interval is as likely a forgotten timer as real
@@ -277,6 +291,19 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         copy: (n) => ({ title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' }),
     },
+    // Manager → worker: the answer to a time_correction_request. Both outcomes are reported, for the
+    // same reason as time_gap_settled — a "Ne" the worker never hears about is a silent loss.
+    time_correction_settled: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({
+            title: n.approved ? 'Laiko pataisymas patvirtintas' : 'Laiko pataisymas atmestas',
+            body: n.summary ? clamp(n.summary) : (n.day || 'Veiklos laikas'),
+        }),
+    },
+
     // Manager → worker: the answer to a time_gap_claim. Both outcomes are reported, because the point
     // of ADR 0025 is that a refusal stops being an ABSENCE: "neužskaityta" is information the worker
     // needs (they can still raise a correction request), while silence is what made the old loss

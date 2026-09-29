@@ -18,3 +18,17 @@ export const parseTaskText = async (text, roster) => {
     const res = await fn({ text, roster });
     return res.data;
 };
+
+/**
+ * Turn a worker's free-text time complaint into ONE structured correction proposal via the server
+ * callable (same key/model as parseTaskDraft). Writes nothing: the worker confirms the proposal
+ * before any request is sent, and the server only ever echoes row/task ids the caller supplied.
+ *
+ * @param {{text:string, day:string, rows:{id:string,type:'work'|'break',title:string,start:string,end:string}[], tasks:{id:string,title:string}[]}} payload
+ * @returns {Promise<{kind:string, rowId:string, taskId:string, start:string, end:string, summary:string}>}
+ */
+export const suggestTimeCorrection = async (payload) => {
+    const fn = httpsCallable(functions, 'suggestTimeCorrection');
+    const res = await fn(payload);
+    return res.data;
+};

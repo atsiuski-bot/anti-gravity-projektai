@@ -63,6 +63,8 @@ import {
     validateOwnStartCorrection,
     correctOwnSessionStart,
     applyRequestedSessionEnd,
+    applyRequestedSessionTimes,
+    creditRequestedSession,
     creditRefusedGap,
     MIN_SELF_REDUCED_MINUTES,
 } from './sessionEditActions';
@@ -1214,6 +1216,123 @@ describe('applyRequestedSessionEnd (one-tap approval of a requested end)', () =>
     it('refuses without a session id or a requested end', async () => {
         expect((await applyRequestedSessionEnd({ endTime: 'x', expectedUserId: 'u1' })).error).toBe('missing');
         expect((await applyRequestedSessionEnd({ sessionId: 's', expectedUserId: 'u1' })).error).toBe('missing');
+    });
+});
+
+describe('applyRequestedSessionTimes (Taip on a wrong_time correction request)', () => {
+    const stored = {
+        userId: 'u1',
+        taskId: 't-real',
+        startTime: '2026-09-29T05:00:00.000Z',
+        endTime: '2026-09-29T13:00:00.000Z',
+        durationMinutes: 480,
+    };
+
+    it('replays BOTH requested times through editWorkSession', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => true, id: 'ws-1', data: () => stored });
+        const res = await applyRequestedSessionTimes({
+            sessionId: 'ws-1',
+            startTime: '2026-09-29T04:30:00.000Z',
+            endTime: '2026-09-29T13:00:00.000Z',
+            editor: { uid: 'mgr1', displayName: 'Vadovas' },
+            expectedUserId: 'u1',
+        });
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(510);
+        const updates = updateDoc.mock.calls[0][1];
+        expect(updates.startTime).toBe('2026-09-29T04:30:00.000Z');
+        expect(updates.editedBy).toBe('mgr1');
+        expect(updates.editReason).toMatch(/prašym/);
+    });
+
+    it('refuses a row that is not the requester\'s, and a vanished row', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => true, id: 'ws-1', data: () => stored });
+        expect((await applyRequestedSessionTimes({
+            sessionId: 'ws-1', startTime: stored.startTime, endTime: stored.endTime, expectedUserId: 'someone-else',
+        })).error).toBe('owner');
+        getDoc.mockResolvedValueOnce({ exists: () => false });
+        expect((await applyRequestedSessionTimes({
+            sessionId: 'gone', startTime: stored.startTime, endTime: stored.endTime, expectedUserId: 'u1',
+        })).error).toBe('gone');
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unattributed or incomplete request', async () => {
+        expect((await applyRequestedSessionTimes({ sessionId: 's', startTime: 'a', endTime: 'b' })).error).toBe('owner');
+        expect((await applyRequestedSessionTimes({ sessionId: 's', endTime: 'b', expectedUserId: 'u1' })).error).toBe('missing');
+    });
+});
+
+describe('creditRequestedSession (Taip on a missed_start correction request)', () => {
+    const base = {
+        expectedUserId: 'u1',
+        workerName: 'Jonas',
+        startTime: '2026-09-29T05:10:00.000Z',
+        endTime: '2026-09-29T06:40:00.000Z',
+        editor: { uid: 'mgr1', displayName: 'Vadovas' },
+    };
+    const noRows = { forEach: () => {} };
+    const rowsOf = (rows) => ({ forEach: (fn) => rows.forEach((r) => fn({ id: r.id, data: () => r })) });
+
+    it('credits a real task assigned to the requester, on a deterministic id', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ assignedUserId: 'u1', title: 'Stogas' }) });
+        getDocs.mockResolvedValue(noRows);
+        const res = await creditRequestedSession({ ...base, taskId: 't1' });
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(90);
+        const [ref, payload, opts] = setDoc.mock.calls[0];
+        // Derived from (worker, start): a double tap, or a second manager answering their own copy,
+        // lands on the SAME row instead of crediting the time twice.
+        expect(ref.id).toBe(`sess_req_u1_${new Date(base.startTime).getTime()}`);
+        expect(opts).toEqual({ merge: true });
+        expect(payload).toMatchObject({
+            taskId: 't1', taskTitle: 'Stogas', userId: 'u1', isManualSession: true,
+            isCorrectionRequest: true, createdByAdmin: 'mgr1', durationMinutes: 90,
+        });
+        getDocs.mockReset();
+        getDocs.mockImplementation(() => Promise.resolve({ forEach: () => {} }));
+    });
+
+    // Confused deputy: the task id comes from a worker-authored notification.
+    it('refuses a task that is not assigned to the requester', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ assignedUserId: 'someone-else' }) });
+        expect((await creditRequestedSession({ ...base, taskId: 't1' })).error).toBe('owner');
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('with no task, writes a session-only row on the requester (no task read)', async () => {
+        const res = await creditRequestedSession({ ...base, taskId: null });
+        expect(res.ok).toBe(true);
+        // No owner-check read precedes the write: the only task read is the post-write counter
+        // reconcile, which self-skips the synthetic id.
+        expect(getDoc.mock.invocationCallOrder[0]).toBeGreaterThan(setDoc.mock.invocationCallOrder[0]);
+        const payload = setDoc.mock.calls[0][1];
+        expect(payload.taskId).toMatch(/^manual_req_/);
+        expect(payload.userId).toBe('u1');
+    });
+
+    // Paid time already on record is never credited twice.
+    it('refuses an interval that overlaps a row already recorded that day', async () => {
+        getDocs.mockResolvedValueOnce(rowsOf([
+            { id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' },
+        ]));
+        expect((await creditRequestedSession({ ...base, taskId: null })).error).toBe('overlap');
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('ignores deleted rows and its OWN earlier write when checking overlap (idempotent retry)', async () => {
+        const ownId = `sess_req_u1_${new Date(base.startTime).getTime()}`;
+        getDocs.mockResolvedValueOnce(rowsOf([
+            { id: ownId, startTime: base.startTime, endTime: base.endTime },
+            { id: 'ws-del', isDeleted: true, startTime: base.startTime, endTime: base.endTime },
+        ]));
+        expect((await creditRequestedSession({ ...base, taskId: null })).ok).toBe(true);
+    });
+
+    it('rejects an impossible interval before any write', async () => {
+        expect((await creditRequestedSession({ ...base, endTime: base.startTime })).error).toBe('order');
+        expect((await creditRequestedSession({ ...base, expectedUserId: null })).error).toBe('missing');
+        expect(setDoc).not.toHaveBeenCalled();
     });
 });
 

@@ -23,6 +23,7 @@ import { useRovingFocus } from '../hooks/useRovingFocus';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { applyRequestedSessionEnd, creditRefusedGap } from '../utils/sessionEditActions';
+import { applyTimeCorrectionRequest, isApplicableCorrection, describeCorrection, CORRECTION_KINDS, CORRECTION_KIND_MANAGER_LABELS } from '../utils/timeCorrectionRequest';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -192,6 +193,7 @@ export default function ManagerNotifications({ onClose }) {
     const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
     const [applyingTime, setApplyingTime] = useState(null); // notif.id of an in-flight one-tap time correction
     const [settlingGap, setSettlingGap] = useState(null); // notif.id of an in-flight refused-gap decision
+    const [settlingCorrection, setSettlingCorrection] = useState(null); // notif.id of an in-flight Taip/Ne on a time_correction_request
 
 
     // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
@@ -706,6 +708,53 @@ export default function ManagerNotifications({ onClose }) {
         } else {
             setActionError('Nepavyko pritaikyti laiko. Pataisykite veiklos ataskaitoje.');
         }
+    };
+
+    // Taip / Ne on a worker's time_correction_request. "Taip" replays the request through the
+    // owner-checked admin write for its kind (applyTimeCorrectionRequest); "Ne" writes nothing. Both
+    // answers reach the worker — a refusal they never hear about is the silent loss ADR 0025 ended.
+    // A wrong_time "Taip" already tells the worker through editWorkSession's session_edited notice
+    // (with the before → after), so it is not told twice.
+    const handleSettleCorrection = async (notif, approve) => {
+        if (settlingCorrection) return;
+        setSettlingCorrection(notif.id);
+        clearActionFeedback();
+        const { delta, detail } = describeCorrection(notif);
+        const summary = [notif.day, detail, delta].filter(Boolean).join(' · ');
+
+        if (approve) {
+            const result = await applyTimeCorrectionRequest({ notif, editor: currentUser });
+            if (!result.ok) {
+                setSettlingCorrection(null);
+                if (result.error === 'gone') {
+                    setActionNotice('Šio įrašo ar užduoties nebėra — prašymas išvalytas.');
+                    await handleDismissTask(notif.id);
+                } else if (result.error === 'owner') {
+                    setActionError('Prašymas nurodo ne šio meistro įrašą — patikrinkite veiklos ataskaitoje.');
+                } else if (result.error === 'overlap') {
+                    setActionError('Šis laikas persidengia su jau įrašytu — pataisykite veiklos ataskaitoje.');
+                } else {
+                    setActionError('Nepavyko pritaikyti pataisymo. Pataisykite veiklos ataskaitoje.');
+                }
+                return;
+            }
+            if (result.reconciled === false) {
+                setActionNotice('Laikas pataisytas, bet užduoties suvestinė gali būti pasenusi.');
+            }
+        }
+        setSettlingCorrection(null);
+        if (!approve || notif.correctionKind !== CORRECTION_KINDS.WRONG_TIME) {
+            await notify({
+                recipientId: notif.userId,
+                type: 'time_correction_settled',
+                approved: !!approve,
+                day: notif.day || null,
+                summary,
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
+            });
+        }
+        await handleDismissTask(notif.id);
     };
 
     // ADR 0025 — settle a refused work gap. Recovery could not auto-credit the interval (too long, or
@@ -1636,6 +1685,85 @@ export default function ManagerNotifications({ onClose }) {
                                                     : []),
                                                 { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: canApplyRequest ? 'secondary' : 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
                                             ]}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // Worker → manager ACTION: "Pranešti apie laiko klaidą". The card leads with the fix
+                    // itself (net change + what/when), then the worker's own words. An applicable kind
+                    // is answered in one tap — Taip writes through the owner-checked admin path, Ne
+                    // writes nothing — and both answers reach the worker. The info-only kinds (a break
+                    // that was work, free text the AI could not structure) keep the manual route.
+                    if (notif.type === 'time_correction_request') {
+                        const applicable = isApplicableCorrection(notif);
+                        const { delta, detail } = describeCorrection(notif);
+                        const openReport = () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); };
+                        return (
+                            <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex items-start gap-3">
+                                        <Clock className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
+                                        <div className="min-w-0 text-sm text-feedback-warning-text">
+                                            <p>
+                                                <UserChip userId={notif.userId} name={notif.userName} /> prašo pataisyti laiką
+                                                {notif.day ? <> · {notif.day}</> : null}
+                                            </p>
+                                            <p className="mt-1 font-semibold">
+                                                {CORRECTION_KIND_MANAGER_LABELS[notif.correctionKind] || CORRECTION_KIND_MANAGER_LABELS.other}
+                                            </p>
+                                            {(delta || detail) && (
+                                                <div className="mt-2 rounded-control border border-feedback-warning-border bg-surface-card p-3 text-ink-strong">
+                                                    <p className="text-xs text-ink-muted">{applicable ? 'Siūlomas pataisymas' : 'Prašoma'}</p>
+                                                    {delta && <p className="font-mono text-base font-bold">{delta}</p>}
+                                                    {detail && <p className="text-sm break-words">{detail}</p>}
+                                                    {notif.aiSuggested && <p className="mt-1 text-xs text-ink-muted">Pasiūlyta pagal komentarą, meistras patvirtino</p>}
+                                                </div>
+                                            )}
+                                            {notif.workerNote && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.workerNote}&quot;</p>}
+                                            {!applicable && (
+                                                <p className="mt-2 text-xs">
+                                                    {notif.correctionKind === CORRECTION_KINDS.BREAK_WAS_WORK
+                                                        ? 'Pauzės pakeisti į darbą programėlėje kol kas negalima — perduokite administratoriui.'
+                                                        : 'Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“.'}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {!readOnly && (
+                                        <TaskActionRow
+                                            className="mt-1"
+                                            actions={applicable
+                                                ? [
+                                                    {
+                                                        key: 'approve',
+                                                        label: 'Taip',
+                                                        // Yes/No is the whole decision; an icon alone
+                                                        // would hide it when three buttons collapse.
+                                                        compactLabel: 'Taip',
+                                                        icon: Check,
+                                                        variant: 'primary',
+                                                        loading: settlingCorrection === notif.id,
+                                                        disabled: !!settlingCorrection,
+                                                        onClick: () => handleSettleCorrection(notif, true),
+                                                    },
+                                                    {
+                                                        key: 'reject',
+                                                        label: 'Ne',
+                                                        compactLabel: 'Ne',
+                                                        icon: Ban,
+                                                        variant: 'secondary',
+                                                        disabled: !!settlingCorrection,
+                                                        onClick: () => handleSettleCorrection(notif, false),
+                                                    },
+                                                    { key: 'open', label: 'Keisti ataskaitoje', compactLabel: 'Keisti', icon: Edit, variant: 'secondary', onClick: openReport },
+                                                ]
+                                                : [
+                                                    { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
+                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: openReport },
+                                                ]}
                                         />
                                     )}
                                 </div>

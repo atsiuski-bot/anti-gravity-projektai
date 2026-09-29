@@ -28,6 +28,7 @@ const { getStorage } = require('firebase-admin/storage');
 const { appendSystemDecision } = require('./decisionLog');
 const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption, isReferentialTaskSession, isCorrectedSession, findCounterDrift, claimedTaskRun, classifySessionDisagreements } = require('./integrityScans');
 const { lithuanianDay, currentWorkDay, taskArchivable } = require('./workDay');
+const { HHMM, sanitizeCorrectionSuggestion } = require('./correctionSuggestion');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -153,6 +154,8 @@ const CATEGORY_BY_TYPE = {
     task_completion: 'action',
     time_extension_request: 'action',
     session_correction_request: 'action',
+    time_correction_request: 'action',
+    time_correction_settled: 'info',
     time_gap_claim: 'action',
     time_gap_settled: 'info',
     task_needs_manager: 'action',
@@ -333,6 +336,22 @@ function copyForRequestNotification(n) {
                 title: 'Pranešimas apie veiklos laiko klaidą',
                 body: n.commentText
                     ? `${n.day || 'Veiklos laikas'}: ${String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)}`
+                    : (n.day || 'Veiklos laikas'),
+            };
+        case 'time_correction_request':
+            // Worker → manager: "Pranešti apie laiko klaidą". Body = the one-line fix (clamped) or day.
+            return {
+                title: 'Prašymas pataisyti laiką',
+                body: n.commentText
+                    ? String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)
+                    : (n.day || 'Veiklos laikas'),
+            };
+        case 'time_correction_settled':
+            // Manager → worker: the answer to the above; both outcomes are reported.
+            return {
+                title: n.approved ? 'Laiko pataisymas patvirtintas' : 'Laiko pataisymas atmestas',
+                body: n.summary
+                    ? String(n.summary).replace(/\s+/g, ' ').trim().slice(0, 100)
                     : (n.day || 'Veiklos laikas'),
             };
         case 'time_gap_claim':
@@ -3814,5 +3833,116 @@ exports.parseTaskDraft = onCall(
             estimatedGuess,
             deadline,
         };
+    }
+);
+
+// ---------------------------------------------------------------------------
+// AI time-correction suggester — a worker's free-text complaint → ONE structured fix
+// ---------------------------------------------------------------------------
+//
+// "Pranešti apie laiko klaidą → Kita": the worker describes what went wrong in their own words, and
+// this turns it into one of the SAME structured kinds the form offers (missed_start, missed_stop,
+// wrong_time, break_was_work) so the manager can answer it with Taip / Ne. The parseTaskDraft pattern:
+// the key never touches the client, and the callable WRITES NOTHING — it returns a proposal the worker
+// must confirm before anything is sent.
+//
+// The model can only POINT at things the caller supplied: rowId must be one of the day's rows, taskId
+// one of the listed tasks, times HH:MM. Anything else is dropped, and a proposal missing what its kind
+// needs degrades to 'other' — so a hallucination can never name a row or task the worker did not
+// already see. The rows are the caller's own day, exactly what the client already shows them.
+exports.suggestTimeCorrection = onCall(
+    { secrets: [OPENROUTER_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
+    async (request) => {
+        const callerUid = request.auth && request.auth.uid;
+        // Same gate as parseTaskDraft: any ACTIVE user — it spends real money, and it writes nothing.
+        await assertActiveCaller(callerUid);
+        const apiKey = OPENROUTER_API_KEY.value();
+        if (!apiKey) throw new HttpsError('failed-precondition', 'AI not configured.');
+
+        const data = request.data || {};
+        const text = String(data.text || '').slice(0, 1000).trim();
+        if (!text) throw new HttpsError('invalid-argument', 'No text provided.');
+        const day = /^\d{4}-\d{2}-\d{2}$/.test(String(data.day || '')) ? data.day : lithuanianDay(new Date());
+        const clip = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+        const rows = (Array.isArray(data.rows) ? data.rows : []).slice(0, 60)
+            .filter((r) => r && typeof r.id === 'string' && r.id && (r.type === 'work' || r.type === 'break'))
+            .map((r) => ({
+                id: r.id.slice(0, 128),
+                type: r.type,
+                title: clip(r.title, 120),
+                start: HHMM.test(String(r.start)) ? r.start : '',
+                end: HHMM.test(String(r.end)) ? r.end : '',
+            }));
+        const tasks = (Array.isArray(data.tasks) ? data.tasks : []).slice(0, 40)
+            .filter((t) => t && typeof t.id === 'string' && t.id)
+            .map((t) => ({ id: t.id.slice(0, 128), title: clip(t.title, 120) }));
+
+        const rowLines = rows.map((r) =>
+            `- [${r.id}] ${r.type === 'break' ? 'PERTRAUKA' : 'DARBAS'} ${r.start}–${r.end}${r.title ? ` „${r.title}“` : ''}`
+        ).join('\n') || '(įrašų nėra)';
+        const taskLines = tasks.map((t) => `- [${t.id}] ${t.title}`).join('\n') || '(nėra)';
+
+        const system =
+            'Tu padedi darbuotojui pataisyti jo darbo laiko įrašus. Pagal jo komentarą (lietuvių kalba) ' +
+            'ir jo dienos įrašus parink VIENĄ pataisymą. Grąžink TIK JSON objektą su laukais: ' +
+            'kind (vienas iš: missed_start = pamiršo paleisti laikmatį, reikia pridėti naują darbo ' +
+            'laiką; missed_stop = pamiršo sustabdyti, darbas baigėsi anksčiau nei įrašyta; wrong_time = ' +
+            'esamo darbo įrašo pradžia ar pabaiga neteisinga; break_was_work = pažymėta pertrauka iš ' +
+            'tikrųjų buvo darbas; other = neaišku), rowId (esamo įrašo id iš sąrašo — privalomas ' +
+            'missed_stop, wrong_time ir break_was_work; kitaip ""), taskId (užduoties id iš sąrašo, kai ' +
+            'aišku, prie kurios pridėti laiką; kitaip ""), start ir end (HH:MM — NAUJAS teisingas ' +
+            'intervalas; missed_stop atveju start = įrašo pradžia, end = tikroji pabaiga; jei laikas ' +
+            'nenurodytas ir neišplaukia iš įrašų — ""), summary (viena trumpa lietuviška eilutė vadovui, ' +
+            'kas bus pataisyta). Darbo diena: ' + day + ' (prasideda 05:00, Europe/Vilnius). ' +
+            'Neišgalvok laikų ar įrašų. Atsakyk TIK JSON.\n\nDienos įrašai:\n' + rowLines +
+            '\n\nUžduotys:\n' + taskLines;
+
+        let resp;
+        try {
+            resp = await fetch(OPENROUTER_URL, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://anti-gravity-projektai.pages.dev',
+                    'X-Title': 'WORKZ time correction',
+                },
+                body: JSON.stringify({
+                    model: PARSE_MODEL,
+                    messages: [
+                        { role: 'system', content: system },
+                        { role: 'user', content: text },
+                    ],
+                    response_format: { type: 'json_object' },
+                    temperature: 0,
+                    max_tokens: 300,
+                }),
+            });
+        } catch (e) {
+            logger.error('suggestTimeCorrection fetch failed', { err: e.message });
+            throw new HttpsError('unavailable', 'AI laikinai nepasiekiamas.');
+        }
+        if (!resp.ok) {
+            const t = await resp.text().catch(() => '');
+            logger.warn('suggestTimeCorrection non-OK', { status: resp.status, body: t.slice(0, 200) });
+            if (resp.status === 429) throw new HttpsError('resource-exhausted', 'AI kvota viršyta.');
+            throw new HttpsError('internal', 'AI grąžino klaidą.');
+        }
+        let parsed = {};
+        try {
+            const json = await resp.json();
+            const content = json && json.choices && json.choices[0] &&
+                json.choices[0].message && json.choices[0].message.content;
+            try {
+                parsed = JSON.parse(content);
+            } catch (e) {
+                const m = String(content || '').match(/\{[\s\S]*\}/);
+                parsed = m ? JSON.parse(m[0]) : {};
+            }
+        } catch (e) {
+            throw new HttpsError('internal', 'AI atsakymas netinkamas.');
+        }
+
+        return sanitizeCorrectionSuggestion(parsed, rows, tasks);
     }
 );

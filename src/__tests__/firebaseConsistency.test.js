@@ -523,6 +523,13 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     task_completion: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],
+    // Worker → manager "Pranešti apie laiko klaidą", and the manager's answer (both outcomes).
+    time_correction_request: [{ day: '2026-09-29', commentText: '  Pamiršo paleisti.   2026-09-29 · Stogas ' }, { day: '2026-09-29' }, {}],
+    time_correction_settled: [
+      { approved: true, day: '2026-09-29', summary: '  2026-09-29 ·  Stogas, 08:10–09:40 · +1 val. 30 min. ' },
+      { approved: false, day: '2026-09-29' },
+      {},
+    ],
     // ADR 0025 refused-gap escalation, and its answer. The settled type branches on gapCredited, so
     // both outcomes are compared — a mirror that agreed on only one of them would be worse than none.
     time_gap_claim: [{ taskTitle: 'Šiaudų pynimas' }, {}],
