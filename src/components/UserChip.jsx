@@ -19,7 +19,7 @@ import Avatar from './ui/Avatar';
  * Variants
  *  - `size="sm"` (default) — 24px avatar + 14px name. The universal in-content standard: mentions,
  *    comments, notifications, list rows, task-card people.
- *  - `size="md"` — 36px avatar + 16px name. Use when the person IS the subject of the row/section
+ *  - `size="md"` — 24px avatar + 14px semibold name (same footprint as sm, bolder). Use when the person IS the subject of the row/section
  *    (roster identity, live-session row, section header). Tall enough to be its own 44px tap target.
  *  - `colorDot` — a leading dot in the worker's identity colour (the assignee's "doer" colour). Paired
  *    with the avatar/name so colour is never the only signal (§5). Used by `AssigneeChip`.
@@ -38,7 +38,7 @@ import Avatar from './ui/Avatar';
  */
 const SIZES = {
     sm: { avatar: 'xs', text: 'text-body', weight: 'font-medium', pill: 'gap-1.5 px-2 py-0.5', dot: 'h-2 w-2' },
-    md: { avatar: 'sm', text: 'text-body-lg', weight: 'font-semibold', pill: 'gap-2 px-2.5 py-1', dot: 'h-2.5 w-2.5' },
+    md: { avatar: 'xs', text: 'text-body', weight: 'font-semibold', pill: 'gap-1.5 px-2 py-0.5', dot: 'h-2 w-2' },
 };
 
 export default function UserChip({
@@ -112,11 +112,10 @@ export default function UserChip({
             className={cn(
                 pill,
                 'transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1',
-                // A clickable chip is a real control, so it owes the >=44px target (§7) — and §2
-                // is explicit that density never wins over the target size. An earlier attempt to
-                // keep the pill at 30px and widen only the hit area with a pseudo-element failed:
-                // later-painting siblings won the hit test, so the extra band was dead to taps.
-                'min-h-touch',
+                // DECISION 2026-09-30: founder ruled the 44px-tall pill distorted every row it sat
+                // in, so a plain chip stays compact (~28px). `block` still restores the 44px target
+                // for a chip that is a standalone primary control.
+                block && 'min-h-touch',
                 className
             )}
         >
