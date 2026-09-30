@@ -1,4 +1,5 @@
 import AssigneeChip from './AssigneeChip';
+import AcceptedByChip from './AcceptedByChip';
 import PriorityBadge from './PriorityBadge';
 import TaskStatusIcon from './TaskStatusIcon';
 import TaskFlagBadges from './TaskFlagBadges';
@@ -70,6 +71,7 @@ export default function TaskRow({
                             them once finished/accepted), so a manager scanning reports/history sees a
                             live "Reikia vadovo" / "Laukiama" but never a stale one. */}
                         <TaskFlagBadges task={task} size="sm" className="mt-1" />
+                        <AcceptedByChip task={task} className="mt-1" />
                     </div>
                 </div>
             </td>

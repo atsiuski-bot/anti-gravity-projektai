@@ -19,6 +19,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
 import AssigneeChip from './task/AssigneeChip';
+import AcceptedByChip from './task/AcceptedByChip';
 import UserChip from './UserChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
@@ -585,6 +586,9 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                                 )}
                             </div>
                         )}
+
+                        {/* Which manager accepted the finished work — visible without opening the task. */}
+                        <AcceptedByChip task={task} className="mt-1" />
                     </div>
                 </div>
 

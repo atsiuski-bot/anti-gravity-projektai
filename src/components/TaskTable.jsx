@@ -13,6 +13,7 @@ import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
 import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
+import AcceptedByChip from './task/AcceptedByChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
 import TaskFlagBadges from './task/TaskFlagBadges';
@@ -537,6 +538,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                     <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} ring showColor={false} className="max-w-[160px]" />
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
+                                <AcceptedByChip task={task} />
                                 <TaskFlagBadges task={task} />
                                 {task.tag && (
                                     <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-feedback-info-soft text-feedback-info-text border border-feedback-info-border">
@@ -782,6 +784,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                             </div>
                                         )}
                                         <TimeChangedWarning task={task} />
+                                        <AcceptedByChip task={task} className="mt-1" />
                                     </td>
                                     <td className="px-1 py-3 align-top">
                                         {task.assignedUserName && (
