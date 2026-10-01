@@ -97,6 +97,21 @@ git merge --no-edit origin/main
 
 ### 5 — Quality gate (lint + build + test) — required before any push
 
+**Gate reuse check** — runs here, *after* the step-4 merge, so a merge that brought anything
+new from `origin/main` changes the fingerprint and forces the full gate:
+
+```bash
+node scripts/ship/gate-stamp.mjs check
+```
+
+- `STAMP MATCH … gates=lint,test,build` → the working tree is byte-identical to the one a full
+  `/debug` L6 PASS recorded. **Skip `npm run lint`, `npm run build` and `npm test`** (and the
+  runner check) and say "gate reused (lint+test+build from /debug, tree `<hash>`)" in the report.
+  **Still run** the functions and emulator gates below — `/debug` does not cover them.
+- Anything else (`NONE`, `MISMATCH`, `ERROR`, non-zero exit) → run every gate below as normal.
+- On the step-6 non-fast-forward retry, re-run this check after the new merge — never carry an
+  earlier MATCH across a merge.
+
 ```bash
 npm run lint
 ```
@@ -184,6 +199,19 @@ State plainly:
 - that `origin/main` advanced and **Cloudflare Pages auto-deploy has been triggered**,
 - where to watch it (Cloudflare Pages dashboard for `anti-gravity-projektai` /
   `anti-gravity-projektai.pages.dev`).
+- whether the gate was **reused** (step 5 `STAMP MATCH`) or run in full.
+- **Deploy confirmation (one read, fail-soft, no polling).** Cloudflare Pages and the CI
+  workflow post check runs on the pushed commit; read them once:
+  ```bash
+  gh api repos/atsiuski-bot/anti-gravity-projektai/commits/$(git rev-parse HEAD)/check-runs \
+    --jq '.check_runs[] | [.name, .status, .conclusion] | @tsv'
+  ```
+  Report the `Cloudflare Pages` row as-is: `completed success` = deployed; `queued`/
+  `in_progress` = "deploy triggered, still building" (give the command to re-check — do not
+  loop); `failure` = say so plainly, the push is on `main` but prod did not update. If `gh`
+  fails or no row exists yet, say the deploy is unconfirmed rather than assuming success. If a
+  GitHub Actions service block is active (`node ~/.agent-rules/service-blocks.cjs status`),
+  the CI rows are expected to be missing — say so.
 
 ---
 

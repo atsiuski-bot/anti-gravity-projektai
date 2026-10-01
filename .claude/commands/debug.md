@@ -245,6 +245,14 @@ are the runtime gates.
 - `npm test` (**FULL** vitest suite) → capture ALL failing tests, each → a finding with the
   test name 🔴.
 - `npm run build` → fail = finding 🔴 (vite build; also confirms the PWA precache emits).
+- **Gate stamp** — only if **all three** exited 0, record a content fingerprint so `/ship` can
+  reuse this pass instead of re-running the same gates on the same bytes:
+  ```bash
+  node scripts/ship/gate-stamp.mjs record lint test build
+  ```
+  Any red → do **not** record. The stamp lives inside the git dir (per-worktree, never
+  committed), so this is not a repo change. `test:functions` and `test:firestore` are **not**
+  covered here — `/ship` always runs those itself.
 - `src/App.jsx` **provider order** touched → 🔴 DANGER "the provider hierarchy
   (Theme → Auth → Users → Toast → Notifications → Navigation) is load-bearing — `ThemeProvider`
   must wrap `AuthProvider` (theme live pre-login), and downstream providers depend on `Auth`/
