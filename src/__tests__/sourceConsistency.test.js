@@ -17,6 +17,9 @@
  *   3. docs/design/tokens.md drifted from the runtime palette: three colours had been darkened for
  *      WCAG in src/index.css while the binding document still documented the old values, in two
  *      places each (the table AND the config snippet).
+ *   4. The Codex/Antigravity skills in .agents/skills/ were hand-made copies of .claude/commands/,
+ *      and the ship copy still ran a lint+build-only gate after the real /ship had gained the unit,
+ *      functions and emulator tiers — a ship from Codex would have pushed to production untested.
  *
  * The technique is the one that already works next door: read the other files as TEXT and assert
  * they agree. It costs nothing at runtime and it fails the ship, which is the only moment anyone
@@ -438,5 +441,67 @@ describe('react-router library-mode surface (ADR 0031)', () => {
         '\n',
       )}`,
     ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// 4. Agent skill mirrors (.agents/skills) stay POINTERS to the canonical .claude/commands files
+// ---------------------------------------------------------------------------------------------
+/**
+ * `.agents/skills/` is what Codex and Antigravity load. Its entries were full copies of the
+ * canonical `.claude/commands/*.md` procedures and they drifted (case 4 in the header). They are now
+ * pointers, and this gate keeps them that way: each must name a canonical command that exists, must
+ * stay short enough that it cannot carry its own version of the procedure, and any mirror that ships
+ * to production must be explicit-only (Codex may not pick it on its own from words like "push").
+ */
+describe('agent skill mirrors are pointers to .claude/commands', () => {
+  const SKILLS_DIR = resolve(ROOT, '.agents', 'skills');
+  const MAX_POINTER_LINES = 30;
+  const MIRRORS = readdirSync(SKILLS_DIR)
+    .filter((d) => statSync(join(SKILLS_DIR, d)).isDirectory())
+    .map((name) => {
+      const text = read(`.agents/skills/${name}/SKILL.md`);
+      const targets = [...text.matchAll(/\.claude\/commands\/([\w-]+\.md)/g)].map((m) => m[1]);
+      return { name, text, targets };
+    });
+  const exists = (rel) => {
+    try {
+      statSync(resolve(ROOT, rel));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it('found the skill mirrors (extraction sanity)', () => {
+    expect(MIRRORS.length).toBeGreaterThan(0);
+  });
+
+  it('every mirror points at a canonical command file that exists', () => {
+    const offenders = [];
+    for (const { name, targets } of MIRRORS) {
+      if (targets.length === 0) offenders.push(`${name}: names no .claude/commands/*.md file`);
+      for (const t of targets) {
+        if (!exists(`.claude/commands/${t}`)) offenders.push(`${name}: .claude/commands/${t} does not exist`);
+      }
+    }
+    expect(offenders, `A skill mirror is not a pointer to a live command:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('every mirror is short enough to be a pointer, not a copy', () => {
+    const offenders = MIRRORS.filter(({ text }) => text.split('\n').length > MAX_POINTER_LINES).map(
+      ({ name, text }) => `${name}: ${text.split('\n').length} lines (max ${MAX_POINTER_LINES})`,
+    );
+    expect(offenders, `A skill mirror is carrying its own copy of a procedure:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it('every mirror that ships to production is explicit-only in Codex', () => {
+    const offenders = MIRRORS.filter(({ targets }) => targets.includes('ship.md'))
+      .filter(({ name }) => {
+        const rel = `.agents/skills/${name}/agents/openai.yaml`;
+        return !exists(rel) || !/allow_implicit_invocation:\s*false/.test(read(rel));
+      })
+      .map(({ name }) => `${name}: missing agents/openai.yaml with allow_implicit_invocation: false`);
+    expect(offenders, `A production-shipping skill can be invoked implicitly:\n${offenders.join('\n')}`).toEqual([]);
   });
 });
