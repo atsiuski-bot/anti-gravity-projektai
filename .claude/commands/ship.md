@@ -136,6 +136,10 @@ node -e "require.resolve('vitest/package.json')" >/dev/null 2>&1 && echo RUNNER_
   npm test
   ```
   Non-zero exit → **STOP**: "Tests failed — not shipping." Show the failing output.
+- `RUNNER_MISSING` → **STOP**: "Test runner not installed in this worktree's module-resolution
+  path — not shipping without the test gate. Run `npm install` here (or refresh the primary
+  checkout's `node_modules` so worktrees resolve `vitest` from the parent, like lint/build),
+  then re-run `/ship`." Do **not** skip the gate and push.
 
 **Functions gate** — the `functions/` suites run on bare node (no runner, no emulator, ~1 s), and
 they lock the classifiers the nightly integrity nets decide with. There is no cost argument for
@@ -163,10 +167,6 @@ npm run test:firestore
 > Both gates are cheap in absolute terms (~1 s and ~40 s). The reason they were optional was habit,
 > not cost — and the practical effect was that the two suites guarding the highest-stakes code in the
 > repo were the two that never ran.
-- `RUNNER_MISSING` → **STOP**: "Test runner not installed in this worktree's module-resolution
-  path — not shipping without the test gate. Run `npm install` here (or refresh the primary
-  checkout's `node_modules` so worktrees resolve `vitest` from the parent, like lint/build),
-  then re-run `/ship`." Do **not** skip the gate and push.
 
 ### 6 — Ship (fast-forward push to remote main)
 
