@@ -30,11 +30,62 @@ import { isTimerEngineEnabledFor } from '../utils/timerEngineGate';
 // every boot and every `online` event.
 import { replayQueuedTimerCommands } from '../utils/timerCommandEngine';
 import { devLog } from '../utils/devLog';
+import {
+    LOGIN_RECOGNITION_WAIT_MS,
+    LISTENER_RECOGNITION_WAIT_MS,
+    recognitionDelayMs,
+    SESSION_RECOVERY_RELOAD_KEY,
+    shouldReloadForSessionRecovery,
+} from '../utils/sessionRecovery';
 
 // How long the rollout-config listener may stay unresolved before the timer controls fall back to
 // the legacy path. Long enough that a normal (even slow) first snapshot wins; short enough that an
 // offline boot never leaves a worker unable to start a timer.
 const TIMER_ENGINE_RESOLVE_TIMEOUT_MS = 5000;
+
+/**
+ * Re-read the user's OWN document from the server, with back-off, until the database answers as
+ * that user. Returns the snapshot, or null if it still has not within `maxWaitMs`, the read failed
+ * for another reason, or the session ended meanwhile.
+ *
+ * Needed because a permission-denied on this read right after a sign-in does not mean "no access"
+ * (the rules let any signed-in user read their own document) — it means the database has not seen
+ * the sign-in yet. With the app open in several windows, Firestore's multi-tab mode sends every
+ * window's requests through ONE of them, with that window's view of who is signed in, and that
+ * view can lag well behind a sign-in made elsewhere. See utils/sessionRecovery.js.
+ */
+async function readOwnDocOnceRecognised(userRef, uid, maxWaitMs) {
+    for (let attempt = 0, waitedMs = 0; waitedMs < maxWaitMs; attempt += 1) {
+        const delayMs = recognitionDelayMs(attempt);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        waitedMs += delayMs;
+        if (auth.currentUser?.uid !== uid) return null;
+        try {
+            return await getDocFromServer(userRef);
+        } catch (error) {
+            if (error?.code !== 'permission-denied') return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Reload once so every Firestore listener is rebuilt. A listener the database rejected never
+ * re-subscribes on its own, so after a sign-in it had not yet recognised, the user-document
+ * listener and every list in the app stay dead even once the database catches up. The cooldown in
+ * sessionStorage keeps this from ever becoming a reload loop; without storage we do not reload.
+ */
+function reloadOnceToRebuildListeners() {
+    try {
+        if (!shouldReloadForSessionRecovery(sessionStorage.getItem(SESSION_RECOVERY_RELOAD_KEY), Date.now())) {
+            return;
+        }
+        sessionStorage.setItem(SESSION_RECOVERY_RELOAD_KEY, String(Date.now()));
+    } catch {
+        return;
+    }
+    window.location.reload();
+}
 
 const AuthContext = createContext();
 
@@ -77,6 +128,9 @@ export function AuthProvider({ children }) {
     // "document missing" snapshot then cannot be a first login — it means the record was REMOVED —
     // so the listener below must tear the session down instead of self-provisioning a new one.
     const hasSeenUserDoc = useRef(false);
+    // Set while the user-doc listener's error path waits (up to minutes) for the database to
+    // recognise a sign-in, so a second rejection does not start a second wait.
+    const isRecoveringSession = useRef(false);
 
     // Helper function to detect Opera browser
     function isOperaBrowser() {
@@ -147,7 +201,21 @@ export function AuthProvider({ children }) {
         try {
             // Check if user exists in Firestore
             const userRef = doc(db, 'users', user.uid);
-            let userSnap = await getDoc(userRef);
+            let userSnap;
+            try {
+                userSnap = await getDoc(userRef);
+            } catch (error) {
+                if (error?.code !== 'permission-denied') throw error;
+                // The database has not recognised this sign-in yet (another open window of the app
+                // still holds the connection as signed out) — wait for it rather than failing the
+                // login. If it never does, say so with a coded reason Login can explain.
+                userSnap = await readOwnDocOnceRecognised(userRef, user.uid, LOGIN_RECOGNITION_WAIT_MS);
+                if (!userSnap) {
+                    const notRecognisedErr = new Error('Signed in, but the database never recognised the session');
+                    notRecognisedErr.code = 'app/session-not-recognized';
+                    throw notRecognisedErr;
+                }
+            }
 
             // A cache MISS must never be mistaken for "no account". Firestore runs with
             // persistentLocalCache (firebase.js), so getDoc() falls back to the LOCAL cache whenever
@@ -455,14 +523,18 @@ export function AuthProvider({ children }) {
                         return;
                     }
                     logError(error, { source: 'onSnapshot:authUser' });
-                    // On permission-denied, the user document may not exist yet (first login).
-                    // Retry creating it so the snapshot can re-attach successfully.
-                    if (error.code === 'permission-denied' && !isProcessingRedirect.current) {
-                        devLog("Auth: Permission denied on snapshot — retrying user doc creation...");
-                        isProcessingRedirect.current = true;
-                        processUserAfterLogin(user)
-                            .catch(e => console.error("Auth: Retry failed:", e))
-                            .finally(() => { isProcessingRedirect.current = false; });
+                    // Still signed in, yet denied our OWN document: the database has not recognised
+                    // this sign-in yet (see readOwnDocOnceRecognised) — a missing document reads as
+                    // "does not exist", never as denied. This listener is now dead, and so is every
+                    // other one the app opened meanwhile, so once the database does recognise the
+                    // user, reload to rebuild them all; otherwise the app sits on the login screen,
+                    // or on empty lists, until the person reloads it themselves.
+                    if (error.code === 'permission-denied' && !isRecoveringSession.current) {
+                        devLog("Auth: Own user doc denied while signed in — waiting for the database to recognise the session...");
+                        isRecoveringSession.current = true;
+                        readOwnDocOnceRecognised(userRef, user.uid, LISTENER_RECOGNITION_WAIT_MS)
+                            .then((snap) => { if (snap) reloadOnceToRebuildListeners(); })
+                            .finally(() => { isRecoveringSession.current = false; });
                     }
                     setLoading(false);
                 });

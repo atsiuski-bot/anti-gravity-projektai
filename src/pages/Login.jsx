@@ -36,6 +36,11 @@ function loginErrorMessage(err) {
             return 'Jūsų paskyra užblokuota. Susisiekite su administratoriumi.';
         case 'app/verification-unavailable':
             return 'Nepavyko patikrinti paskyros būsenos — gali būti silpnas ar nestabilus ryšys. Patikrinkite interneto ryšį (pabandykite kitą tinklą ar naršyklę) ir bandykite dar kartą.';
+        // Google sign-in succeeded, but the database kept answering as if nobody were signed in.
+        // On a phone that happens when the app is also open in another window or tab that has not
+        // caught up with the sign-in — and closing those is the one fix the person can make.
+        case 'app/session-not-recognized':
+            return 'Prisijungimo nepavyko užbaigti — Gildija tikriausiai atidaryta dar kitame lange ar naršyklės kortelėje. Uždarykite visus Gildijos langus ir korteles, tada atidarykite programą iš naujo ir prisijunkite.';
         // The installed iOS app came back from Google empty-handed: Safari isolates the storage the
         // sign-in handshake needs. Nothing the person can change inside the installed app fixes it,
         // so the copy points at the one route that does work — the app opened in Safari.
