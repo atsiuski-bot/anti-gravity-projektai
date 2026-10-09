@@ -24,6 +24,7 @@ import TaskActionRow from './task/TaskActionRow';
 import TaskCard from './TaskCard';
 import TaskDetailModal from './task/TaskDetailModal';
 import { buildReviewActions } from '../utils/taskActionVisibility';
+import { useReviewShelf } from '../hooks/useReviewShelf';
 
 import DailyStatistics from './DailyStatistics';
 import ReportExportModal from './ReportExportModal';
@@ -37,6 +38,7 @@ import { useRovingFocus } from '../hooks/useRovingFocus';
 
 export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'] }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
+    const reviewShelf = useReviewShelf();
     // viewRole lets a caller scope the whole report to a role other than the signed-in one — a
     // manager opening their OWN "Ataskaitos" passes 'worker' so it shows only personal data
     // (no team aggregates, no user dropdown, no export), identical to a worker's view.
@@ -433,6 +435,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                 canRestore: canRevert,
                 onToggleConfirm: handleToggleConfirm,
                 onRestore: handleRevert,
+                shelf: reviewShelf,
             }),
             detailOverrides: {
                 canManage: isManager,
