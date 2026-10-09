@@ -189,6 +189,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             .map((u) => u.id),
         [users]
     );
+    // Who receives a worker's time-correction request: their own managers, or — when none is
+    // assigned — the admins, so a worker without a koordinatorius is never left unable to report.
+    const correctionRecipientIds = myManagerIds.length > 0 ? myManagerIds : adminUids;
     // The open gap-fill modal's payload: { start, end, taskOptions }, or null when closed.
     const [backdateGap, setBackdateGap] = useState(null);
     // "Today" here is the WORK day, not the calendar day: before 05:00 the day on screen must still
@@ -1179,7 +1182,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return;
         }
 
-        if (myManagerIds.length === 0) {
+        if (correctionRecipientIds.length === 0) {
             setErrorReportTarget(null);
             return;
         }
@@ -1192,7 +1195,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         const wanted = endISO ? ` Prašoma pabaiga: ${formatTime(endISO)}.` : '';
         const commentText = `Pranešimas apie klaidą veiklos laike. ${day} ${span} (${dur}) — „${label}“.${wanted} Priežastis: ${trimmed}`;
         try {
-            await notifyMany(myManagerIds, {
+            await notifyMany(correctionRecipientIds, {
                 type: 'session_correction_request',
                 actorUid: currentUser?.uid,
                 actorName,
@@ -2095,7 +2098,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 <SessionErrorReportModal
                     item={errorReportTarget}
                     storedSession={sessions.find((s) => s.id === errorReportTarget.id) || null}
-                    canRequest={myManagerIds.length > 0}
+                    canRequest={correctionRecipientIds.length > 0}
                     canEditStart={canEditOwnStart}
                     onSubmit={handleSubmitTimeCorrection}
                     onClose={() => setErrorReportTarget(null)}
@@ -2117,7 +2120,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     }}
                     workRows={sessions.filter((s) => resolveUserId(s) === currentUser?.uid && !s.isDeleted && s.endTime)}
                     breakRows={breakSessions.filter((b) => resolveUserId(b) === currentUser?.uid && b.endTime)}
-                    managerIds={myManagerIds}
+                    managerIds={correctionRecipientIds}
                     adminUids={adminUids}
                 />
             )}
