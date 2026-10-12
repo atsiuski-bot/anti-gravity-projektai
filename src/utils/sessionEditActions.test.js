@@ -97,17 +97,29 @@ describe('creditRefusedGap (a manager settles a refused work gap)', () => {
         endTime: '2026-07-29T16:34:00.000Z', // 3h51m — the production incident
         editor,
     };
-    // The task doc the ownership check reads. getDocs stays empty so reconciliation is a no-op here
-    // unless a case drives it.
-    const taskAssignedTo = (uid) => getDoc.mockResolvedValue({
-        exists: () => true,
-        data: () => ({ assignedUserId: uid, title: 'Šiaudų pynimas', timerMinutes: 116.4 }),
+    const startMs = new Date(args.startTime).getTime();
+    const gapRowPath = `work_sessions/sess_gap_t1_${startMs}`;
+    // The task doc the ownership check reads, routed by path so the gap-row probe that follows it
+    // sees the row as ABSENT (or as `gapRow`, when a case supplies one). getDocs stays empty so
+    // reconciliation is a no-op here unless a case drives it.
+    const taskAssignedTo = (uid, gapRow = null) => getDoc.mockImplementation((ref) => {
+        if (ref._path === 'tasks/t1') {
+            return Promise.resolve({
+                exists: () => true,
+                data: () => ({ assignedUserId: uid, title: 'Šiaudų pynimas', timerMinutes: 116.4 }),
+            });
+        }
+        if (ref._path === gapRowPath && gapRow) {
+            return Promise.resolve({ exists: () => true, data: () => gapRow });
+        }
+        return Promise.resolve({ exists: () => false });
     });
 
     it('writes the gap with MANAGER provenance and the granted-decision reason', async () => {
         taskAssignedTo('w1');
         const res = await creditRefusedGap(args);
         expect(res.ok).toBe(true);
+        expect(res.already).toBeUndefined();
         expect(res.durationMinutes).toBe(231);
         const [, payload, options] = setDoc.mock.calls[0];
         expect(payload).toMatchObject({
@@ -128,8 +140,67 @@ describe('creditRefusedGap (a manager settles a refused work gap)', () => {
         // than a duplicate that would double-count in the reports.
         taskAssignedTo('w1');
         await creditRefusedGap(args);
-        const startMs = new Date(args.startTime).getTime();
-        expect(setDoc.mock.calls[0][0]._path).toBe(`work_sessions/sess_gap_t1_${startMs}`);
+        expect(setDoc.mock.calls[0][0]._path).toBe(gapRowPath);
+    });
+
+    it('probes the gap row FIRST and, when it is absent, still writes + reconciles (the original path)', async () => {
+        taskAssignedTo('w1');
+        getDocs.mockResolvedValue({
+            forEach: (fn) => { [{ durationMinutes: 231 }].forEach((s) => fn({ data: () => s })); },
+        });
+        const res = await creditRefusedGap(args);
+        expect(res).toMatchObject({ ok: true, durationMinutes: 231 });
+        expect(res.already).toBeUndefined();
+        // The probe is a plain read of the deterministic id — no query, no listener.
+        expect(getDoc.mock.calls.map(([ref]) => ref._path)).toContain(gapRowPath);
+        expect(setDoc).toHaveBeenCalledTimes(1);
+        const counterWrite = updateDoc.mock.calls.find(([ref]) => ref._path === 'tasks/t1');
+        expect(counterWrite[1].timerMinutes).toBe(231);
+    });
+
+    it('treats an EXISTING live row as already-credited: no write, the STORED duration is reported', async () => {
+        // 2026-10-12 production collision: the worker claimed the 5h19m gap herself, then self-reduced
+        // it to 4h (ADR 0023, selfAdjusted:true). The manager's later tap used to re-assert the original
+        // interval as an UPDATE — a lengthening the rules' one-way guard denies for every role — so the
+        // card could never be settled. An existing row is settled time; the manager must be told the
+        // credit that actually stands, not the claim.
+        taskAssignedTo('w1', {
+            taskId: 't1', userId: 'w1', startTime: args.startTime, endTime: '2026-07-29T16:43:00.000Z',
+            durationMinutes: 240, date: '2026-07-29', selfAdjusted: true, createdBy: 'w1',
+        });
+        const res = await creditRefusedGap(args);
+        expect(res).toMatchObject({ ok: true, already: true, durationMinutes: 240, date: '2026-07-29' });
+        expect(res.id).toBe(`sess_gap_t1_${startMs}`);
+        expect(setDoc).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
+        expect(getDocs).not.toHaveBeenCalled(); // no reconcile either — nothing changed
+    });
+
+    it('still OWNER-checks before reporting an existing row as settled', async () => {
+        taskAssignedTo('someone-else', { durationMinutes: 240 });
+        const res = await creditRefusedGap(args);
+        expect(res).toMatchObject({ ok: false, error: 'owner' });
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('falls through to the write path when the existing row is soft-deleted', async () => {
+        taskAssignedTo('w1', { durationMinutes: 240, isDeleted: true });
+        const res = await creditRefusedGap(args);
+        expect(res.ok).toBe(true);
+        expect(res.already).toBeUndefined();
+        expect(setDoc).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports "write" and writes nothing when the gap-row probe itself fails', async () => {
+        getDoc.mockImplementation((ref) => {
+            if (ref._path === 'tasks/t1') {
+                return Promise.resolve({ exists: () => true, data: () => ({ assignedUserId: 'w1' }) });
+            }
+            return Promise.reject(new Error('permission-denied'));
+        });
+        const res = await creditRefusedGap(args);
+        expect(res).toMatchObject({ ok: false, error: 'write' });
+        expect(setDoc).not.toHaveBeenCalled();
     });
 
     it('REFUSES when the task is not assigned to the worker the claim is from', async () => {
@@ -152,10 +223,7 @@ describe('creditRefusedGap (a manager settles a refused work gap)', () => {
         // The delta path exists for callers whose sessions read is denied. A manager's is not, so this
         // route must take the absolute re-derive — which is idempotent on a second tap, where an
         // increment would push the task past its own ledger.
-        getDoc.mockResolvedValue({
-            exists: () => true,
-            data: () => ({ assignedUserId: 'w1', title: 'Šiaudų pynimas', timerMinutes: 116.4 }),
-        });
+        taskAssignedTo('w1');
         getDocs.mockResolvedValue({
             forEach: (fn) => {
                 [{ durationMinutes: 116.4 }, { durationMinutes: 231 }].forEach((s) => fn({ data: () => s }));

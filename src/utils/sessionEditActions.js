@@ -1024,9 +1024,11 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
  * time_gap_claim card).
  *
  * Same resulting row as the worker's own claim, on the SAME deterministic id, so the two routes are
- * idempotent with respect to each other: whoever acts first writes it, and the second lands a
- * value-identical merge instead of a duplicate. That is what lets the worker's localStorage offer stay
- * in place alongside the escalation without any risk of double credit.
+ * idempotent with respect to each other: whoever acts first writes it, and the second finds the row
+ * and reports it as already settled (`already: true`) instead of writing a duplicate — or, worse,
+ * re-asserting the original interval over a row the worker has since self-shortened. That is what
+ * lets the worker's localStorage offer stay in place alongside the escalation without any risk of
+ * double credit.
  *
  * Two things differ from claimRecoveredGap, and both matter:
  *
@@ -1046,7 +1048,9 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
  * applyRequestedSessionEnd applies, for the same reason).
  *
  * @param {Object} args - { taskId, taskTitle, expectedUserId, workerName, startTime, endTime, editor }
- * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ * @returns {Promise<{ok:boolean, error?:string, id?:string, already?:boolean, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ *   already true  — the row was already settled (by the worker's own claim or an earlier manager tap):
+ *                   nothing was written; durationMinutes is the STORED credit, not the claimed interval.
  *   error 'gone'  — the task no longer exists (deleted/archived beyond reach).
  *   error 'owner' — the task is not assigned to the worker the claim is from: refuse, never guess.
  */
@@ -1071,6 +1075,31 @@ export const creditRefusedGap = async ({
     }
     if (task.assignedUserId !== expectedUserId) return { ok: false, error: 'owner' };
 
+    // The deterministic id makes the worker's claim and this credit the same row — but "value-identical
+    // merge" only holds while the row is untouched. Once the worker has self-shortened it (ADR 0023,
+    // `selfAdjusted: true`), re-asserting the ORIGINAL interval here is a lengthening update, and the
+    // rules' one-way guard denies it for every role (2026-10-12: a 5h19m gap self-reduced to 4h; every
+    // manager's tap failed with the generic error and the card could never be cleared). An existing
+    // live row is therefore already-settled time: report it, never overwrite it. A soft-deleted row
+    // falls through to the write path exactly as before.
+    const ref = doc(db, 'work_sessions', `sess_gap_${taskId}_${new Date(startTime).getTime()}`);
+    try {
+        const existing = await getDoc(ref);
+        if (existing.exists() && !existing.data()?.isDeleted) {
+            const stored = existing.data();
+            return {
+                ok: true,
+                already: true,
+                id: ref.id,
+                durationMinutes: Number.isFinite(stored.durationMinutes) ? stored.durationMinutes : derived.durationMinutes,
+                date: stored.date || derived.date,
+            };
+        }
+    } catch (err) {
+        logError(err, { source: 'readFail:creditRefusedGap', taskId });
+        return { ok: false, error: 'write' };
+    }
+
     const nowIso = new Date().toISOString();
     const editorName = editor?.displayName || editor?.email || 'Koordinatorius';
     const payload = {
@@ -1091,7 +1120,6 @@ export const creditRefusedGap = async ({
     };
 
     try {
-        const ref = doc(db, 'work_sessions', `sess_gap_${taskId}_${new Date(startTime).getTime()}`);
         await setDoc(ref, payload, { merge: true });
         // No delta is passed on purpose: the manager's broad read succeeds, so the wholesale re-derive
         // runs and is naturally idempotent — a second tap recomputes the same total instead of

@@ -21,7 +21,7 @@ import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MOD
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { useRovingFocus } from '../hooks/useRovingFocus';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
-import { getLithuanianWeekId } from '../utils/timeUtils';
+import { getLithuanianWeekId, formatMinutesToTimeString } from '../utils/timeUtils';
 import { applyRequestedSessionEnd, creditRefusedGap } from '../utils/sessionEditActions';
 import { applyTimeCorrectionRequest, isApplicableCorrection, describeCorrection, CORRECTION_KINDS, CORRECTION_KIND_MANAGER_LABELS } from '../utils/timeCorrectionRequest';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
@@ -766,6 +766,9 @@ export default function ManagerNotifications({ onClose }) {
         if (!notif?.taskId || !notif?.gapFromIso || !notif?.gapToIso || settlingGap) return;
         setSettlingGap(notif.id);
         clearActionFeedback();
+        // What the worker is told was credited. Defaults to the claimed interval; an already-settled
+        // row overrides it with the STORED credit, which may be shorter than the claim.
+        let gapMinutes = notif.gapMinutes ?? null;
 
         if (credit) {
             const result = await creditRefusedGap({
@@ -791,9 +794,16 @@ export default function ManagerNotifications({ onClose }) {
                 }
                 return;
             }
-            // The row landed. A stale task counter is NOT a failure of the credit — the report is
-            // already right — but the manager should know the card total may lag.
-            if (result.reconciled === false) {
+            if (result.already) {
+                // The gap row already exists — the worker claimed it themselves (and may have
+                // shortened it, ADR 0023) or another coordinator settled it first. Nothing was
+                // written; the stored credit stands and the stale card is simply closed.
+                gapMinutes = result.durationMinutes ?? gapMinutes;
+                const stored = formatMinutesToTimeString(gapMinutes);
+                setActionNotice(`Šis laikas jau užskaitytas${stored ? ` (${stored})` : ''} — kortelė uždaryta.`);
+            } else if (result.reconciled === false) {
+                // The row landed. A stale task counter is NOT a failure of the credit — the report is
+                // already right — but the manager should know the card total may lag.
                 setActionNotice('Laikas užskaitytas, bet veiklos suvestinė gali būti pasenusi.');
             }
         } else {
@@ -806,7 +816,7 @@ export default function ManagerNotifications({ onClose }) {
             taskId: notif.taskId,
             taskTitle: notif.taskTitle,
             gapCredited: credit,
-            gapMinutes: notif.gapMinutes ?? null,
+            gapMinutes,
             actorUid: currentUser.uid,
             actorName: currentUser.displayName || currentUser.email,
         });
