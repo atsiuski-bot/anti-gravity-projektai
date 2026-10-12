@@ -212,9 +212,11 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
             const d = deriveSessionFields(startISO, endISO);
             if (!d.ok) return { error: d.error };
             if (!isNotFuture(endISO)) return { error: 'future' };
-            if (findOverlap(startISO, endISO, works)) return { error: 'overlapWork' };
-            if (findOverlap(startISO, endISO, breaks)) return { error: 'overlapBreak' };
-            return { minutes: d.durationMinutes, path: 'request' };
+            // An overlap is not a dead end: the worker may be right (a meeting that ran under another
+            // row's timer). It cannot be a one-tap "Taip" — that would double-credit — so it travels as
+            // an information-only request the manager settles by hand.
+            const overlap = !!(findOverlap(startISO, endISO, works) || findOverlap(startISO, endISO, breaks));
+            return { minutes: d.durationMinutes, path: 'request', overlap };
         }
         if (kind === K.MISSED_STOP || kind === K.WRONG_TIME) {
             if (!selectedRow) return { error: 'row' };
@@ -273,7 +275,14 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                 return;
             }
             if (!canRequest) { setError(ERROR_COPY.noManager); return; }
-            if (k === K.MISSED_START) {
+            if (k === K.MISSED_START && check.overlap) {
+                const span = `${startStr}–${endStr}`;
+                const what = taskTitleOf(taskId) || 'Kita veikla';
+                await sendRequest({
+                    kind: K.OTHER,
+                    note: `Pamiršo paleisti laikmatį: ${span}, ${what} (persidengia su kitu įrašu). ${note.trim()}`.trim(),
+                });
+            } else if (k === K.MISSED_START) {
                 await sendRequest({ kind: k, taskId: taskId || null, taskTitle: taskTitleOf(taskId), startTime: startISO, endTime: endISO, aiSuggested: fromProposal });
             } else if (k === K.WRONG_TIME) {
                 await sendRequest({
@@ -497,8 +506,10 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                     ? 'Laiką sumažinti galite patys — pataisymas bus pritaikytas iš karto.'
                     : !canRequest
                       ? 'Laiką pridėti gali tik vadovas.'
+                      : check.overlap
+                        ? 'Šis laikas persidengia su kitu įrašu, todėl vadovas sutvarkys jį rankiniu būdu.'
                       : kind === K.BREAK_WAS_WORK
-                        ? 'Vadovas peržiūrės ir pataisys pauzę rankiniu būdu.'
+                        ? 'Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“. Visa pauzė taps darbo laiku.'
                         : 'Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“.'}
             </p>
         </div>

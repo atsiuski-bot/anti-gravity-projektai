@@ -66,6 +66,7 @@ import {
     applyRequestedSessionTimes,
     creditRequestedSession,
     creditRefusedGap,
+    reclassifyBreakAsWork,
     MIN_SELF_REDUCED_MINUTES,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
@@ -1486,5 +1487,44 @@ describe('claimRecoveredGap — concurrent claims of the same gap credit the cou
         expect(setDoc).toHaveBeenCalledTimes(1); // the old fail-closed merge
         expect(setDoc.mock.calls[0][2]).toEqual({ merge: true });
         expect(taskWrites()).toEqual([]); // not provably new → no counter credit
+    });
+});
+
+describe('reclassifyBreakAsWork (manager "Taip" on a break_was_work request)', () => {
+    const S = '2026-09-29T09:47:00.000Z';
+    const E = '2026-09-29T10:15:00.000Z';
+    const args = { breakId: 'b1', taskId: 'manual_x', expectedUserId: 'u1', workerName: 'Jonas', startTime: S, endTime: E, editor: { uid: 'm1' } };
+    const snapOf = (data) => ({ exists: () => !!data, data: () => data });
+    const breakDoc = (over = {}) => snapOf({ userId: 'u1', startTime: S, endTime: E, ...over });
+
+    it('credits the work row, then removes the break', async () => {
+        getDoc.mockResolvedValueOnce(breakDoc());
+        const res = await reclassifyBreakAsWork(args);
+        expect(res.ok).toBe(true);
+        expect(setDoc).toHaveBeenCalledTimes(1);
+        expect(setDoc.mock.calls[0][1]).toMatchObject({ userId: 'u1', startTime: S, endTime: E, durationMinutes: 28 });
+        expect(deleteDoc).toHaveBeenCalledTimes(1);
+        expect(deleteDoc.mock.calls[0][0]._path).toBe('break_sessions/b1');
+    });
+
+    it('refuses a break that is not the requester\'s, and writes nothing', async () => {
+        getDoc.mockResolvedValueOnce(breakDoc({ userId: 'someone-else' }));
+        expect(await reclassifyBreakAsWork(args)).toEqual({ ok: false, error: 'owner' });
+        expect(setDoc).not.toHaveBeenCalled();
+        expect(deleteDoc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a break that no longer matches the request', async () => {
+        getDoc.mockResolvedValueOnce(breakDoc({ endTime: '2026-09-29T10:00:00.000Z' }));
+        expect(await reclassifyBreakAsWork(args)).toEqual({ ok: false, error: 'stale' });
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('a break that is already gone is settled only if the work row exists', async () => {
+        getDoc.mockResolvedValueOnce(snapOf(null)).mockResolvedValueOnce(snapOf({ isDeleted: false }));
+        expect(await reclassifyBreakAsWork(args)).toEqual({ ok: true });
+        getDoc.mockResolvedValueOnce(snapOf(null)).mockResolvedValueOnce(snapOf(null));
+        expect(await reclassifyBreakAsWork(args)).toEqual({ ok: false, error: 'gone' });
+        expect(deleteDoc).not.toHaveBeenCalled();
     });
 });

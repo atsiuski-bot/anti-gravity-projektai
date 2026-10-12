@@ -733,6 +733,8 @@ export default function ManagerNotifications({ onClose }) {
                     setActionError('Prašymas nurodo ne šio meistro įrašą — patikrinkite veiklos ataskaitoje.');
                 } else if (result.error === 'overlap') {
                     setActionError('Šis laikas persidengia su jau įrašytu — pataisykite veiklos ataskaitoje.');
+                } else if (result.error === 'stale') {
+                    setActionError('Pauzė nuo prašymo pasikeitė — patikrinkite veiklos ataskaitoje.');
                 } else {
                     setActionError('Nepavyko pritaikyti pataisymo. Pataisykite veiklos ataskaitoje.');
                 }
@@ -1735,9 +1737,7 @@ export default function ManagerNotifications({ onClose }) {
                                             {notif.workerNote && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.workerNote}&quot;</p>}
                                             {!applicable && (
                                                 <p className="mt-2 text-xs">
-                                                    {notif.correctionKind === CORRECTION_KINDS.BREAK_WAS_WORK
-                                                        ? 'Pauzės pakeisti į darbą programėlėje kol kas negalima — perduokite administratoriui.'
-                                                        : 'Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“.'}
+                                                    {'Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“.'}
                                                 </p>
                                             )}
                                         </div>

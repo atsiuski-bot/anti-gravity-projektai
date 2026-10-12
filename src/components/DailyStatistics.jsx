@@ -121,12 +121,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const [errorReportTarget, setErrorReportTarget] = useState(null);
     // The worker's managers, the recipients of any correction request. Mirrors QuickWorkTimer's
     // resolution: the team (teamManagerIds), falling back to the single legacy defaultManager.
+    // Resolved from every place the worker's assignment can live: the auth profile, the roster copy of
+    // the same profile (the live document, in case the auth copy is stale), the legacy single manager,
+    // and finally the function-folded overseer closure — so a worker whose coordinators exist in ANY of
+    // these is never told they have none.
+    const rosterSelf = useMemo(
+        () => (users || []).find((u) => u.id === currentUser?.uid) || null,
+        [users, currentUser?.uid]
+    );
     const myManagerIds = useMemo(() => {
-        const ids = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
-            ? userData.teamManagerIds
-            : (userData?.defaultManager ? [userData.defaultManager] : []);
-        return ids.filter(Boolean);
-    }, [userData?.teamManagerIds, userData?.defaultManager]);
+        const nonEmpty = (a) => (Array.isArray(a) && a.length ? a : null);
+        const ids = nonEmpty(userData?.teamManagerIds)
+            || nonEmpty(rosterSelf?.teamManagerIds)
+            || (userData?.defaultManager || rosterSelf?.defaultManager
+                ? [userData?.defaultManager || rosterSelf?.defaultManager]
+                : null)
+            || nonEmpty(userData?.overseerIds)
+            || nonEmpty(rosterSelf?.overseerIds)
+            || [];
+        return ids.filter((id) => id && id !== currentUser?.uid);
+    }, [userData?.teamManagerIds, userData?.defaultManager, userData?.overseerIds, rosterSelf, currentUser?.uid]);
     // A row is correctable when it is the signed-in worker's OWN real, finished work session — not a
     // break, gap, live session, or legacy synthetic adjustment. Admins/managers use the inline editor
     // instead, so the affordance is workers-only. Note there is deliberately NO manager requirement:

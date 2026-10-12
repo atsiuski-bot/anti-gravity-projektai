@@ -1020,6 +1020,64 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
 };
 
 /**
+ * Turn a WHOLE logged break into work — the manager's "Taip" on a time_correction_request of kind
+ * 'break_was_work' (the worker forgot to end the break, then worked through it).
+ *
+ * Two writes, ordered so a retry is always safe: first the work row (creditRequestedSession — owner
+ * and task verified, overlap-checked, deterministic id so a repeat lands on the SAME row), then the
+ * break row is removed so the same minutes are not counted as both. If the break is already gone the
+ * work row decides: present → already settled, absent → 'gone'. users.breakState.dailyAccumulatedMinutes
+ * is deliberately left alone: it is a display-only counter no report reads (see the abandoned-break
+ * settle in functions/index.js) and the break_sessions row is the durable truth.
+ *
+ * The break is re-read and must still be exactly the interval the worker asked about ('stale'
+ * otherwise) and belong to the requester ('owner') — the write carries the MANAGER's authority while
+ * the row named comes from a worker-authored document.
+ *
+ * @param {Object} args - { breakId, taskId, taskTitle, expectedUserId, workerName, startTime, endTime, reason, editor }
+ * @returns {Promise<{ok:boolean, error?:string, reconciled?:boolean}>}
+ *   error 'gone' — break already removed and no work row exists; 'stale' — the break no longer matches
+ *   the request; 'owner' / 'overlap' / 'write' — as creditRequestedSession.
+ */
+export const reclassifyBreakAsWork = async ({
+    breakId, taskId, taskTitle, expectedUserId, workerName, startTime, endTime, reason, editor,
+} = {}) => {
+    if (!breakId || !expectedUserId || !startTime || !endTime) return { ok: false, error: 'missing' };
+    const breakRef = doc(db, 'break_sessions', breakId);
+    let brk;
+    try {
+        const snap = await getDoc(breakRef);
+        if (snap.exists()) brk = snap.data();
+        else {
+            const done = await getDoc(doc(db, 'work_sessions', `sess_req_${expectedUserId}_${new Date(startTime).getTime()}`));
+            return done.exists() && !done.data()?.isDeleted ? { ok: true } : { ok: false, error: 'gone' };
+        }
+    } catch (err) {
+        logError(err, { source: 'readFail:reclassifyBreakAsWork', breakId });
+        return { ok: false, error: 'write' };
+    }
+    if (brk.userId !== expectedUserId) return { ok: false, error: 'owner' };
+    if (new Date(brk.startTime).getTime() !== new Date(startTime).getTime()
+        || new Date(brk.endTime).getTime() !== new Date(endTime).getTime()) {
+        return { ok: false, error: 'stale' };
+    }
+
+    const credit = await creditRequestedSession({
+        taskId, taskTitle, expectedUserId, workerName, startTime, endTime,
+        reason: (reason || '').trim() || 'Patvirtintas meistro prašymas: pauzė buvo darbas',
+        editor,
+    });
+    if (!credit.ok) return credit;
+    try {
+        await deleteDoc(breakRef);
+    } catch (err) {
+        logError(err, { source: 'writeFail:reclassifyBreakAsWork', breakId });
+        return { ok: false, error: 'write' };
+    }
+    return { ok: true, reconciled: credit.reconciled };
+};
+
+/**
  * ADR 0025 — a MANAGER settles a refused gap by crediting it (the one-tap "Užskaityti" on the
  * time_gap_claim card).
  *

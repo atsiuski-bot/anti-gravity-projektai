@@ -110,13 +110,18 @@ describe('TimeCorrectionSheet', () => {
         expect(document.body.textContent).toContain('Prašymas išsiųstas vadovui');
     });
 
-    it('refuses to request time that is already recorded', async () => {
+    it('time that overlaps a recorded row is not a dead end: it goes to the manager as a plain request', async () => {
         await render();
         await click(byText('Pamiršau paleisti laikmatį'));
         const [start] = document.body.querySelectorAll('input[type="time"]');
         await setValue(start, '08:30');
-        expect(document.body.textContent).toContain('jau įrašytas');
-        expect(byText('Siųsti vadovui').disabled).toBe(true);
+        expect(document.body.textContent).toContain('persidengia');
+        expect(byText('Siųsti vadovui').disabled).toBe(false);
+        await click(byText('Siųsti vadovui'));
+        const [, payload] = notifyMany.mock.calls[0];
+        // Information-only: a one-tap "Taip" would double-credit the overlapped minutes.
+        expect(payload).toMatchObject({ correctionKind: 'other' });
+        expect(payload.commentText).toContain('persidengia');
     });
 
     it('"Pamiršau sustabdyti" gives time back on the spot — no request', async () => {

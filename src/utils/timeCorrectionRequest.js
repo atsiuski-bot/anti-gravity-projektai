@@ -15,13 +15,13 @@
 //   • wrong_time   — a different start/end on an existing row. An earlier END with the same start is
 //                    a reduction (applied on the spot); anything else is a request, and "Taip"
 //                    replays it through the admin editor (applyRequestedSessionTimes).
-//   • break_was_work / other — carried to the manager as information only. Reclassifying a break
-//                    is a three-part privileged write with no in-app editor yet (founder decision
-//                    2026-09-29: manual in the first version), and free text has nothing to apply —
+//   • break_was_work — the whole break becomes work ("Taip" → reclassifyBreakAsWork: credit the work
+//                    row, then remove the break row).
+//   • other        — carried to the manager as information only: free text has nothing to apply,
 //                    unless the AI turned it into one of the kinds above, which the worker confirmed.
 import { addDaysToDateString, vilniusWallClockToISO, WORK_DAY_START_HOUR, formatMinutesToTimeString } from './timeUtils';
 import { formatTime } from './formatters';
-import { creditRequestedSession, applyRequestedSessionTimes } from './sessionEditActions';
+import { creditRequestedSession, applyRequestedSessionTimes, reclassifyBreakAsWork } from './sessionEditActions';
 
 export const CORRECTION_KINDS = Object.freeze({
     MISSED_START: 'missed_start',
@@ -53,6 +53,7 @@ export const isApplicableCorrection = (n) => {
     if (!n || !n.userId) return false;
     if (n.correctionKind === CORRECTION_KINDS.MISSED_START) return !!(n.requestedStartTime && n.requestedEndTime);
     if (n.correctionKind === CORRECTION_KINDS.WRONG_TIME) return !!(n.sessionRef && n.requestedStartTime && n.requestedEndTime);
+    if (n.correctionKind === CORRECTION_KINDS.BREAK_WAS_WORK) return !!(n.breakRef && n.requestedStartTime && n.requestedEndTime);
     return false;
 };
 
@@ -182,6 +183,19 @@ export const applyTimeCorrectionRequest = async ({ notif, editor }) => {
         : `Patvirtintas meistro prašymas: ${CORRECTION_KIND_MANAGER_LABELS[notif.correctionKind]}`;
     if (notif.correctionKind === CORRECTION_KINDS.MISSED_START) {
         return creditRequestedSession({
+            taskId: notif.taskId,
+            taskTitle: notif.taskTitle,
+            expectedUserId: notif.userId,
+            workerName: notif.userName,
+            startTime: notif.requestedStartTime,
+            endTime: notif.requestedEndTime,
+            reason,
+            editor,
+        });
+    }
+    if (notif.correctionKind === CORRECTION_KINDS.BREAK_WAS_WORK) {
+        return reclassifyBreakAsWork({
+            breakId: notif.breakRef,
             taskId: notif.taskId,
             taskTitle: notif.taskTitle,
             expectedUserId: notif.userId,

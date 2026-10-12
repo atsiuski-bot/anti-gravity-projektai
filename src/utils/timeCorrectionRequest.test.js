@@ -5,9 +5,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('./sessionEditActions', () => ({
     creditRequestedSession: vi.fn(() => Promise.resolve({ ok: true })),
     applyRequestedSessionTimes: vi.fn(() => Promise.resolve({ ok: true })),
+    reclassifyBreakAsWork: vi.fn(() => Promise.resolve({ ok: true })),
 }));
 
-import { creditRequestedSession, applyRequestedSessionTimes } from './sessionEditActions';
+import { creditRequestedSession, applyRequestedSessionTimes, reclassifyBreakAsWork } from './sessionEditActions';
 import {
     CORRECTION_KINDS as K,
     workDayClockToISO,
@@ -123,7 +124,6 @@ describe('isApplicableCorrection / applyTimeCorrectionRequest (routing the manag
         expect(isApplicableCorrection(wrong)).toBe(true);
         expect(isApplicableCorrection({ ...wrong, sessionRef: null })).toBe(false);
         expect(isApplicableCorrection({ ...missed, userId: null })).toBe(false);
-        expect(isApplicableCorrection({ userId: 'u1', correctionKind: K.BREAK_WAS_WORK, requestedStartTime: 'a', requestedEndTime: 'b' })).toBe(false);
         expect(isApplicableCorrection({ userId: 'u1', correctionKind: K.OTHER })).toBe(false);
     });
 
@@ -143,11 +143,30 @@ describe('isApplicableCorrection / applyTimeCorrectionRequest (routing the manag
         expect(applyRequestedSessionTimes.mock.calls[0][0].reason).toContain('pradėjau anksčiau');
     });
 
+    const brk = {
+        userId: 'u1', userName: 'Jonas', correctionKind: K.BREAK_WAS_WORK, breakRef: 'b-1', taskId: 't1', taskTitle: 'Stogas',
+        requestedStartTime: '2026-09-29T09:47:00Z', requestedEndTime: '2026-09-29T10:15:00Z',
+    };
+
+    it('break_was_work is one-tap only when it names the break', () => {
+        expect(isApplicableCorrection(brk)).toBe(true);
+        expect(isApplicableCorrection({ ...brk, breakRef: null })).toBe(false);
+    });
+
+    it('break_was_work → reclassifyBreakAsWork on the named break, verified against the requester', async () => {
+        await applyTimeCorrectionRequest({ notif: brk, editor });
+        expect(reclassifyBreakAsWork).toHaveBeenCalledWith(expect.objectContaining({
+            breakId: 'b-1', taskId: 't1', expectedUserId: 'u1', startTime: brk.requestedStartTime, endTime: brk.requestedEndTime, editor,
+        }));
+        expect(creditRequestedSession).not.toHaveBeenCalled();
+    });
+
     it('an info-only kind writes nothing', async () => {
-        expect(await applyTimeCorrectionRequest({ notif: { userId: 'u1', correctionKind: K.BREAK_WAS_WORK }, editor }))
+        expect(await applyTimeCorrectionRequest({ notif: { userId: 'u1', correctionKind: K.OTHER }, editor }))
             .toEqual({ ok: false, error: 'unsupported' });
         expect(creditRequestedSession).not.toHaveBeenCalled();
         expect(applyRequestedSessionTimes).not.toHaveBeenCalled();
+        expect(reclassifyBreakAsWork).not.toHaveBeenCalled();
     });
 });
 
