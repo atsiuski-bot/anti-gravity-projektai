@@ -843,7 +843,11 @@ export default function UserManagement() {
         (u) => (u.role === 'manager' || u.role === 'seniorManager' || u.role === 'admin') && !u.isDisabled
     );
     const managerCandidates = users.filter((u) => u.role === 'manager' && !u.isDisabled);
-    const seniorCandidates = users.filter((u) => u.role === 'seniorManager' && !u.isDisabled);
+    // A manager may answer to a senior manager OR directly to an admin — the closure fold accepts
+    // both (functions OVERSEER_ROLES), and an admin placed here becomes the manager's routing target.
+    const seniorCandidates = users.filter(
+        (u) => (u.role === 'seniorManager' || u.role === 'admin') && !u.isDisabled
+    );
     // Workers assignable to a manager's team, edited from the manager's OWN row (inverse of the
     // worker→managers picker). Disabled accounts are excluded from the candidate pool.
     const workerCandidates = users.filter((u) => u.role === 'worker' && !u.isDisabled);
