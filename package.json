@@ -58,7 +58,7 @@
   "//jsdom": "Held at ^27 ON PURPOSE. jsdom 28+ depends on undici ^7, which the `overrides` pin below forces down to 6 — the resulting jsdom cannot resolve `undici/lib/handler/wrap-handler.js` and every jsdom test file fails to even start its worker. jsdom 27 has no undici dependency at all, so the two never meet. Raise this only together with the undici floor.",
   "//overrides": "undici reaches us only through @firebase/* as their NODE fetch path — the browser bundle uses native fetch, so this is build/test exposure, not shipped exposure. Every new undici advisory makes npm propose the firebase v10->v12 major instead; BUMP THIS FLOOR first. It clears the whole @firebase/* advisory cluster in one line, without a two-major SDK migration on a live app.",
   "overrides": {
-    "undici": "^6.28.0"
+    "undici": "^6.28.1"
   },
   "//browserslist": "Pins the support floor EXPLICITLY (was implicit before). autoprefixer reads this for CSS prefixing; vite.config.js build.target mirrors it for JS. Floor ~= the audience's oldest realistic devices (field-worker phones / older iPhones). Bump deliberately, not by accident.",
   "browserslist": [
