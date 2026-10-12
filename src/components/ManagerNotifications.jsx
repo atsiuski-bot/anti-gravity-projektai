@@ -385,6 +385,18 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
+    // "Taisyti" / "Atidaryti veiklos ataskaitą": land on the report AND on the worker's own day, not
+    // on the bare team list — the manager reached for the card to fix THAT person's day, and a list
+    // of everyone leaves them to find it. The listener (ManagerView) falls back to the plain report
+    // when no person is named.
+    const openWorkerReport = (n) => {
+        setActiveTab('team-calendar');
+        window.dispatchEvent(new CustomEvent('open-team-report', {
+            detail: n?.userId ? { userId: n.userId, userName: n.userName || null, day: n.day || null } : undefined,
+        }));
+        onClose?.();
+    };
+
     // Reset BOTH feedback banners before any action. Kept as one helper so the neutral notice
     // (e.g. "task already deleted") can never linger across an unrelated action — every handler
     // that used to clear only the error now clears both through this single call.
@@ -735,6 +747,8 @@ export default function ManagerNotifications({ onClose }) {
                     setActionError('Šis laikas persidengia su jau įrašytu — pataisykite veiklos ataskaitoje.');
                 } else if (result.error === 'stale') {
                     setActionError('Pauzė nuo prašymo pasikeitė — patikrinkite veiklos ataskaitoje.');
+                } else if (result.error === 'denied') {
+                    setActionError('Šio meistro pertraukų matyti negalite — pataisykite veiklos ataskaitoje.');
                 } else {
                     setActionError('Nepavyko pritaikyti pataisymo. Pataisykite veiklos ataskaitoje.');
                 }
@@ -1695,7 +1709,7 @@ export default function ManagerNotifications({ onClose }) {
                                                         onClick: () => handleApplyTimeRequest(notif),
                                                     }]
                                                     : []),
-                                                { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: canApplyRequest ? 'secondary' : 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
+                                                { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: canApplyRequest ? 'secondary' : 'primary', onClick: () => openWorkerReport(notif) },
                                             ]}
                                         />
                                     )}
@@ -1712,7 +1726,6 @@ export default function ManagerNotifications({ onClose }) {
                     if (notif.type === 'time_correction_request') {
                         const applicable = isApplicableCorrection(notif);
                         const { delta, detail } = describeCorrection(notif);
-                        const openReport = () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); };
                         return (
                             <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <div className="flex flex-col gap-3">
@@ -1768,11 +1781,11 @@ export default function ManagerNotifications({ onClose }) {
                                                         disabled: !!settlingCorrection,
                                                         onClick: () => handleSettleCorrection(notif, false),
                                                     },
-                                                    { key: 'open', label: 'Keisti ataskaitoje', compactLabel: 'Keisti', icon: Edit, variant: 'secondary', onClick: openReport },
+                                                    { key: 'open', label: 'Keisti ataskaitoje', compactLabel: 'Keisti', icon: Edit, variant: 'secondary', onClick: () => openWorkerReport(notif) },
                                                 ]
                                                 : [
                                                     { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
-                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: openReport },
+                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => openWorkerReport(notif) },
                                                 ]}
                                         />
                                     )}
@@ -1831,7 +1844,7 @@ export default function ManagerNotifications({ onClose }) {
                                                 ]
                                                 : [
                                                     { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
-                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
+                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => openWorkerReport(notif) },
                                                 ]}
                                         />
                                     )}

@@ -95,6 +95,8 @@ export default function ManagerView() {
     // Kom. ataskaitos to sit beside the calendar it describes), and Veiklos ataskaita (the
     // work-hours report, also lifted out of the retired Kom. ataskaitos tab).
     const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
+    // Who/what day the report should open on after a bell card's "Taisyti" (see handleOpenTeamReport).
+    const [reportFocus, setReportFocus] = useState(null);
     // Post-completion earnings popup payload ({ task, totalMinutes }), set by the finish event below.
     const [earnings, setEarnings] = useState(null);
 
@@ -239,7 +241,12 @@ export default function ManagerView() {
         // The session-correction notification (ManagerNotifications) navigates to the team calendar
         // tab AND fires this so we land directly on its "Veiklos ataskaita" sub-tab — the work-hours
         // report that hosts the session editor — instead of the default calendar sub-tab.
-        const handleOpenTeamReport = () => setTeamCalendarSubTab('report');
+        // A card that names a person (`detail.userId`, optionally `detail.day`) also asks the report to
+        // open on THAT person's day; a bare event keeps the plain report.
+        const handleOpenTeamReport = (e) => {
+            setTeamCalendarSubTab('report');
+            setReportFocus(e?.detail?.userId ? { ...e.detail, nonce: Date.now() } : null);
+        };
         window.addEventListener('open-team-report', handleOpenTeamReport);
 
         // Post-finish earnings breakdown. Both finish doors fire ONE event carrying the earnings
@@ -980,7 +987,7 @@ export default function ManagerView() {
                         <div className="animate-in fade-in duration-150">
                             <ErrorBoundary boundaryName="manager:team-report">
                                 <React.Suspense fallback={<Spinner />}>
-                                    <Reports users={reportRoster} canExport views={['report']} />
+                                    <Reports users={reportRoster} canExport views={['report']} focus={reportFocus} />
                                 </React.Suspense>
                             </ErrorBoundary>
                         </div>

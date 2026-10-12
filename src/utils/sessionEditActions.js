@@ -1,4 +1,4 @@
-import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, increment, query, where, runTransaction } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, increment, query, where, runTransaction, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
@@ -7,6 +7,8 @@ import {
     MAX_SESSION_MINUTES,
     MAX_BACKDATE_DAYS,
     formatMinutesToTimeString,
+    snapToRowEdges,
+    planBreakAbsorption,
 } from './timeUtils';
 import { logError } from './errorLog';
 import { notify, notifyMany } from './notify';
@@ -573,6 +575,81 @@ export const applyRequestedSessionTimes = async ({ sessionId, startTime, endTime
 // REAL task id is re-read and owner-checked before a manager credits time against it.
 const isSyntheticTaskId = (taskId) => /^(quick_|call_|manual_)/.test(String(taskId || ''));
 
+// The requester's break rows on the given work days, read the way THIS caller is allowed to: a
+// whole-team viewer's equality query passes the rules, a scoped overseer's is denied unless it also
+// names them (teamManagerIds array-contains), so that form is retried on a denial.
+const readBreakRows = async (userId, days, viewerUid) => {
+    const rows = [];
+    for (const day of days) {
+        const base = [where('userId', '==', userId), where('date', '==', day)];
+        let snap;
+        try {
+            snap = await getDocs(query(collection(db, 'break_sessions'), ...base));
+        } catch (err) {
+            if (err?.code !== 'permission-denied' || !viewerUid) throw err;
+            snap = await getDocs(query(collection(db, 'break_sessions'), ...base, where('teamManagerIds', 'array-contains', viewerUid)));
+        }
+        snap.forEach((d) => rows.push({ id: d.id, ...d.data() }));
+    }
+    return rows;
+};
+
+// Put a planBreakAbsorption plan into a write batch, so the break stops being break in the SAME commit
+// that credits the work (a half-applied state would show those minutes twice). A trimmed row keeps its
+// id and gains the audit stamps an edited work row carries — the first-captured original is kept. A
+// split's back half becomes a new row on a derived id, so a repeat cannot mint it twice.
+const addBreakEdits = (batch, edits, rows, editor, nowIso, reason) => {
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const stamp = {
+        edited: true,
+        editedBy: editor?.uid || 'unknown',
+        editedByName: editor?.displayName || editor?.email || 'Nežinomas',
+        editedAt: nowIso,
+        editReason: reason,
+        updatedAt: nowIso,
+    };
+    const minutesBetween = (a, b) => (new Date(b).getTime() - new Date(a).getTime()) / 60000;
+    for (const edit of edits) {
+        const orig = byId.get(edit.id);
+        if (!orig) continue;
+        const ref = doc(db, 'break_sessions', edit.id);
+        if (edit.action === 'delete') {
+            batch.delete(ref);
+            continue;
+        }
+        const startTime = edit.action === 'trimStart' ? edit.startTime : orig.startTime;
+        const endTime = edit.action === 'trimEnd' ? edit.endTime : edit.action === 'split' ? edit.frontEnd : orig.endTime;
+        const update = {
+            startTime,
+            endTime,
+            durationMinutes: minutesBetween(startTime, endTime),
+            date: getWorkDayString(endTime),
+            ...stamp,
+        };
+        if (!orig.edited) {
+            update.originalStartTime = orig.startTime ?? null;
+            update.originalEndTime = orig.endTime ?? null;
+            update.originalDurationMinutes = typeof orig.durationMinutes === 'number' ? orig.durationMinutes : null;
+        }
+        batch.update(ref, update);
+        if (edit.action === 'split') {
+            batch.set(doc(db, 'break_sessions', `${edit.id}_b${new Date(edit.backStart).getTime()}`), {
+                isBreak: true,
+                userId: orig.userId,
+                userName: orig.userName ?? null,
+                startTime: edit.backStart,
+                endTime: edit.backEnd,
+                durationMinutes: minutesBetween(edit.backStart, edit.backEnd),
+                date: getWorkDayString(edit.backEnd),
+                createdAt: nowIso,
+                completedAt: orig.completedAt ?? nowIso,
+                splitFromBreak: edit.id,
+                ...stamp,
+            });
+        }
+    }
+};
+
 /**
  * Credit a session the worker FORGOT TO START — the manager's "Taip" on a time_correction_request of
  * kind 'missed_start'. The creditRefusedGap shape, generalised to any interval the worker named:
@@ -587,13 +664,22 @@ const isSyntheticTaskId = (taskId) => /^(quick_|call_|manual_)/.test(String(task
  *  • IDEMPOTENT. The row id is derived from (worker, start), so a double tap, or two managers each
  *    answering their own copy of the request, land on ONE row.
  *
- * @param {Object} args - { taskId, taskTitle, expectedUserId, workerName, startTime, endTime, reason, editor }
- * @returns {Promise<{ok:boolean, error?:string, id?:string, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ *  • SNAPPED, NOT REFUSED, ON A GRAZE. The worker's form works in whole minutes and stored rows in
+ *    milliseconds, so an edge digging under a minute into a neighbour is pulled flush to it
+ *    (snapToRowEdges) rather than refused as an overlap.
+ *  • BREAKS, ONLY WHEN ASKED. With `absorbBreaks` (the worker saw "the break will be shortened") the
+ *    break time the interval covers stops being break — deleted, trimmed or split — in the SAME batch
+ *    that writes the work row. Break time is not payable, so this displaces no one's pay; without the
+ *    flag a break the interval overlaps is left untouched, as before.
+ *
+ * @param {Object} args - { taskId, taskTitle, expectedUserId, workerName, startTime, endTime, absorbBreaks, reason, editor }
+ * @returns {Promise<{ok:boolean, error?:string, id?:string, durationMinutes?:number, date?:string, reconciled?:boolean, absorbedBreakMinutes?:number}>}
  *   error 'gone' — the task no longer exists; 'owner' — the task is not the requester's;
- *   'overlap' — the interval collides with time already recorded.
+ *   'overlap' — the interval collides with time already recorded;
+ *   'denied' — the breaks to take over could not be read by this caller (nothing was written).
  */
 export const creditRequestedSession = async ({
-    taskId, taskTitle, expectedUserId, workerName, startTime, endTime, reason, editor,
+    taskId, taskTitle, expectedUserId, workerName, startTime, endTime, absorbBreaks = false, reason, editor,
 } = {}) => {
     if (!expectedUserId || !startTime || !endTime) return { ok: false, error: 'missing' };
     const derived = deriveSessionFields(startTime, endTime);
@@ -614,11 +700,14 @@ export const creditRequestedSession = async ({
     }
 
     const startMs = new Date(startTime).getTime();
-    const endMs = new Date(endTime).getTime();
     const rowId = `sess_req_${expectedUserId}_${startMs}`;
     // A session is filed under the work day it ENDS in, so the rows that could collide sit on the
     // start's day or the end's day.
     const days = [...new Set([getWorkDayString(startTime), derived.date])];
+    // The requester's other rows on those days, gathered first so an edge that only GRAZES a neighbour
+    // (the worker's whole-minute 15:44 against a row that ended 15:44:34) is snapped flush instead of
+    // refused as an overlap — the manager's one tap must not fail on a rounding artefact.
+    const dayRows = [];
     try {
         for (const day of days) {
             const snap = await getDocs(query(
@@ -626,16 +715,12 @@ export const creditRequestedSession = async ({
                 where('userId', '==', expectedUserId),
                 where('date', '==', day)
             ));
-            let clash = false;
             snap.forEach((d) => {
                 if (d.id === rowId) return;
                 const s = d.data();
                 if (s.isDeleted || !s.startTime || !s.endTime) return;
-                const a = new Date(s.startTime).getTime();
-                const b = new Date(s.endTime).getTime();
-                if (a < endMs && b > startMs) clash = true;
+                dayRows.push({ id: d.id, startTime: s.startTime, endTime: s.endTime });
             });
-            if (clash) return { ok: false, error: 'overlap' };
         }
     } catch (err) {
         if (err?.code !== 'permission-denied') {
@@ -643,32 +728,73 @@ export const creditRequestedSession = async ({
             return { ok: false, error: 'write' };
         }
     }
+    const fit = snapToRowEdges(startTime, endTime, dayRows);
+    const credit = fit.snapped ? deriveSessionFields(fit.startISO, fit.endISO) : derived;
+    if (!credit.ok) return { ok: false, error: credit.error };
+    const creditStartMs = new Date(fit.startISO).getTime();
+    const creditEndMs = new Date(fit.endISO).getTime();
+    if (dayRows.some((r) => new Date(r.startTime).getTime() < creditEndMs && new Date(r.endTime).getTime() > creditStartMs)) {
+        return { ok: false, error: 'overlap' };
+    }
+
+    // Break time the interval covers. Read fail-closed: crediting work on top of a break that could not
+    // be read would show the same minutes twice, so an unreadable break means nothing is written.
+    let breakRows = [];
+    let plan = { edits: [], absorbedMinutes: 0 };
+    if (absorbBreaks) {
+        try {
+            breakRows = await readBreakRows(expectedUserId, days, editor?.uid);
+        } catch (err) {
+            logError(err, { source: 'readFail:creditRequestedSession:breaks' });
+            return { ok: false, error: err?.code === 'permission-denied' ? 'denied' : 'write' };
+        }
+        plan = planBreakAbsorption(fit.startISO, fit.endISO, breakRows);
+    }
 
     const nowIso = new Date().toISOString();
+    const editReason = (reason || '').trim() || 'Patvirtintas meistro prašymas: pamiršo paleisti laikmatį';
     const payload = {
         taskId: realTaskId || `manual_req_${startMs}`,
         taskTitle: (taskTitle || task?.title || '').trim() || 'Rankinė sesija',
         userId: expectedUserId,
         userName: workerName || task?.assignedUserName || null,
-        startTime,
-        endTime,
-        durationMinutes: derived.durationMinutes,
-        date: derived.date,
+        startTime: fit.startISO,
+        endTime: fit.endISO,
+        durationMinutes: credit.durationMinutes,
+        date: credit.date,
         createdAt: nowIso,
         isManualSession: true,
         isCorrectionRequest: true,
         createdByAdmin: editor?.uid || 'unknown',
         createdByAdminName: editor?.displayName || editor?.email || 'Nežinomas',
-        editReason: (reason || '').trim() || 'Patvirtintas meistro prašymas: pamiršo paleisti laikmatį',
+        editReason,
     };
     try {
         const ref = doc(db, 'work_sessions', rowId);
-        await setDoc(ref, payload, { merge: true });
+        if (plan.edits.length) {
+            // Work row + break edits commit together. `absorbedBreaks` keeps what each break looked like
+            // before, so the takeover can be reversed from this row alone.
+            const byId = new Map(breakRows.map((r) => [r.id, r]));
+            const batch = writeBatch(db);
+            batch.set(ref, {
+                ...payload,
+                absorbedBreaks: plan.edits.map((e) => ({
+                    id: e.id, startTime: byId.get(e.id)?.startTime ?? null, endTime: byId.get(e.id)?.endTime ?? null,
+                })),
+            }, { merge: true });
+            addBreakEdits(batch, plan.edits, breakRows, editor, nowIso, editReason);
+            await batch.commit();
+        } else {
+            await setDoc(ref, payload, { merge: true });
+        }
         // No delta on purpose — the manager's broad read re-derives the whole total, so a repeat tap
         // recomputes the same number instead of incrementing past the ledger (creditRefusedGap).
         const rec = await reconcileTaskTimerFromSessions(payload.taskId, expectedUserId);
         const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:creditRequestedSession', taskId: payload.taskId });
-        return { ok: true, id: rowId, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
+        return {
+            ok: true, id: rowId, durationMinutes: credit.durationMinutes, date: credit.date, reconciled,
+            absorbedBreakMinutes: plan.absorbedMinutes,
+        };
     } catch (err) {
         logError(err, { source: 'writeFail:creditRequestedSession' });
         return { ok: false, error: 'write' };

@@ -30,6 +30,17 @@ vi.mock('firebase/firestore', () => ({
     // The default transaction fake routes tx.get/set/update through the SAME mocks as the plain
     // calls, so a test that scripts getDoc/setDoc keeps driving a transactional path unchanged.
     // The concurrency suite below swaps in a stateful, serializing fake instead.
+    // A batch records its operations so a test can assert WHAT was committed together.
+    writeBatch: vi.fn(() => {
+        const ops = [];
+        return {
+            ops,
+            set: vi.fn((ref, data, opts) => { ops.push({ op: 'set', path: ref._path, data, opts }); }),
+            update: vi.fn((ref, data) => { ops.push({ op: 'update', path: ref._path, data }); }),
+            delete: vi.fn((ref) => { ops.push({ op: 'delete', path: ref._path }); }),
+            commit: vi.fn(() => Promise.resolve()),
+        };
+    }),
     runTransaction: vi.fn(async (_db, fn) => fn({
         get: (ref) => getDoc(ref),
         set: (ref, data, opts) => setDoc(ref, data, opts),
@@ -45,7 +56,7 @@ vi.mock('./notify', () => ({
     notifyMany: vi.fn(() => Promise.resolve()),
 }));
 
-import { updateDoc, addDoc, setDoc, deleteDoc, doc, getDoc, getDocs, runTransaction } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, deleteDoc, doc, getDoc, getDocs, runTransaction, writeBatch } from 'firebase/firestore';
 import { notify, notifyMany } from './notify';
 import {
     deriveSessionFields,
@@ -1387,6 +1398,99 @@ describe('creditRequestedSession (Taip on a missed_start correction request)', (
         ]));
         expect((await creditRequestedSession({ ...base, taskId: null })).error).toBe('overlap');
         expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    // The worker's form works in whole minutes, a stored row in milliseconds: "the gap after the row that
+    // ended 05:10:34" arrives as 05:10:00 — 34 s inside it. That is a rounding artefact, not an overlap
+    // (2026-10-08, Povilas 15:44–16:59 and Simona 11:40–12:10), so the credit is snapped flush instead.
+    it('snaps an edge that only grazes a neighbouring row instead of refusing it', async () => {
+        getDocs.mockResolvedValueOnce(rowsOf([
+            { id: 'ws-prev', startTime: '2026-09-29T04:00:00.000Z', endTime: '2026-09-29T05:10:34.664Z' },
+            { id: 'ws-next', startTime: '2026-09-29T06:40:07.577Z', endTime: '2026-09-29T07:00:00.000Z' },
+        ]));
+        const res = await creditRequestedSession({ ...base, taskId: null });
+        expect(res.ok).toBe(true);
+        const payload = setDoc.mock.calls[0][1];
+        expect(payload.startTime).toBe('2026-09-29T05:10:34.664Z');
+        expect(payload.endTime).toBe(base.endTime); // the next row starts AFTER the end: nothing to snap
+        expect(payload.durationMinutes).toBeCloseTo((new Date(base.endTime) - new Date('2026-09-29T05:10:34.664Z')) / 60000, 6);
+        // The id stays keyed on the REQUESTED start, so a repeat tap still lands on the same row.
+        expect(setDoc.mock.calls[0][0].id).toBe(`sess_req_u1_${new Date(base.startTime).getTime()}`);
+    });
+
+    it('still refuses a REAL overlap (more than a minute into a row)', async () => {
+        getDocs.mockResolvedValueOnce(rowsOf([
+            { id: 'ws-prev', startTime: '2026-09-29T04:00:00.000Z', endTime: '2026-09-29T05:12:30.000Z' },
+        ]));
+        expect((await creditRequestedSession({ ...base, taskId: null })).error).toBe('overlap');
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    // Break time is not payable, so on "Taip" the break the interval covers stops being break — in the
+    // SAME batch that writes the work row. (Simona 2026-10-12: 25 min of work credited inside a 50 min break.)
+    describe('absorbBreaks', () => {
+        const brk = { id: 'brk1', userId: 'u1', userName: 'Jonas', isBreak: true, durationMinutes: 90,
+            startTime: '2026-09-29T05:00:00.000Z', endTime: '2026-09-29T07:00:00.000Z', completedAt: '2026-09-29T07:00:00.000Z' };
+        // getDocs is called once per day for work rows, then once per day for break rows.
+        const withBreaks = (rows) => {
+            getDocs.mockResolvedValueOnce({ forEach: () => {} }).mockResolvedValueOnce(rowsOf(rows));
+        };
+
+        it('splits a break around the credited interval, atomically with the work row', async () => {
+            withBreaks([brk]);
+            const res = await creditRequestedSession({ ...base, taskId: null, absorbBreaks: true });
+            expect(res.ok).toBe(true);
+            expect(res.absorbedBreakMinutes).toBeCloseTo(90, 6);
+            expect(setDoc).not.toHaveBeenCalled(); // the work row travels IN the batch
+            const batch = writeBatch.mock.results[0].value;
+            expect(batch.commit).toHaveBeenCalledTimes(1);
+            const [work, front, back] = batch.ops;
+            expect(work).toMatchObject({ op: 'set', opts: { merge: true } });
+            expect(work.data.absorbedBreaks).toEqual([{ id: 'brk1', startTime: brk.startTime, endTime: brk.endTime }]);
+            expect(front).toMatchObject({ op: 'update', path: 'break_sessions/brk1' });
+            expect(front.data).toMatchObject({ startTime: brk.startTime, endTime: base.startTime, edited: true,
+                originalStartTime: brk.startTime, originalEndTime: brk.endTime, originalDurationMinutes: 90 });
+            expect(front.data.durationMinutes).toBeCloseTo(10, 6);
+            expect(back).toMatchObject({ op: 'set', data: { isBreak: true, userId: 'u1', startTime: base.endTime, endTime: brk.endTime, splitFromBreak: 'brk1' } });
+            expect(back.data.durationMinutes).toBeCloseTo(20, 6);
+            // The back half never carries a team stamp (the create rule demands none; a trigger stamps it).
+            expect(back.data).not.toHaveProperty('teamManagerIds');
+        });
+
+        it('deletes a break the interval covers entirely', async () => {
+            withBreaks([{ ...brk, startTime: '2026-09-29T05:20:00.000Z', endTime: '2026-09-29T06:30:00.000Z' }]);
+            await creditRequestedSession({ ...base, taskId: null, absorbBreaks: true });
+            const batch = writeBatch.mock.results[0].value;
+            expect(batch.ops.map((o) => o.op)).toEqual(['set', 'delete']);
+            expect(batch.ops[1].path).toBe('break_sessions/brk1');
+        });
+
+        it('leaves breaks alone unless asked (the flag is the consent the worker gave)', async () => {
+            const res = await creditRequestedSession({ ...base, taskId: null });
+            expect(res.ok).toBe(true);
+            expect(writeBatch).not.toHaveBeenCalled();
+            expect(setDoc).toHaveBeenCalledTimes(1);
+        });
+
+        it('with nothing to take over, falls back to the plain single write (and a repeat tap is the same)', async () => {
+            withBreaks([]);
+            const res = await creditRequestedSession({ ...base, taskId: null, absorbBreaks: true });
+            expect(res.ok).toBe(true);
+            expect(writeBatch).not.toHaveBeenCalled();
+            expect(setDoc).toHaveBeenCalledTimes(1);
+        });
+
+        it('fails CLOSED when the breaks cannot be read: nothing is credited', async () => {
+            getDocs.mockResolvedValueOnce({ forEach: () => {} }).mockRejectedValue(
+                Object.assign(new Error('denied'), { code: 'permission-denied' })
+            );
+            const res = await creditRequestedSession({ ...base, taskId: null, absorbBreaks: true });
+            expect(res).toEqual({ ok: false, error: 'denied' });
+            expect(setDoc).not.toHaveBeenCalled();
+            expect(writeBatch).not.toHaveBeenCalled();
+            getDocs.mockReset();
+            getDocs.mockImplementation(() => Promise.resolve({ forEach: () => {} }));
+        });
     });
 
     it('ignores deleted rows and its OWN earlier write when checking overlap (idempotent retry)', async () => {

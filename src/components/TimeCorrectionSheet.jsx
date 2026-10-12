@@ -21,6 +21,8 @@ import {
     describeCorrection,
     buildCorrectionRequest,
     isNotFuture,
+    snapToRowEdges,
+    planBreakAbsorption,
 } from '../utils/timeCorrectionRequest';
 
 // "Pranešti apie laiko klaidą" — the worker's one place to say "my logged day is wrong".
@@ -201,9 +203,21 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
         setError('');
     };
 
-    const startISO = startStr ? workDayClockToISO(day, startStr) : null;
-    const endISO = endStr ? workDayClockToISO(day, endStr) : null;
+    const typedStartISO = startStr ? workDayClockToISO(day, startStr) : null;
+    const typedEndISO = endStr ? workDayClockToISO(day, endStr) : null;
     const selectedRow = rowOf(rowId);
+    // Whole-minute inputs against millisecond rows: an edge that only GRAZES a neighbouring row snaps
+    // flush to it, so a gap offered as "15:44–16:59" is not refused for digging 34 s into the row before
+    // it (the row being edited is not a neighbour of itself). Everything below reads the snapped pair.
+    const ignoreId = kind === K.WRONG_TIME || kind === K.MISSED_STOP ? selectedRow?.id : undefined;
+    const fit = useMemo(
+        () => (typedStartISO && typedEndISO
+            ? snapToRowEdges(typedStartISO, typedEndISO, [...works, ...breaks], { ignoreId })
+            : { startISO: typedStartISO, endISO: typedEndISO }),
+        [typedStartISO, typedEndISO, works, breaks, ignoreId]
+    );
+    const startISO = fit.startISO;
+    const endISO = fit.endISO;
 
     // Live consequence for the open form: the resulting minutes, and the first blocking problem.
     const check = useMemo(() => {
@@ -213,10 +227,13 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
             if (!d.ok) return { error: d.error };
             if (!isNotFuture(endISO)) return { error: 'future' };
             // An overlap is not a dead end: the worker may be right (a meeting that ran under another
-            // row's timer). It cannot be a one-tap "Taip" — that would double-credit — so it travels as
-            // an information-only request the manager settles by hand.
-            const overlap = !!(findOverlap(startISO, endISO, works) || findOverlap(startISO, endISO, breaks));
-            return { minutes: d.durationMinutes, path: 'request', overlap };
+            // row's timer). Over ANOTHER WORK ROW it cannot be a one-tap "Taip" — that would double-
+            // credit paid time — so it travels as an information-only request the manager settles by
+            // hand. Over a BREAK only, it can: break time is not payable, so on "Taip" the break simply
+            // stops being break (absorbBreaks) and the manager still gets one tap.
+            if (findOverlap(startISO, endISO, works)) return { minutes: d.durationMinutes, path: 'request', overlap: true };
+            const absorbed = planBreakAbsorption(startISO, endISO, breaks).absorbedMinutes;
+            return { minutes: d.durationMinutes, path: 'request', absorbBreaks: absorbed > 0, absorbedMinutes: absorbed };
         }
         if (kind === K.MISSED_STOP || kind === K.WRONG_TIME) {
             if (!selectedRow) return { error: 'row' };
@@ -283,7 +300,10 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                     note: `Pamiršo paleisti laikmatį: ${span}, ${what} (persidengia su kitu įrašu). ${note.trim()}`.trim(),
                 });
             } else if (k === K.MISSED_START) {
-                await sendRequest({ kind: k, taskId: taskId || null, taskTitle: taskTitleOf(taskId), startTime: startISO, endTime: endISO, aiSuggested: fromProposal });
+                await sendRequest({
+                    kind: k, taskId: taskId || null, taskTitle: taskTitleOf(taskId), startTime: startISO, endTime: endISO,
+                    aiSuggested: fromProposal, absorbBreaks: !!check.absorbBreaks,
+                });
             } else if (k === K.WRONG_TIME) {
                 await sendRequest({
                     kind: k, sessionRef: selectedRow.id, taskId: selectedRow.taskId || null, taskTitle: selectedRow.taskTitle || null,
@@ -507,10 +527,12 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                     : !canRequest
                       ? 'Laiką pridėti gali tik vadovas.'
                       : check.overlap
-                        ? 'Šis laikas persidengia su kitu įrašu, todėl vadovas sutvarkys jį rankiniu būdu.'
-                      : kind === K.BREAK_WAS_WORK
-                        ? 'Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“. Visa pauzė taps darbo laiku.'
-                        : 'Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“.'}
+                        ? 'Šis laikas persidengia su kitu darbo įrašu, todėl vadovas sutvarkys jį rankiniu būdu.'
+                        : check.absorbBreaks
+                          ? `Tuo metu pažymėta pertrauka (${formatMinutesToTimeString(Math.round(check.absorbedMinutes))}) — ji bus sutrumpinta. Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“.`
+                          : kind === K.BREAK_WAS_WORK
+                            ? 'Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“. Visa pauzė taps darbo laiku.'
+                            : 'Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“.'}
             </p>
         </div>
     );

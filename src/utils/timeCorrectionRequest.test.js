@@ -148,6 +148,13 @@ describe('isApplicableCorrection / applyTimeCorrectionRequest (routing the manag
         requestedStartTime: '2026-09-29T09:47:00Z', requestedEndTime: '2026-09-29T10:15:00Z',
     };
 
+    it('missed_start passes the worker\'s break consent through, and ONLY when it was given', async () => {
+        await applyTimeCorrectionRequest({ notif: missed, editor });
+        expect(creditRequestedSession.mock.calls[0][0].absorbBreaks).toBe(false);
+        await applyTimeCorrectionRequest({ notif: { ...missed, absorbBreaks: true }, editor });
+        expect(creditRequestedSession.mock.calls[1][0].absorbBreaks).toBe(true);
+    });
+
     it('break_was_work is one-tap only when it names the break', () => {
         expect(isApplicableCorrection(brk)).toBe(true);
         expect(isApplicableCorrection({ ...brk, breakRef: null })).toBe(false);

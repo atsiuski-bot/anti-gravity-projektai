@@ -110,6 +110,47 @@ describe('TimeCorrectionSheet', () => {
         expect(document.body.textContent).toContain('Prašymas išsiųstas vadovui');
     });
 
+    // Stored rows end mid-minute; the form types whole minutes. The offered gap 09:00–10:30 starts 34 s
+    // INSIDE the row that ended 09:00:34 — a rounding artefact that used to be read as an overlap
+    // (2026-10-08: Povilas 15:44–16:59, Simona 11:40–12:10) and so lost its one-tap "Taip".
+    it('a gap that only grazes its neighbours mid-minute is a normal request, snapped to their edges', async () => {
+        const grazing = [
+            { ...works[0], endTime: '2026-09-01T06:00:34.664Z' },
+            { ...works[1], startTime: '2026-09-01T07:30:07.577Z' },
+        ];
+        await render({ workRows: grazing });
+        await click(byText('Pamiršau paleisti laikmatį'));
+        expect(document.body.textContent).not.toContain('persidengia');
+        await click(byText('Siųsti vadovui'));
+        const [, payload] = notifyMany.mock.calls[0];
+        expect(payload).toMatchObject({
+            correctionKind: 'missed_start',
+            requestedStartTime: '2026-09-01T06:00:34.664Z',
+            requestedEndTime: '2026-09-01T07:30:00.000Z',
+        });
+    });
+
+    // Work done inside a break nobody ended (Kęstutis / Simona 2026-10-12): break time is not payable, so
+    // this stays a one-tap request — the flag tells the manager's "Taip" it may shorten the break.
+    it('time inside a BREAK is a one-tap request that carries consent to shorten the break', async () => {
+        await render({ breakRows: [{ id: 'b1', startTime: '2026-09-01T06:10:00.000Z', endTime: '2026-09-01T07:00:00.000Z' }] });
+        await click(byText('Pamiršau paleisti laikmatį'));
+        const [start, end] = document.body.querySelectorAll('input[type="time"]');
+        await setValue(start, '09:20');
+        await setValue(end, '09:50');
+        expect(document.body.textContent).toContain('pertrauka');
+        expect(byText('Siųsti vadovui').disabled).toBe(false);
+        await click(byText('Siųsti vadovui'));
+        const [, payload] = notifyMany.mock.calls[0];
+        expect(payload).toMatchObject({
+            correctionKind: 'missed_start',
+            requestedStartTime: '2026-09-01T06:20:00.000Z',
+            requestedEndTime: '2026-09-01T06:50:00.000Z',
+            absorbBreaks: true,
+        });
+        expect(payload.commentText).toContain('sutrumpins pertrauką');
+    });
+
     it('time that overlaps a recorded row is not a dead end: it goes to the manager as a plain request', async () => {
         await render();
         await click(byText('Pamiršau paleisti laikmatį'));

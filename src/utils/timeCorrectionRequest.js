@@ -89,6 +89,10 @@ export const intervalMinutes = (startISO, endISO) => {
     return Number.isFinite(d) && d > 0 ? Math.round(d) : null;
 };
 
+// The edge snap and the break-takeover plan live with the other time maths (sessionEditActions needs
+// them too, and this module imports from there); re-exported so the worker form keeps one import site.
+export { SNAP_TOLERANCE_MS, snapToRowEdges, planBreakAbsorption } from './timeUtils';
+
 /**
  * The "Taip" preview the manager reads: the net change to paid time and one line saying what it is.
  * Pure — used by the manager card and by the worker's confirm step so both describe the same fix.
@@ -101,7 +105,7 @@ export const describeCorrection = (n) => {
     if (n.correctionKind === CORRECTION_KINDS.MISSED_START) {
         return {
             delta: newMin ? `+${formatMinutesToTimeString(newMin)}` : '',
-            detail: [n.taskTitle || 'Kita veikla', span].filter(Boolean).join(', '),
+            detail: [n.taskTitle || 'Kita veikla', span, n.absorbBreaks ? 'sutrumpins pertrauką' : ''].filter(Boolean).join(', '),
         };
     }
     if (n.correctionKind === CORRECTION_KINDS.WRONG_TIME) {
@@ -133,7 +137,7 @@ const clampNote = (text, max = 500) => String(text || '').replace(/\s+/g, ' ').t
  */
 export const buildCorrectionRequest = ({
     kind, day, worker, taskId, taskTitle, startTime, endTime, sessionRef, breakRef,
-    originalStartTime, originalEndTime, note, aiSuggested = false,
+    originalStartTime, originalEndTime, note, aiSuggested = false, absorbBreaks = false,
 }) => {
     const workerName = worker?.name || null;
     const base = {
@@ -145,6 +149,9 @@ export const buildCorrectionRequest = ({
         taskTitle: taskTitle || null,
         originalStartTime: originalStartTime || null,
         originalEndTime: originalEndTime || null,
+        // The worker saw "the break will be shortened" and sent it anyway: the manager's "Taip" may take
+        // the overlapped break time over (creditRequestedSession). Absent/false changes nothing.
+        absorbBreaks: !!absorbBreaks,
     };
     const { delta, detail } = describeCorrection(base);
     const workerNote = clampNote(note);
@@ -189,6 +196,7 @@ export const applyTimeCorrectionRequest = async ({ notif, editor }) => {
             workerName: notif.userName,
             startTime: notif.requestedStartTime,
             endTime: notif.requestedEndTime,
+            absorbBreaks: notif.absorbBreaks === true,
             reason,
             editor,
         });

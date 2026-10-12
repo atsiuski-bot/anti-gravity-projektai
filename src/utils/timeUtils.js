@@ -750,6 +750,89 @@ export const injectInactiveGaps = (sortedItems, minGapMinutes = 1) => {
     return withGaps;
 };
 
+// Stored rows carry millisecond edges (a timer stops at 15:44:34.664) but a worker's correction form
+// works in whole minutes, so "the gap after that row" is typed as 15:44 — 34 s INSIDE the row. Read as
+// a real overlap it blocks an honest request (and the manager's "Taip" would refuse it for the same
+// reason). An edge that digs less than this into a neighbour is a rounding artefact, not a claim on
+// the neighbour's time — and far below the smallest gap the day view draws (injectInactiveGaps).
+export const SNAP_TOLERANCE_MS = 60000;
+
+/**
+ * Move an interval's edges flush against the neighbouring rows they only graze: the start forward to
+ * the end of a row whose tail it digs into, the end back to the start of a row whose head it digs into —
+ * each only when the intrusion is under `toleranceMs` and the row does not reach past the other side of
+ * the interval (that is a real overlap, left for the caller to report). `ignoreId` skips the row being
+ * edited. Pure; returns the original strings when nothing moved.
+ *
+ * @param {string} startISO
+ * @param {string} endISO
+ * @param {Array<{id?:string,startTime:string,endTime:string}>} rows
+ * @returns {{startISO:string, endISO:string, snapped:boolean}}
+ */
+export const snapToRowEdges = (startISO, endISO, rows = [], { ignoreId, toleranceMs = SNAP_TOLERANCE_MS } = {}) => {
+    let s = new Date(startISO).getTime();
+    let e = new Date(endISO).getTime();
+    if (!Number.isFinite(s) || !Number.isFinite(e)) return { startISO, endISO, snapped: false };
+    const s0 = s;
+    const e0 = e;
+    const usable = rows.filter((r) => r && r.id !== ignoreId && r.startTime && r.endTime);
+    // Tiny rows can sit back to back (a timer restarted twice within a minute), so settle to a fixed point.
+    for (let pass = 0; pass < 4; pass += 1) {
+        let moved = false;
+        for (const r of usable) {
+            const rs = new Date(r.startTime).getTime();
+            const re = new Date(r.endTime).getTime();
+            if (!Number.isFinite(rs) || !Number.isFinite(re)) continue;
+            if (rs < s && re > s && re - s < toleranceMs && re < e) { s = re; moved = true; }
+            if (re > e && rs < e && e - rs < toleranceMs && rs > s) { e = rs; moved = true; }
+        }
+        if (!moved) break;
+    }
+    return {
+        startISO: s === s0 ? startISO : new Date(s).toISOString(),
+        endISO: e === e0 ? endISO : new Date(e).toISOString(),
+        snapped: s !== s0 || e !== e0,
+    };
+};
+
+/**
+ * What crediting [startISO, endISO) as WORK does to the BREAK rows it overlaps. Break time is an
+ * allowance, never payable, so (unlike another task's work row) those minutes can simply stop being
+ * break once a manager approves. Per overlapped break row:
+ *   delete    — the interval covers it entirely;
+ *   trimEnd   — only its front survives (its end moves back to the interval's start);
+ *   trimStart — only its back survives (its start moves forward to the interval's end);
+ *   split     — the interval sits inside it: the front keeps the row, the back becomes a new row.
+ * A surviving remnant shorter than `toleranceMs` is dropped with the rest — the day view never draws
+ * a gap that small. Pure; `absorbedMinutes` is the break time that is taken over.
+ *
+ * @param {string} startISO
+ * @param {string} endISO
+ * @param {Array<{id:string,startTime:string,endTime:string,isDeleted?:boolean}>} breaks
+ * @returns {{edits:Array<Object>, absorbedMinutes:number}}
+ */
+export const planBreakAbsorption = (startISO, endISO, breaks = [], { toleranceMs = SNAP_TOLERANCE_MS } = {}) => {
+    const s = new Date(startISO).getTime();
+    const e = new Date(endISO).getTime();
+    const edits = [];
+    let absorbedMs = 0;
+    if (!Number.isFinite(s) || !Number.isFinite(e)) return { edits, absorbedMinutes: 0 };
+    for (const b of breaks) {
+        if (!b?.id || !b.startTime || !b.endTime || b.isDeleted) continue;
+        const bs = new Date(b.startTime).getTime();
+        const be = new Date(b.endTime).getTime();
+        if (!(bs < e && be > s)) continue;
+        absorbedMs += Math.min(be, e) - Math.max(bs, s);
+        const keepsFront = s - bs >= toleranceMs;
+        const keepsBack = be - e >= toleranceMs;
+        if (!keepsFront && !keepsBack) edits.push({ id: b.id, action: 'delete' });
+        else if (keepsFront && !keepsBack) edits.push({ id: b.id, action: 'trimEnd', endTime: startISO });
+        else if (!keepsFront && keepsBack) edits.push({ id: b.id, action: 'trimStart', startTime: endISO });
+        else edits.push({ id: b.id, action: 'split', frontEnd: startISO, backStart: endISO, backEnd: b.endTime });
+    }
+    return { edits, absorbedMinutes: absorbedMs / 60000 };
+};
+
 export const vilniusWallClockToISO = (dateStr, timeStr) => {
     if (typeof dateStr !== 'string' || typeof timeStr !== 'string') return null;
     const dateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);

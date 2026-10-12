@@ -36,7 +36,7 @@ import { PERIOD_PRESETS, resolvePresetRange, shiftRange } from './reports/period
 import { useRovingFocus } from '../hooks/useRovingFocus';
 
 
-export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'] }) {
+export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'], focus = null }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
     const reviewShelf = useReviewShelf();
     // viewRole lets a caller scope the whole report to a role other than the signed-in one — a
@@ -79,6 +79,11 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     // day timeline (the same single-worker drill-down the team calendar uses), scoped to the report's
     // range, so the manager can locate and fix the suspicious sessions. { userId, name } | null.
     const [summaryDrillWorker, setSummaryDrillWorker] = useState(null);
+    // A bell card's "Taisyti" names a person and a day (`focus`): open that person's day timeline
+    // straight away. A new focus object (not a re-render) is what re-opens it after it was closed.
+    useEffect(() => {
+        if (focus?.userId) setSummaryDrillWorker({ userId: focus.userId, name: focus.userName || null, day: focus.day || null });
+    }, [focus]);
 
     // --- TASKS REPORT STATE ---
     const [taskFilters, setTaskFilters] = useState({
@@ -770,7 +775,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             userRole={userRole}
                             users={users}
                             canExport={canExport}
-                            dateRange={dateRange}
+                            dateRange={summaryDrillWorker.day ? null : dateRange}
+                            initialDate={summaryDrillWorker.day || null}
                             forceUserId={summaryDrillWorker.userId}
                             forceUserName={summaryDrillWorker.name}
                             workerDetailOnly

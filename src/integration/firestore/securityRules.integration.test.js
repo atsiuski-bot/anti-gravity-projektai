@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
     assertFails,
     assertSucceeds,
@@ -721,6 +721,69 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
             await assertFails(
                 setDoc(doc(workerDb(), 'break_sessions', 'sess_break_run_run-1'), breakRow)
             );
+        });
+
+        // ---- break takeover: the manager's "Taip" on work done inside a break nobody ended -----------
+        // creditRequestedSession (absorbBreaks) commits ONE batch: the work row, the front of the break
+        // trimmed, and the back of the break as a new row. Every op must pass its own rule, and one
+        // refusal sinks the whole commit — so the batch is only usable if the manager's scope covers all
+        // three, and never for a manager outside the worker's subtree.
+        const takeover = (db, uid) => {
+            const b = writeBatch(db);
+            const stamp = { edited: true, editedBy: uid, editedByName: 'Manager', editedAt: '2026-07-11T03:00:00.000Z', editReason: 'x', updatedAt: '2026-07-11T03:00:00.000Z' };
+            b.set(doc(db, 'work_sessions', `sess_req_${TARGET_ID}_1`), {
+                userId: TARGET_ID, taskId: 'manual_req_1', taskTitle: 'Rankinė sesija',
+                startTime: '2026-07-11T00:30:00.000Z', endTime: '2026-07-11T01:00:00.000Z',
+                durationMinutes: 30, date: '2026-07-11', createdAt: '2026-07-11T03:00:00.000Z',
+                isManualSession: true, isCorrectionRequest: true,
+                createdByAdmin: uid, createdByAdminName: 'Manager', editReason: 'x',
+                absorbedBreaks: [{ id: 'brk-take', startTime: '2026-07-11T00:00:00.000Z', endTime: '2026-07-11T02:00:00.000Z' }],
+            }, { merge: true });
+            b.update(doc(db, 'break_sessions', 'brk-take'), {
+                startTime: '2026-07-11T00:00:00.000Z', endTime: '2026-07-11T00:30:00.000Z', durationMinutes: 30, date: '2026-07-11',
+                originalStartTime: '2026-07-11T00:00:00.000Z', originalEndTime: '2026-07-11T02:00:00.000Z', originalDurationMinutes: 120,
+                ...stamp,
+            });
+            b.set(doc(db, 'break_sessions', 'brk-take_b1'), {
+                isBreak: true, userId: TARGET_ID, userName: 'Target',
+                startTime: '2026-07-11T01:00:00.000Z', endTime: '2026-07-11T02:00:00.000Z', durationMinutes: 60, date: '2026-07-11',
+                createdAt: '2026-07-11T03:00:00.000Z', completedAt: '2026-07-11T02:00:00.000Z', splitFromBreak: 'brk-take',
+                ...stamp,
+            });
+            return b.commit();
+        };
+        const seedTakeoverBreak = () => seed({
+            'break_sessions/brk-take': {
+                userId: TARGET_ID, userName: 'Target', isBreak: true, engineVersion: 2, runId: 'run-b',
+                startTime: '2026-07-11T00:00:00.000Z', endTime: '2026-07-11T02:00:00.000Z',
+                durationMinutes: 120, date: '2026-07-11', teamManagerIds: [IN_SCOPE_MGR],
+            },
+        });
+
+        it('a whole-company admin may take a break over (work row + trimmed front + new back) in one batch', async () => {
+            await seedTakeoverBreak();
+            await assertSucceeds(takeover(authedDb(WHOLE_TEAM_ADMIN), WHOLE_TEAM_ADMIN));
+        });
+
+        it('an IN-SCOPE scoped manager may take the same break over', async () => {
+            await seedTakeoverBreak();
+            await assertSucceeds(takeover(authedDb(IN_SCOPE_MGR), IN_SCOPE_MGR));
+        });
+
+        it('an OUT-OF-SCOPE scoped manager cannot — and nothing is written (the batch is atomic)', async () => {
+            await seedTakeoverBreak();
+            await assertFails(takeover(authedDb(OUT_SCOPE_MGR), OUT_SCOPE_MGR));
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const db = context.firestore();
+                expect((await getDoc(doc(db, 'break_sessions', 'brk-take_b1'))).exists()).toBe(false);
+                expect((await getDoc(doc(db, 'work_sessions', `sess_req_${TARGET_ID}_1`))).exists()).toBe(false);
+                expect((await getDoc(doc(db, 'break_sessions', 'brk-take'))).data().endTime).toBe('2026-07-11T02:00:00.000Z');
+            });
+        });
+
+        it('a plain WORKER cannot run the takeover on their own break (it carries an admin stamp)', async () => {
+            await seedTakeoverBreak();
+            await assertFails(takeover(authedDb(TARGET_ID), TARGET_ID));
         });
 
         // Calendar-request approval workflow (decline is the acute gap: it bypasses the already-scoped

@@ -20,6 +20,8 @@ import {
     injectInactiveGaps,
     mergeContinuousSessions,
     dropUncreditedSessionRows,
+    snapToRowEdges,
+    planBreakAbsorption,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -786,5 +788,100 @@ describe('isCreditableUntrackedGap — may this unobserved interval be auto-cred
 
     it('is bounded well below the SESSION ceiling — the two answer different questions', () => {
         expect(MAX_UNTRACKED_GAP_MINUTES).toBeLessThan(MAX_SESSION_MINUTES);
+    });
+});
+
+// The correction form works in whole minutes, stored rows in milliseconds — so the form's "15:44" lands
+// 34 s inside a row that ended 15:44:34. Real cases: Povilas 2026-10-08 15:44–16:59, Simona 11:40–12:10.
+describe('snapToRowEdges (whole-minute edges against millisecond rows)', () => {
+    const prev = { id: 'prev', startTime: '2026-10-08T11:28:36.589Z', endTime: '2026-10-08T12:44:34.664Z' };
+    const next = { id: 'next', startTime: '2026-10-08T13:59:07.577Z', endTime: '2026-10-08T14:03:50.890Z' };
+
+    it('pulls a start that grazes the previous row tail flush to that row end', () => {
+        const r = snapToRowEdges('2026-10-08T12:44:00.000Z', '2026-10-08T13:59:00.000Z', [prev, next]);
+        expect(r).toEqual({ startISO: '2026-10-08T12:44:34.664Z', endISO: '2026-10-08T13:59:00.000Z', snapped: true });
+    });
+
+    it('pulls an end that grazes the next row head back to that row start', () => {
+        const r = snapToRowEdges('2026-10-08T12:50:00.000Z', '2026-10-08T14:00:00.000Z', [prev, next]);
+        expect(r.endISO).toBe('2026-10-08T13:59:07.577Z');
+        expect(r.startISO).toBe('2026-10-08T12:50:00.000Z');
+    });
+
+    it('leaves a REAL overlap (a minute or more into a row) alone', () => {
+        const r = snapToRowEdges('2026-10-08T12:43:00.000Z', '2026-10-08T13:59:00.000Z', [prev, next]);
+        expect(r.snapped).toBe(false);
+        expect(r.startISO).toBe('2026-10-08T12:43:00.000Z');
+    });
+
+    it('does not snap onto a row that sits INSIDE the interval or reaches past its far side', () => {
+        const inside = { id: 'in', startTime: '2026-10-08T12:50:00.000Z', endTime: '2026-10-08T12:50:30.000Z' };
+        expect(snapToRowEdges('2026-10-08T12:49:30.000Z', '2026-10-08T13:00:00.000Z', [inside]).snapped).toBe(false);
+        const longRow = { id: 'long', startTime: '2026-10-08T12:00:00.000Z', endTime: '2026-10-08T13:00:00.000Z' };
+        expect(snapToRowEdges('2026-10-08T12:59:30.000Z', '2026-10-08T12:59:50.000Z', [longRow]).snapped).toBe(false);
+    });
+
+    it('settles to a fixed point when a snap exposes a second grazed row (order must not matter)', () => {
+        const a = { id: 'a', startTime: '2026-10-08T08:39:00.000Z', endTime: '2026-10-08T08:40:05.818Z' };
+        const b = { id: 'b', startTime: '2026-10-08T08:40:02.000Z', endTime: '2026-10-08T08:40:20.000Z' };
+        // b alone does not graze the typed 08:40:00 start (it begins after it); only once a has moved the
+        // start to 08:40:05.818 does b's head sit behind it — so b must be listed BEFORE a to prove the loop.
+        const r = snapToRowEdges('2026-10-08T08:40:00.000Z', '2026-10-08T09:10:00.000Z', [b, a]);
+        expect(r.startISO).toBe('2026-10-08T08:40:20.000Z');
+    });
+
+    it('treats a short row that lies wholly inside the interval as a REAL overlap', () => {
+        const tiny = { id: 'tiny', startTime: '2026-10-08T08:40:05.818Z', endTime: '2026-10-08T08:40:20.000Z' };
+        const r = snapToRowEdges('2026-10-08T08:40:05.818Z', '2026-10-08T09:10:00.000Z', [tiny]);
+        expect(r.snapped).toBe(false);
+    });
+
+    it('skips the row being edited and tolerates junk', () => {
+        expect(snapToRowEdges('2026-10-08T12:44:00.000Z', '2026-10-08T13:00:00.000Z', [prev], { ignoreId: 'prev' }).snapped).toBe(false);
+        expect(snapToRowEdges('garbage', '2026-10-08T13:00:00.000Z', [prev]).snapped).toBe(false);
+        expect(snapToRowEdges('2026-10-08T12:44:00.000Z', '2026-10-08T13:00:00.000Z', [null, { id: 'x' }]).snapped).toBe(false);
+    });
+});
+
+// Crediting an interval as WORK takes over the break time it covers (break is not payable). The plan says
+// what happens to each overlapped break row. Real shape: Simona 2026-10-12, a 12:30–13:20 break with 25
+// minutes of work inside it.
+describe('planBreakAbsorption (what crediting work does to the breaks it overlaps)', () => {
+    const brk = { id: 'b1', startTime: '2026-10-12T09:30:08.221Z', endTime: '2026-10-12T10:20:44.242Z' };
+
+    it('splits a break that holds the interval: front keeps the row, back becomes a new one', () => {
+        const r = planBreakAbsorption('2026-10-12T09:45:00.000Z', '2026-10-12T10:10:00.000Z', [brk]);
+        expect(r.edits).toEqual([{
+            id: 'b1', action: 'split', frontEnd: '2026-10-12T09:45:00.000Z',
+            backStart: '2026-10-12T10:10:00.000Z', backEnd: '2026-10-12T10:20:44.242Z',
+        }]);
+        expect(r.absorbedMinutes).toBeCloseTo(25, 6);
+    });
+
+    it('deletes a break the interval covers entirely (the whole-break reclassification)', () => {
+        const r = planBreakAbsorption(brk.startTime, brk.endTime, [brk]);
+        expect(r.edits).toEqual([{ id: 'b1', action: 'delete' }]);
+        expect(r.absorbedMinutes).toBeCloseTo(50.6, 1);
+    });
+
+    it('trims the END when only the front survives, and the START when only the back does', () => {
+        expect(planBreakAbsorption('2026-10-12T09:50:00.000Z', '2026-10-12T10:30:00.000Z', [brk]).edits)
+            .toEqual([{ id: 'b1', action: 'trimEnd', endTime: '2026-10-12T09:50:00.000Z' }]);
+        expect(planBreakAbsorption('2026-10-12T09:00:00.000Z', '2026-10-12T10:00:00.000Z', [brk]).edits)
+            .toEqual([{ id: 'b1', action: 'trimStart', startTime: '2026-10-12T10:00:00.000Z' }]);
+    });
+
+    it('drops a remnant shorter than the tolerance instead of leaving a sliver row', () => {
+        // The interval starts 20 s after the break began: no 20-second front is kept.
+        const r = planBreakAbsorption('2026-10-12T09:30:28.221Z', '2026-10-12T10:00:00.000Z', [brk]);
+        expect(r.edits).toEqual([{ id: 'b1', action: 'trimStart', startTime: '2026-10-12T10:00:00.000Z' }]);
+    });
+
+    it('ignores breaks that do not overlap, deleted ones, and junk', () => {
+        const away = { id: 'b2', startTime: '2026-10-12T05:00:00.000Z', endTime: '2026-10-12T05:30:00.000Z' };
+        const gone = { ...brk, id: 'b3', isDeleted: true };
+        expect(planBreakAbsorption('2026-10-12T09:45:00.000Z', '2026-10-12T10:10:00.000Z', [away, gone, null, { id: 'x' }]))
+            .toEqual({ edits: [], absorbedMinutes: 0 });
+        expect(planBreakAbsorption('garbage', '2026-10-12T10:10:00.000Z', [brk])).toEqual({ edits: [], absorbedMinutes: 0 });
     });
 });
