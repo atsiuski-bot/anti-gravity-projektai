@@ -34,7 +34,7 @@ let sessionSnoozed = false;
  * is suppressed there — managers who still want to install can do it from the browser's own UI.
  */
 export default function InstallPrompt() {
-    const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
+    const { canPromptNative, isIOS, isSamsung, isStandalone, promptInstall } = useInstallPrompt();
     // Mirror the app-wide desktop breakpoint (Layout's SideRail gate) so "desktop view" means the
     // same thing everywhere.
     const isDesktop = useMediaQuery('(min-width: 1024px)');
@@ -90,8 +90,9 @@ export default function InstallPrompt() {
     };
 
     // Show only when installing is actually possible, the user hasn't snoozed it, and we're not on
-    // a desktop viewport (the nudge is mobile-only).
-    const canShow = !isDesktop && !isStandalone && !snoozed && (canPromptNative || isIOS);
+    // a desktop viewport (the nudge is mobile-only). On Samsung Internet the banner only points the
+    // user to Chrome (its own install is flagged by Android 14+), so it shows there regardless.
+    const canShow = !isDesktop && !isStandalone && !snoozed && (canPromptNative || isIOS || isSamsung);
 
     return (
         <>
@@ -103,9 +104,13 @@ export default function InstallPrompt() {
                 >
                     <Download className="h-5 w-5 shrink-0 text-brand-hover" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
-                        <p className="truncate text-caption font-semibold text-brand-hover">Įdiegti Gildiją</p>
+                        <p className="truncate text-caption font-semibold text-brand-hover">
+                            {isSamsung ? 'Įdiekite per Chrome' : 'Įdiegti Gildiją'}
+                        </p>
                         <p className="truncate text-caption text-ink">
-                            Spartesnė prieiga ir pranešimai apie naujus prašymus
+                            {isSamsung
+                                ? 'Samsung naršyklė gali blokuoti diegimą'
+                                : 'Spartesnė prieiga ir pranešimai apie naujus prašymus'}
                         </p>
                     </div>
                     <Button

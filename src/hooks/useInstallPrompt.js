@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { isSamsungInternet } from '../utils/installBrowser';
 
 // PWA install state, centralized so every surface (the slim banner and the Profile entry) reads
 // ONE source of truth and behaves identically.
@@ -38,7 +39,9 @@ function detectStandalone() {
  * Returns:
  *  - `canPromptNative` — a captured `beforeinstallprompt` is available (Android/desktop Chrome);
  *    `promptInstall()` will show the OS dialog.
+ *    Always false on Samsung Internet, whose own install is flagged by Android 14+ (see below).
  *  - `isIOS` — iOS/iPadOS Safari, where install is manual (no native prompt event exists).
+ *  - `isSamsung` — Samsung Internet: never offer its native install; steer the user to Chrome.
  *  - `isStandalone` — already launched as an installed app; install affordances should hide.
  *  - `promptInstall()` — fire the native dialog; resolves to 'accepted' | 'dismissed' |
  *    'unavailable' (no native prompt — caller should show manual steps instead).
@@ -46,6 +49,7 @@ function detectStandalone() {
 export function useInstallPrompt() {
     const [deferredPrompt, setDeferredPrompt] = useState(() => window.__deferredInstallPrompt || null);
     const [isIOS] = useState(detectIOS);
+    const [isSamsung] = useState(() => isSamsungInternet(navigator.userAgent));
     const [isStandalone, setIsStandalone] = useState(detectStandalone);
 
     useEffect(() => {
@@ -80,6 +84,8 @@ export function useInstallPrompt() {
     }, []);
 
     const promptInstall = useCallback(async () => {
+        // Samsung Internet's install builds a WebAPK that Android 14+ warns about — never fire it.
+        if (isSamsung) return 'unavailable';
         const evt = deferredPrompt || window.__deferredInstallPrompt;
         if (!evt) return 'unavailable';
         evt.prompt();
@@ -88,11 +94,12 @@ export function useInstallPrompt() {
         window.__deferredInstallPrompt = null;
         setDeferredPrompt(null);
         return outcome;
-    }, [deferredPrompt]);
+    }, [deferredPrompt, isSamsung]);
 
     return {
-        canPromptNative: !!deferredPrompt,
+        canPromptNative: !!deferredPrompt && !isSamsung,
         isIOS,
+        isSamsung,
         isStandalone,
         promptInstall,
     };
