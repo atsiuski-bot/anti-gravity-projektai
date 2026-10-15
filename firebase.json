@@ -24,6 +24,9 @@
         "firestore": {
             "port": 8180
         },
+        "storage": {
+            "port": 9199
+        },
         "hub": {
             "port": 4477
         },

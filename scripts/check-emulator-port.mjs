@@ -52,6 +52,8 @@ function emulatorPorts() {
     // A missing port means the CLI picks its own default; there is nothing of ours to guard.
     return [
         { kind: 'firestore', port: config?.emulators?.firestore?.port },
+        // Storage is another java child with the same orphan failure mode, so it shares that remedy.
+        { kind: 'storage', port: config?.emulators?.storage?.port },
         { kind: 'hub', port: config?.emulators?.hub?.port },
     ].filter(entry => Boolean(entry.port));
 }
@@ -117,7 +119,7 @@ function killHint(details) {
 }
 
 function remedyFor(kind, details) {
-    if (kind === 'firestore') {
+    if (kind !== 'hub') {
         return (
             'This is usually an ORPHANED emulator: killing a `firebase emulators:*` wrapper leaves its\n' +
             'java child listening. It can also be the aftermath of a HUB port failure, which dies after\n' +
@@ -147,7 +149,7 @@ for (const { kind, port } of emulatorPorts()) {
     if (!(await isPortHeld(port))) continue;
 
     blocked = true;
-    const label = kind === 'hub' ? 'emulator hub' : 'Firestore emulator';
+    const label = { hub: 'emulator hub', firestore: 'Firestore emulator', storage: 'Storage emulator' }[kind];
     const details = describeHolder(port);
 
     process.stderr.write(

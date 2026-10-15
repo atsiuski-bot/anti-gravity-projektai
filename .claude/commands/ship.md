@@ -153,7 +153,9 @@ npm run test:functions
 **Emulator gate** — `npm test` *includes* `src/integration/firestore/**` but every file in it
 self-skips without `FIRESTORE_EMULATOR_HOST`, so a plain run prints "5 skipped" and a
 **rules or stateful-timer regression sails through the gate**. Those suites are the only thing that
-ever exercises `firestore.rules`. Run them for real:
+ever exercises `firestore.rules`. The same run also boots the **Storage** emulator for the
+attachment-delete check (`functions/storageDelete.emulator.test.cjs`) — the only gate coverage of
+the functions' Storage client, whose failures are otherwise silent in production. Run them for real:
 
 ```bash
 npm run test:firestore
@@ -161,7 +163,7 @@ npm run test:firestore
 - Non-zero exit → **STOP**: "Emulator suite failed — not shipping." Show the failing output.
 - If the emulator cannot START (no Firebase CLI, no Java) → **do not silently continue**. Report it
   as a **coverage gap in the ship summary**, naming what went unverified (rules + stateful timer
-  paths), and say so again in step 8. Only skip when the diff touches neither `firestore.rules` nor
+  paths + attachment delete), and say so again in step 8. Only skip when the diff touches neither `firestore.rules` nor
   any timer/session write path; if it does, treat it as a **STOP** and ask the user how to proceed.
 
 > Both gates are cheap in absolute terms (~1 s and ~40 s). The reason they were optional was habit,
