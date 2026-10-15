@@ -51,16 +51,17 @@
     "tailwindcss": "^3.4.1",
     "vite": "^7.3.6",
     "vite-plugin-pwa": "^1.2.0",
-    "vitest": "^4.1.9",
+    "vitest": "^4.1.11",
     "workbox-precaching": "^7.4.1",
     "workbox-routing": "^7.4.1"
   },
   "//jsdom": "Held at ^27 ON PURPOSE. jsdom 28+ depends on undici ^7, which the `overrides` pin below forces down to 6 — the resulting jsdom cannot resolve `undici/lib/handler/wrap-handler.js` and every jsdom test file fails to even start its worker. jsdom 27 has no undici dependency at all, so the two never meet. Raise this only together with the undici floor.",
-  "//overrides": "undici reaches us only through @firebase/* as their NODE fetch path — the browser bundle uses native fetch, so this is build/test exposure, not shipped exposure. Every new undici advisory makes npm propose the firebase v10->v12 major instead; BUMP THIS FLOOR first. It clears the whole @firebase/* advisory cluster in one line, without a two-major SDK migration on a live app. @grpc/grpc-js is the same story: @firebase/firestore pins ~1.9.0 in every firebase release up to 13.0.0, so no SDK upgrade clears GHSA-m9gg-hp2v-232j / GHSA-f596-whhp-79r4 (fixed in 1.13.6) — the floor lifts it onto the 1.14 line that firebase-admin already brings into this tree. Node-only gRPC path (rules/emulator tests); the browser bundle carries no @grpc code. uuid: gaxios 6 (final release of that line, under firebase-admin -> @google-cloud/storage) requires uuid ^9 and calls v4() only; the floor lifts it past GHSA-w5hq-g745-h8pq. Mirrored in functions/package.json.",
+  "//overrides": "undici reaches us only through @firebase/* as their NODE fetch path — the browser bundle uses native fetch, so this is build/test exposure, not shipped exposure. Every new undici advisory makes npm propose the firebase v10->v12 major instead; BUMP THIS FLOOR first. It clears the whole @firebase/* advisory cluster in one line, without a two-major SDK migration on a live app. @grpc/grpc-js is the same story: @firebase/firestore pins ~1.9.0 in every firebase release up to 13.0.0, so no SDK upgrade clears GHSA-m9gg-hp2v-232j / GHSA-f596-whhp-79r4 (fixed in 1.13.6) — the floor lifts it onto the 1.14 line that firebase-admin already brings into this tree. Node-only gRPC path (rules/emulator tests); the browser bundle carries no @grpc code. uuid: gaxios 6 (final release of that line, under firebase-admin -> @google-cloud/storage) requires uuid ^9 and calls v4() only; the floor lifts it past GHSA-w5hq-g745-h8pq. Mirrored in functions/package.json. postcss-selector-parser: tailwindcss 3 (and its postcss-nested) want ^6, and no 6.x clears GHSA-rj75-hqrm-r3gf; the 7.1.6 floor was proven by building before/after — both emitted CSS files byte-identical. Build-time only. Drop it with the tailwind 4 migration, which is also the only fix for the remaining braces advisory (every braces release is affected).",
   "overrides": {
     "undici": "^6.28.1",
     "@grpc/grpc-js": "^1.14.5",
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "postcss-selector-parser": "^7.1.6"
   },
   "//browserslist": "Pins the support floor EXPLICITLY (was implicit before). autoprefixer reads this for CSS prefixing; vite.config.js build.target mirrors it for JS. Floor ~= the audience's oldest realistic devices (field-worker phones / older iPhones). Bump deliberately, not by accident.",
   "browserslist": [
