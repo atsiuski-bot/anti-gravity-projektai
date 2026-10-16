@@ -1117,6 +1117,69 @@ service cloud.firestore {
                          || (tmplScope(resource.data) == 'team' && (isAdmin() || resource.data.createdBy == request.auth.uid)) );
     }
 
+    // ---- STANDING DUTIES ("Savaitiniai darbai") ----------------------------
+    // A checklist of recurring admin duties, each with ONE watermark `coveredThrough`
+    // (YYYY-MM-DD, inclusive: "reviews sent up to 10-15"). No timer, no work time — a duty can never
+    // change credited hours or pay, so the boundary here is privacy + ownership, not money.
+    // Founder decision 2026-10-16: coordinators and admins use it; each person sees their OWN duties,
+    // an admin sees all. A coordinator creates/edits only their own; an admin may create one for, or
+    // re-assign it to, anyone. Ownership is otherwise immutable. Never hard-deleted (archived flag),
+    // so the mark history stays readable.
+    match /duties/{dutyId} {
+      function dutyDateOk(v) {
+        return v == null || (v is string && v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'));
+      }
+      function dutyShapeOk(data) {
+        return data.get('title', '') is string
+               && data.get('title', '').size() > 0
+               && data.get('title', '').size() <= 120
+               && data.get('ownerId', '') is string
+               && data.get('ownerId', '').size() > 0
+               && data.get('intervalDays', 0) in [7, 14, 30]
+               && dutyDateOk(data.get('coveredThrough', null))
+               && (data.get('lastNote', null) == null
+                   || (data.get('lastNote', null) is string && data.get('lastNote', '').size() <= 500))
+               && data.get('archived', false) is bool;
+      }
+
+      allow read: if isUserActive()
+                  && (isAdmin() || resource.data.get('ownerId', '') == request.auth.uid);
+
+      allow create: if isUserActive()
+                    && request.resource.data.get('createdBy', '') == request.auth.uid
+                    && dutyShapeOk(request.resource.data)
+                    && (isAdmin()
+                        || (isManagerOrAdmin() && request.resource.data.ownerId == request.auth.uid));
+
+      allow update: if isUserActive()
+                    && dutyShapeOk(request.resource.data)
+                    && request.resource.data.get('createdBy', '') == resource.data.get('createdBy', '')
+                    && (isAdmin()
+                        || (resource.data.get('ownerId', '') == request.auth.uid
+                            && request.resource.data.ownerId == resource.data.get('ownerId', '')));
+
+      allow delete: if false;
+
+      // Append-only history of marks. The parent read uses get() (pre-write state), which is right
+      // for a mark batched with its watermark update: the parent's owner does not change there.
+      match /marks/{markId} {
+        function dutyOwnerOrAdmin() {
+          return isAdmin()
+                 || get(/databases/$(database)/documents/duties/$(dutyId)).data.get('ownerId', '') == request.auth.uid;
+        }
+        allow read: if isUserActive() && dutyOwnerOrAdmin();
+        allow create: if isUserActive()
+                      && dutyOwnerOrAdmin()
+                      && request.resource.data.get('markedBy', '') == request.auth.uid
+                      && request.resource.data.get('coveredThrough', null) is string
+                      && dutyDateOk(request.resource.data.get('coveredThrough', null))
+                      && (request.resource.data.get('note', null) == null
+                          || (request.resource.data.get('note', null) is string
+                              && request.resource.data.get('note', '').size() <= 500));
+        allow update, delete: if false;
+      }
+    }
+
     // ---- USER SETTINGS (doc id == owner uid) --------------------------------
     match /user_settings/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;

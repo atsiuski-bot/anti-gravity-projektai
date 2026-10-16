@@ -61,6 +61,7 @@ const Reports = lazyWithRecovery(() => import('../components/Reports'));
 const ReviewShelf = lazyWithRecovery(() => import('../components/ReviewShelf'));
 const CalendarChangeHistory = lazyWithRecovery(() => import('../components/CalendarChangeHistory'));
 const AuditDashboard = lazyWithRecovery(() => import('../components/AuditDashboard'));
+const DutiesPanel = lazyWithRecovery(() => import('../components/duties/DutiesPanel'));
 // The priority board pulls in @dnd-kit; lazy-load it so that weight enters the bundle only when a
 // manager actually turns the board on (it never touches the worker bundle or the default list).
 const PriorityBoard = lazyWithRecovery(() => import('../components/board/PriorityBoard'));
@@ -1010,6 +1011,15 @@ export default function ManagerView() {
                     </React.Suspense>
                 </ErrorBoundary>
             </div>
+
+            {/* Standing duties — mounted only while active, so its listener attaches on first visit. */}
+            {activeTab === 'duties' && (
+                <ErrorBoundary boundaryName="manager:duties" resetKeys={[activeTab]}>
+                    <React.Suspense fallback={<Spinner />}>
+                        <DutiesPanel />
+                    </React.Suspense>
+                </ErrorBoundary>
+            )}
 
             {userRole === 'admin' && (
                 <div className={activeTab === 'users' ? 'block' : 'hidden'}>

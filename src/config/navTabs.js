@@ -1,4 +1,4 @@
-import { UserCog, ScrollText } from 'lucide-react';
+import { UserCog, ScrollText, ListChecks } from 'lucide-react';
 import {
     TasksGlyph, TasksTeamGlyph,
     CalendarGlyph, CalendarTeamGlyph,
@@ -37,6 +37,15 @@ export function getNavSections(userRole) {
                     // Veiklos ataskaita → Kom. kalendorius, Pridavimas + Istorija → Kom. veiklos.
                     { id: 'tasks', label: 'Kom. veiklos', icon: TasksTeamGlyph },
                     { id: 'team-calendar', label: 'Kom. kalendorius', icon: CalendarTeamGlyph },
+                ],
+            },
+            // Standing duties sit AFTER the team section on purpose: the phone bar keeps its first
+            // four destinations, so this lands under "Daugiau" rather than displacing Kom. veiklos.
+            {
+                id: 'duties',
+                label: 'Pareigos',
+                items: [
+                    { id: 'duties', label: 'Savaitiniai darbai', icon: ListChecks },
                 ],
             },
             ...(userRole === 'admin'

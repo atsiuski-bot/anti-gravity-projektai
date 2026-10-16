@@ -42,6 +42,26 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-10-16** — **Standing duties ("Savaitiniai darbai") are a watermark checklist, not tasks**
+  (`src/utils/duties.js`, `src/components/duties/DutiesPanel.jsx`, new `duties` rules block).
+  Founder ask: a checklist of recurring admin duties (e.g. a coordinator's "reviews sent") where
+  each entry records only **"done through date X, inclusive"**, while the time spent is logged
+  separately as ordinary current work. **Rejected: recurring task templates + checklists.** A
+  template materializes a NEW timed task per period (pollutes lists, history, reports, badges) and a
+  checklist tick is boolean — it loses the one fact that matters (*up to which date*), and a skipped
+  week piles up as unfinished instances instead of simply showing a larger gap. **Decision:** a
+  separate `duties/{id}` doc with one forward-moving `coveredThrough` watermark + cadence
+  (7/14/30 d), and an append-only `duties/{id}/marks` history, written together in one batch. It
+  never touches `work_sessions`, so it cannot change credited hours or pay. Status (on time / due
+  soon / late N d. / never marked) is derived on the client from the Vilnius date. **Access
+  (founder 2026-10-16):** coordinators and admins use it; each person reads/edits only their OWN
+  duties, an admin reads all and may create or re-assign one for anyone; ownership is otherwise
+  immutable; no hard delete (archived flag). Nav: its own "Pareigos" section placed AFTER Komanda
+  so the phone bar's first four slots are unchanged — it and Kom. kalendorius sit under "Daugiau"
+  for coordinators. **Needs a post-ship `firestore.rules` deploy** — until then the collection is
+  default-denied and the screen shows its load-error state. Phase 2 (not built): a push nudge when
+  a duty goes late, and a weekly summary for the admin.
+
 - **2026-08-31** — **A provider above the router must not write the URL for a state the router is
   redirecting out of** (`src/context/NavigationContext.jsx`). A signed-out visitor loading `/`
   got a permanent WHITE SCREEN: the URL turned into `/?tab=tasks`, `#root` stayed empty and
