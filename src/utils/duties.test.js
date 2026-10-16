@@ -33,6 +33,11 @@ describe('dutyStatus', () => {
         expect(dutyStatus(weekly, '2026-10-30')).toMatchObject({ kind: 'late', daysLate: 8 });
     });
 
+    it('a watermark ahead of today stays on time until one interval past it', () => {
+        expect(dutyStatus({ coveredThrough: '2026-10-24', intervalDays: 7 }, '2026-10-17'))
+            .toMatchObject({ kind: 'ok', nextDue: '2026-10-31' });
+    });
+
     it('honours the longer cadences', () => {
         expect(dutyStatus({ coveredThrough: '2026-10-01', intervalDays: 30 }, '2026-10-16').nextDue).toBe('2026-10-31');
         expect(dutyStatus({ coveredThrough: '2026-10-01', intervalDays: 14 }, '2026-10-16').kind).toBe('late');
@@ -55,10 +60,10 @@ describe('sortDuties', () => {
 });
 
 describe('validateDutyMark', () => {
-    it('accepts today and past dates, rejects the future and a missing date', () => {
+    it('accepts past, today and future dates (work entered in advance); rejects a missing date', () => {
         expect(validateDutyMark('2026-10-16', '2026-10-16')).toBeNull();
         expect(validateDutyMark('2026-10-01', '2026-10-16')).toBeNull();
-        expect(validateDutyMark('2026-10-17', '2026-10-16')).toMatch(/ateityje/);
+        expect(validateDutyMark('2026-10-24', '2026-10-16')).toBeNull();
         expect(validateDutyMark('', '2026-10-16')).toMatch(/datą/);
     });
 

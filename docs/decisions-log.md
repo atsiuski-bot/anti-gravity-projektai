@@ -60,7 +60,10 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   so the phone bar's first four slots are unchanged — it and Kom. kalendorius sit under "Daugiau"
   for coordinators. **Needs a post-ship `firestore.rules` deploy** — until then the collection is
   default-denied and the screen shows its load-error state. Phase 2 (not built): a push nudge when
-  a duty goes late, and a weekly summary for the admin.
+  a duty goes late, and a weekly summary for the admin. **Amended 2026-10-17 (founder):** a mark
+  may also be dated AHEAD of today — duties are often entered in advance — so the client's
+  "not in the future" check and the date picker's upper bound were removed. The rules never bounded
+  the date (format only), so no rules deploy was needed for this.
 
 - **2026-08-31** — **A provider above the router must not write the URL for a state the router is
   redirecting out of** (`src/context/NavigationContext.jsx`). A signed-out visitor loading `/`

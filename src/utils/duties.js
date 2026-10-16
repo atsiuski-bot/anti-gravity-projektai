@@ -81,13 +81,15 @@ export function sortDuties(duties, today) {
 
 /**
  * Validate a "covered through" mark before it is written. The watermark may move BACK (fixing a
- * mis-tap is a legitimate correction and the history keeps both marks) but never into the future.
+ * mis-tap is a legitimate correction and the history keeps both marks) and also AHEAD of today:
+ * a duty is often prepared in advance (e.g. reviews entered through next Friday), founder
+ * decision 2026-10-17. `today` stays in the signature so callers need not change; no date bound
+ * applies.
  *
  * @returns {string|null} a Lithuanian error message, or null when valid.
  */
 export function validateDutyMark(dateStr, today, note = '') {
     if (!isDutyDate(dateStr)) return 'Pasirinkite datą.';
-    if (daysBetween(today, dateStr) > 0) return 'Data negali būti ateityje.';
     if (String(note).length > DUTY_NOTE_MAX) return `Pastaba per ilga (daugiausia ${DUTY_NOTE_MAX} simbolių).`;
     return null;
 }

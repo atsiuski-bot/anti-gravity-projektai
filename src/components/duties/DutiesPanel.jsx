@@ -238,7 +238,7 @@ function DutyMarkModal({ duty, today, currentUid, onClose }) {
                     <label htmlFor="duty-mark-date" className="mb-1 block text-caption font-medium text-ink-muted">
                         Suvesta iki (imtinai)
                     </label>
-                    <DatePicker id="duty-mark-date" value={date} onChange={setDate} max={today} className="w-full" />
+                    <DatePicker id="duty-mark-date" value={date} onChange={setDate} className="w-full" />
                     {duty.coveredThrough && (
                         <p className="mt-1 text-caption text-ink-muted">Ankstesnė žyma: iki {formatDutyDate(duty.coveredThrough)}</p>
                     )}
