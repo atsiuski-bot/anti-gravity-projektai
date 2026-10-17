@@ -3,6 +3,7 @@ import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, 
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import TaskCard from '../components/TaskCard';
+import PriorityGroupedCards from '../components/task/PriorityGroupedCards';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import IconButton from '../components/ui/IconButton';
@@ -857,16 +858,11 @@ export default function ManagerView() {
                                     <p className="text-body text-ink-muted">Jums dar nepriskirta jokių užduočių.</p>
                                 </div>
                             ) : viewMode === 'mobile' ? (
-                                <div className="space-y-4">
-                                    {sortedMyTasks.map(task => (
-                                        <TaskCard
-                                            key={task.id}
-                                            task={task}
-                                            onEdit={() => handleEditTask(task)}
-                                            role="worker"
-                                        />
-                                    ))}
-                                </div>
+                                <PriorityGroupedCards
+                                    tasks={sortedMyTasks}
+                                    onEdit={handleEditTask}
+                                    role="worker"
+                                />
                             ) : (
                                 <TaskTable
                                     tasks={sortedMyTasks}
