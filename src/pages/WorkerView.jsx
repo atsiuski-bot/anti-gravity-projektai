@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import TaskCard from '../components/TaskCard';
+import PriorityGroupedCards from '../components/task/PriorityGroupedCards';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
@@ -435,16 +435,13 @@ export default function WorkerView() {
                             Each card eases in on mount; the wrapper is keyed so a reused card
                             (re-sort / per-second timer tick) never re-plays its entrance — only
                             a genuinely new or filtered-in card animates. */}
-                        <div className="space-y-4 md:hidden">
-                            {sortedTasks.map(task => (
-                                <div key={task.id} className="animate-in fade-in slide-in-from-bottom-2">
-                                    <TaskCard
-                                        task={task}
-                                        onEdit={() => handleEditTask(task)}
-                                        role="worker"
-                                    />
-                                </div>
-                            ))}
+                        <div className="md:hidden">
+                            <PriorityGroupedCards
+                                tasks={sortedTasks}
+                                onEdit={handleEditTask}
+                                role="worker"
+                                forceOpen={Boolean(filterTag || debouncedSearch.trim())}
+                            />
                         </div>
                         {/* Desktop: denser table */}
                         <div className="hidden md:block">
