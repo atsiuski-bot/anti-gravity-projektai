@@ -73,7 +73,13 @@ function SortableCard({ task, onEdit, role, draggable }) {
     );
 }
 
-export default function SortableTaskCardList({ tasks, onEditTask, role, dragEnabled = true }) {
+export default function SortableTaskCardList({
+    tasks,
+    onEditTask,
+    role,
+    dragEnabled = true,
+    hint = 'Palaikykite užduotį, kad pertvarkytumėte. Pernešus virš kito prioriteto, prioritetas pasikeis.',
+}) {
     const reorder = useReorderableTasks(tasks, { enabled: dragEnabled });
 
     // No drag (relevance-ordered search results): a plain, static card list.
@@ -97,9 +103,7 @@ export default function SortableTaskCardList({ tasks, onEditTask, role, dragEnab
                     {reorder.error}
                 </p>
             )}
-            <p className="px-1 text-caption text-ink-muted">
-                Palaikykite užduotį, kad pertvarkytumėte. Pernešus virš kito prioriteto, prioritetas pasikeis.
-            </p>
+            {hint && <p className="px-1 text-caption text-ink-muted">{hint}</p>}
             <DndContext
                 accessibility={{ announcements: dndAnnouncements, screenReaderInstructions: dndScreenReaderInstructions }}
                 sensors={reorder.sensors}

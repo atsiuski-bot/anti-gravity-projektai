@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import TaskCard from '../TaskCard';
+import { lazyWithRecovery } from '../../utils/appUpdate';
 import { BOARD_COLUMNS, groupTasksByPriority } from '../../utils/boardOrder';
 import { PRIORITIES, getPriorityLabel, getPriorityColor } from '../../utils/priority';
+
+// Lazy so @dnd-kit never enters the eager worker bundle (same boundary as the team list).
+const SortableTaskCardList = lazyWithRecovery(() => import('./SortableTaskCardList'));
 
 /**
  * PriorityGroupedCards — the worker's MOBILE card stack, split into one collapsible section per
@@ -15,7 +19,10 @@ import { PRIORITIES, getPriorityLabel, getPriorityColor } from '../../utils/prio
  * and while it holds a running task (the live timer must never be tucked away). State is local and
  * never persisted — the same convention as the other disclosures on this tab.
  *
- * The input is already in canonical order, so each group keeps that order untouched.
+ * The input is already in canonical order, so each group keeps that order untouched. Within a
+ * group a press-and-hold drag reorders (shared `boardRank`); each group has its OWN drag context,
+ * so a card can never cross into another priority here. Drag is off while a filter is active
+ * (`forceOpen`), because search results are in relevance order, not the manual order.
  */
 export default function PriorityGroupedCards({ tasks, onEdit, role = 'worker', forceOpen = false }) {
     const [collapsed, setCollapsed] = useState(() => new Set([PRIORITIES.LOW]));
@@ -75,11 +82,26 @@ export default function PriorityGroupedCards({ tasks, onEdit, role = 'worker', f
                         </h3>
                         {isOpen && (
                             <div id={panelId} className="mt-3 space-y-4">
-                                {items.map((task) => (
-                                    <div key={task.id} className="animate-in fade-in slide-in-from-bottom-2">
-                                        <TaskCard task={task} onEdit={() => onEdit(task)} role={role} />
-                                    </div>
-                                ))}
+                                {forceOpen ? (
+                                    items.map((task) => (
+                                        <div key={task.id} className="animate-in fade-in slide-in-from-bottom-2">
+                                            <TaskCard task={task} onEdit={() => onEdit(task)} role={role} />
+                                        </div>
+                                    ))
+                                ) : (
+                                    <React.Suspense
+                                        fallback={items.map((task) => (
+                                            <TaskCard key={task.id} task={task} onEdit={() => onEdit(task)} role={role} />
+                                        ))}
+                                    >
+                                        <SortableTaskCardList
+                                            tasks={items}
+                                            onEditTask={onEdit}
+                                            role={role}
+                                            hint={items.length > 1 ? 'Palaikykite užduotį, kad pakeistumėte eiliškumą.' : null}
+                                        />
+                                    </React.Suspense>
+                                )}
                             </div>
                         )}
                     </section>
