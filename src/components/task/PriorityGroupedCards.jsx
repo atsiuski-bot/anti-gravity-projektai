@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import TaskCard from '../TaskCard';
+import TaskTable from '../TaskTable';
 import { lazyWithRecovery } from '../../utils/appUpdate';
 import { BOARD_COLUMNS, groupTasksByPriority } from '../../utils/boardOrder';
 import { PRIORITIES, getPriorityLabel, getPriorityColor } from '../../utils/priority';
@@ -23,8 +24,12 @@ const SortableTaskCardList = lazyWithRecovery(() => import('./SortableTaskCardLi
  * group a press-and-hold drag reorders (shared `boardRank`); each group has its OWN drag context,
  * so a card can never cross into another priority here. Drag is off while a filter is active
  * (`forceOpen`), because search results are in relevance order, not the manual order.
+ *
+ * `variant="table"` is the DESKTOP form of the same list: the identical collapsible headers, each
+ * open group rendering its own dense `TaskTable` instead of the card stack (no drag there — the
+ * personal desktop table never had reordering).
  */
-export default function PriorityGroupedCards({ tasks, onEdit, role = 'worker', forceOpen = false }) {
+export default function PriorityGroupedCards({ tasks, onEdit, role = 'worker', forceOpen = false, variant = 'cards' }) {
     const [collapsed, setCollapsed] = useState(() => new Set([PRIORITIES.LOW]));
     const groups = groupTasksByPriority(tasks);
 
@@ -82,7 +87,9 @@ export default function PriorityGroupedCards({ tasks, onEdit, role = 'worker', f
                         </h3>
                         {isOpen && (
                             <div id={panelId} className="mt-3 space-y-4">
-                                {forceOpen ? (
+                                {variant === 'table' ? (
+                                    <TaskTable tasks={items} onEdit={onEdit} role={role} />
+                                ) : forceOpen ? (
                                     items.map((task) => (
                                         <div key={task.id} className="animate-in fade-in slide-in-from-bottom-2">
                                             <TaskCard task={task} onEdit={() => onEdit(task)} role={role} />

@@ -4,7 +4,6 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import PriorityGroupedCards from '../components/task/PriorityGroupedCards';
-import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
 import CompletedTodayDisclosure from '../components/CompletedTodayDisclosure';
@@ -443,12 +442,14 @@ export default function WorkerView() {
                                 forceOpen={Boolean(filterTag || debouncedSearch.trim())}
                             />
                         </div>
-                        {/* Desktop: denser table */}
+                        {/* Desktop: denser table, split into the same priority sections */}
                         <div className="hidden md:block">
-                            <TaskTable
+                            <PriorityGroupedCards
+                                variant="table"
                                 tasks={sortedTasks}
                                 onEdit={handleEditTask}
                                 role="worker"
+                                forceOpen={Boolean(filterTag || debouncedSearch.trim())}
                             />
                         </div>
                     </>

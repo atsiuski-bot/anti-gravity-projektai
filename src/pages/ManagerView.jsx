@@ -864,7 +864,8 @@ export default function ManagerView() {
                                     role="worker"
                                 />
                             ) : (
-                                <TaskTable
+                                <PriorityGroupedCards
+                                    variant="table"
                                     tasks={sortedMyTasks}
                                     onEdit={handleEditTask}
                                     role="worker" // Mimic worker view columns/actions
