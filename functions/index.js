@@ -187,6 +187,7 @@ const CATEGORY_BY_TYPE = {
     task_priority_escalated: 'info',
     achievement: 'info',
     task_overdue: 'info',
+    task_snooze_ended: 'info',
 };
 
 // MIRROR of the registry's per-type `actions` — the OS-level decision buttons drawn on a BACKGROUND
@@ -379,6 +380,9 @@ function copyForRequestNotification(n) {
         case 'task_overdue':
             // System → manager: a task's deadline passed while still unfinished.
             return { title: 'Praleistas terminas', body: title };
+        case 'task_snooze_ended':
+            // System → worker: a snoozed task's return instant passed (ADR 0033).
+            return { title: 'Atidėta veikla grįžo', body: title };
         default:
             return { title: 'Gildijos pranešimas', body: title };
     }
@@ -3678,6 +3682,72 @@ exports.notifyOverdueTasks = onSchedule(
         }
 
         logger.info('notifyOverdueTasks done', { todayStr, notified });
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Snooze return push (ADR 0033) — tell the ASSIGNEE their parked task is back in the list.
+// ---------------------------------------------------------------------------
+//
+// The return itself needs no job: the client derives "snoozed" from `snoozedUntil` against the
+// clock, so a task reappears on time even if this sweep never runs. This only adds the push.
+//
+// A snooze write arms `snoozeWakePending: true`; each run reads ONLY the armed tasks (single-field
+// equality, no composite index), and for each whose return instant has passed it disarms the task
+// and then files one notification. The disarm is conditioned on the snapshot's updateTime, so a
+// task re-snoozed between the read and the write keeps its fresh arm (the write fails its
+// precondition and the next run sees the new return instant). Finished / deleted / unparseable
+// rows are disarmed without a push, so the armed set never accumulates dead rows.
+exports.wakeSnoozedTasks = onSchedule(
+    { schedule: 'every 15 minutes', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const nowMs = Date.now();
+
+        let snap;
+        try {
+            snap = await db.collection('tasks').where('snoozeWakePending', '==', true).get();
+        } catch (err) {
+            logger.error('wakeSnoozedTasks query failed', { err: err.message });
+            return;
+        }
+
+        let notified = 0;
+        for (const docSnap of snap.docs) {
+            const t = docSnap.data();
+            const untilMs = Date.parse(t.snoozedUntil || '');
+            if (Number.isFinite(untilMs) && untilMs > nowMs) continue; // not due yet
+
+            const finished = t.completed === true || t.isDeleted === true ||
+                ['completed', 'confirmed', 'deleted'].includes(t.status);
+            const shouldNotify = Number.isFinite(untilMs) && !finished && !!t.assignedUserId;
+
+            try {
+                await docSnap.ref.update({ snoozeWakePending: false }, { lastUpdateTime: docSnap.updateTime });
+            } catch (err) {
+                // Changed since the read (re-snoozed, un-snoozed, heartbeat) — the next run decides.
+                logger.info('wakeSnoozedTasks skipped a changed task', { taskId: docSnap.id, err: err.message });
+                continue;
+            }
+            if (!shouldNotify) continue;
+
+            try {
+                await db.collection('request_notifications').add({
+                    recipientId: t.assignedUserId,
+                    type: 'task_snooze_ended',
+                    category: 'info',
+                    taskId: docSnap.id,
+                    taskTitle: t.title || 'Veikla',
+                    isRead: false,
+                    createdAt: new Date().toISOString(),
+                    createdBy: 'system_snooze',
+                });
+                notified += 1;
+            } catch (err) {
+                logger.warn('wakeSnoozedTasks notify failed', { taskId: docSnap.id, err: err.message });
+            }
+        }
+
+        logger.info('wakeSnoozedTasks done', { armed: snap.size, notified });
     }
 );
 

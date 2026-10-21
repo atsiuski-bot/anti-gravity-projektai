@@ -4,6 +4,7 @@ import {
     Pencil, Trash2, Undo2, CheckCircle2, CheckCheck, Check, Clock, MessageSquare, ListChecks,
     Link as LinkIcon, ImageIcon, ImagePlus, Camera, ZoomIn, Send, X, ChevronDown,
     Calendar, Timer, Hourglass, UserCog, Square, CheckSquare, Bookmark, BookmarkCheck,
+    AlarmClock, AlarmClockOff,
 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -19,6 +20,7 @@ import TaskActionRow from './TaskActionRow';
 import PriorityBadge from './PriorityBadge';
 import TaskStatusPill from './TaskStatusPill';
 import TaskFlagToggles from './TaskFlagToggles';
+import SnoozeBadge from './SnoozeBadge';
 import DeletedBadge from './DeletedBadge';
 import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
@@ -36,6 +38,8 @@ import { logError } from '../../utils/errorLog';
 import { hapticTap } from '../../utils/haptics';
 import { preventEnterSubmit } from '../../utils/formUtils';
 import { useReviewShelf } from '../../hooks/useReviewShelf';
+import { useSnoozeActions } from '../../hooks/useSnoozeActions';
+import { isTaskSnoozed } from '../../utils/taskSnooze';
 
 /**
  * TaskDetailModal — the single "open the task" surface for both the desktop list (row click) and
@@ -67,6 +71,8 @@ import { useReviewShelf } from '../../hooks/useReviewShelf';
  *        koordinatorius closes this Meistras's still-open task on their behalf. The caller owns the
  *        permission gate (canFinishForAssignee), so this modal only renders what it is handed.
  * @param {Function} [props.onApprove]       approve an unapproved task (taskId)
+ * @param {Function} [props.onSnooze]        present ⇒ the task may be snoozed from here: render
+ *        "Atidėti" (the caller swaps this sheet for the SnoozeSheet) or, while parked, "Grąžinti dabar".
  * @param {Function} [props.onOpenChecklist]
  * @param {Function} [props.onOpenTimeAdjustments]
  */
@@ -98,6 +104,7 @@ export default function TaskDetailModal({
     onConfirm,
     onFinish,
     onApprove,
+    onSnooze,
     onOpenChecklist,
     onOpenTimeAdjustments,
 }) {
@@ -105,6 +112,7 @@ export default function TaskDetailModal({
     const { currentUser, userData } = useAuth();
     const { users } = useUsers();
     const reviewShelf = useReviewShelf();
+    const { unsnooze } = useSnoozeActions();
 
     // Recipients for the approval-free backdate FYI: every ACTIVE admin (legacy spelling included),
     // computed from the roster the worker can already read.
@@ -509,6 +517,21 @@ export default function TaskDetailModal({
                                 collectionName={collectionName}
                                 onError={() => setError('Nepavyko pakeisti žymos. Bandykite dar kartą.')}
                             />
+                            {/* Snooze — the non-gesture door to the card's swipe-left (WCAG 2.5.1). */}
+                            {onSnooze && (
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                    <SnoozeBadge task={task} />
+                                    {isTaskSnoozed(task) ? (
+                                        <Button variant="secondary" size="md" icon={AlarmClockOff} onClick={() => unsnooze(task)}>
+                                            Grąžinti dabar
+                                        </Button>
+                                    ) : (
+                                        <Button variant="secondary" size="md" icon={AlarmClock} onClick={() => onSnooze(task)}>
+                                            Atidėti
+                                        </Button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 

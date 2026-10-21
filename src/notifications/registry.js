@@ -461,6 +461,17 @@ export const NOTIFICATIONS = {
         copy: (n) => ({ title: 'Praleistas terminas', body: n.taskTitle || 'Gildija' }),
     },
 
+    // ── System → worker (a snoozed task is back in the active list, ADR 0033) ────────────────────
+    // Sent by the wakeSnoozedTasks sweep to the ASSIGNEE (whoever parked it). The task reappears on
+    // the client by itself at its return instant; this is only the nudge that it did.
+    task_snooze_ended: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Atidėta veikla grįžo', body: n.taskTitle || 'Gildija' }),
+    },
+
     // ── System → admin / manager ─────────────────────────────────────────────────────────────────
     // The nightly integrity scan's verdict, delivered. The scan already derives an honest severity
     // (and refuses to call an INCOMPLETE run clean), but it only ever wrote that verdict into

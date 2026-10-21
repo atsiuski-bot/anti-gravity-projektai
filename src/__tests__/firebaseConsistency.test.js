@@ -580,6 +580,7 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     // Badge name + tier, name-only (no tier), and the empty fallback.
     achievement: [{ badgeName: 'Ištvermė', tierName: 'Sidabras' }, { badgeName: 'Ištvermė' }, {}],
     task_overdue: [{ taskTitle: 'Užduotis' }, {}],
+    task_snooze_ended: [{ taskTitle: 'Užduotis' }, {}],
   };
 
   it('the registry and the server switch cover the same set of types', () => {

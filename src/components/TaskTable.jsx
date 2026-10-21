@@ -17,6 +17,8 @@ import AcceptedByChip from './task/AcceptedByChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
 import TaskFlagBadges from './task/TaskFlagBadges';
+import SnoozeBadge from './task/SnoozeBadge';
+import SnoozeSheet from './task/SnoozeSheet';
 import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES, parseTimeStringToMinutes } from '../utils/timeUtils';
@@ -33,6 +35,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { isSelfDirectedTask } from '../utils/selfDirectedTask';
 import { canFinishForAssignee } from '../utils/taskActionVisibility';
 import { finishTaskForAssignee } from '../utils/managerFinishTask';
+import { canSnoozeTask } from '../utils/taskSnooze';
 
 // ---------------------------------------------------------------------------------------------
 // Desktop data-grid header controls. Rendered only when the parent passes `gridControls`; without
@@ -135,6 +138,8 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
     // the task object) so the open sheet always reflects the live task — comments added, time
     // ticked, status changed — instead of a stale snapshot.
     const [detailTaskId, setDetailTaskId] = useState(null);
+    // The "Atidėti iki" sheet, opened from the detail sheet (ADR 0033).
+    const [snoozeTarget, setSnoozeTarget] = useState(null);
 
     // Confirmation dialog targets (replace window.confirm — §8). Each destructive action gates
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
@@ -447,6 +452,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
     const confirmFromDetail = (taskId) => { closeDetail(); handleConfirmTask(taskId); };
     const finishForOtherFromDetail = (task) => { closeDetail(); setFinishForOtherError(''); setFinishForOtherTarget(task); };
     const approveFromDetail = (taskId) => { closeDetail(); handleApproveTask(taskId); };
+    const snoozeFromDetail = (task) => { closeDetail(); setSnoozeTarget(task); };
     const openSubModalFromDetail = (type) => (task) => { closeDetail(); setActiveModal({ type, taskId: task.id }); };
 
     // Drag-to-reorder is injected from a lazy module (see ReorderableTaskTable) so this component never
@@ -540,6 +546,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 <AcceptedByChip task={task} />
                                 <TaskFlagBadges task={task} />
+                                <SnoozeBadge task={task} />
                                 {task.tag && (
                                     <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-feedback-info-soft text-feedback-info-text border border-feedback-info-border">
                                         {task.tag}
@@ -744,6 +751,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                         {/* Worker attention flags — shown only while raised; the whole row is
                                             tinted to match (getStatusStyle). */}
                                         <TaskFlagBadges task={task} size="sm" className="mt-1" />
+                                        <SnoozeBadge task={task} size="sm" className="mt-1" />
                                         {/* One muted line: the indicators lead, the manager closes it — so a
                                             deadline / urgent / comment glyph rides IN FRONT of "Vadovas" instead
                                             of dropping onto its own extra row and making the task taller. */}
@@ -936,9 +944,12 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                 onConfirm={confirmFromDetail}
                 onFinish={detailTask && canFinishForAssignee({ task: detailTask, currentUser, userData, role, userRole }) ? finishForOtherFromDetail : undefined}
                 onApprove={approveFromDetail}
+                onSnooze={detailTask && canSnoozeTask({ task: detailTask, currentUser, isManager: canManage, isRunning: isTaskRunning(detailTask) }) ? snoozeFromDetail : undefined}
                 onOpenChecklist={openSubModalFromDetail('checklist')}
                 onOpenTimeAdjustments={openSubModalFromDetail('timeAdjustments')}
             />
+
+            {snoozeTarget && <SnoozeSheet task={snoozeTarget} onClose={() => setSnoozeTarget(null)} />}
 
             <DeleteConfirmationModal
                 isOpen={!!deleteModalTask}

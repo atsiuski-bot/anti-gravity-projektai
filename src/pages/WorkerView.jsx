@@ -7,6 +7,8 @@ import PriorityGroupedCards from '../components/task/PriorityGroupedCards';
 import TaskModal from '../components/TaskModal';
 import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
 import CompletedTodayDisclosure from '../components/CompletedTodayDisclosure';
+import SnoozedTasksDisclosure from '../components/task/SnoozedTasksDisclosure';
+import { useSnoozeSplit } from '../hooks/useSnoozeSplit';
 
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, scopeCompletedToday } from '../utils/taskUtils';
@@ -320,6 +322,11 @@ export default function WorkerView() {
         return result;
     }, [tasks, filterTag, debouncedSearch, pendingApprovalIds]);
 
+    // Snoozed ("Atidėta", ADR 0033) tasks leave the active list for the collapsed section below it,
+    // and come back by themselves at their return instant.
+    const { active: activeTasks, snoozed: snoozedTasks } = useSnoozeSplit(sortedTasks);
+    const filtersActive = Boolean(filterTag || debouncedSearch.trim());
+
     // The roster handed to Reports must be the FIRESTORE user document, never the Firebase Auth
     // object. Every consumer keys on the Firestore shape: DailyStatistics derives the live "⏳
     // (Vykdoma)" band from `u.activeSession` matched by `u.id`, and reportData/Reports look up
@@ -396,15 +403,17 @@ export default function WorkerView() {
                     <div className="rounded-card border border-line bg-surface-card shadow-sm p-8">
                         <Spinner label="Kraunamos užduotys…" />
                     </div>
-                ) : sortedTasks.length === 0 ? (
+                ) : activeTasks.length === 0 ? (
                     <div className="rounded-card border border-line bg-surface-card shadow-sm">
                         <EmptyState
                             icon={ClipboardList}
-                            title={filterTag || debouncedSearch.trim() ? "Pagal pasirinktus filtrus užduočių nerasta" : "Kol kas užduočių nėra"}
+                            title={filtersActive ? "Pagal pasirinktus filtrus užduočių nerasta" : snoozedTasks.length > 0 ? "Visos užduotys atidėtos" : "Kol kas užduočių nėra"}
                             description={
-                                filterTag || debouncedSearch.trim()
+                                filtersActive
                                     ? "Nė viena užduotis neatitinka pasirinktos žymos ar paieškos frazės."
-                                    : "Kai koordinatorius priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą veiklą ar skambutį mygtukais apačioje."
+                                    : snoozedTasks.length > 0
+                                        ? "Atidėtos užduotys grįš nurodytu laiku. Jas rasite skiltyje „Atidėta“ žemiau."
+                                        : "Kai koordinatorius priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą veiklą ar skambutį mygtukais apačioje."
                             }
                             action={
                                 filterTag || debouncedSearch.trim() ? (
@@ -436,7 +445,7 @@ export default function WorkerView() {
                             a genuinely new or filtered-in card animates. */}
                         <div className="md:hidden">
                             <PriorityGroupedCards
-                                tasks={sortedTasks}
+                                tasks={activeTasks}
                                 onEdit={handleEditTask}
                                 role="worker"
                                 forceOpen={Boolean(filterTag || debouncedSearch.trim())}
@@ -446,7 +455,7 @@ export default function WorkerView() {
                         <div className="hidden md:block">
                             <PriorityGroupedCards
                                 variant="table"
-                                tasks={sortedTasks}
+                                tasks={activeTasks}
                                 onEdit={handleEditTask}
                                 role="worker"
                                 forceOpen={Boolean(filterTag || debouncedSearch.trim())}
@@ -454,6 +463,14 @@ export default function WorkerView() {
                         </div>
                     </>
                 )}
+
+                {/* Parked work — collapsed, with the soonest return time on its header. */}
+                <div className="md:hidden">
+                    <SnoozedTasksDisclosure tasks={snoozedTasks} onEdit={handleEditTask} role="worker" forceOpen={filtersActive} />
+                </div>
+                <div className="hidden md:block">
+                    <SnoozedTasksDisclosure variant="table" tasks={snoozedTasks} onEdit={handleEditTask} role="worker" forceOpen={filtersActive} />
+                </div>
 
                 {/* Today's finished work — tasks, greiti darbai and skambučiai — collapsed at the
                     bottom, below the active list. */}

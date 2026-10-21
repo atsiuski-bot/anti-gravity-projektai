@@ -439,6 +439,46 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         );
     });
 
+    // ADR 0033: snooze is plain task fields, so the assignee may park their OWN task even once it is
+    // approved (edit-locked) — and bring it back — with no rules change. Seeded 'approved' with a
+    // manager so the S4 definition pin is live and is proven not to bite the snooze fields.
+    it('ADR 0033: the assignee may snooze and un-snooze their approved task', async () => {
+        await seed({
+            'tasks/snz-a': {
+                id: 'snz-a',
+                title: 'Snooze A',
+                priority: 'MEDIUM',
+                managerId: 'mgr-legit',
+                assignedUserId: WORKER_ID,
+                status: 'approved',
+                teamManagerIds: ['mgr-legit'],
+            },
+        });
+        const ref = doc(workerDb(), 'tasks', 'snz-a');
+        await assertSucceeds(updateDoc(ref, {
+            snoozedUntil: '2026-10-26T05:00:00.000Z',
+            snoozedBy: WORKER_ID,
+            snoozedByName: 'Rules Worker',
+            snoozedAt: '2026-10-21T07:00:00.000Z',
+            snoozeReason: 'Laukiu medžiagų',
+            snoozeWakePending: true,
+            updatedAt: '2026-10-21T07:00:00.000Z',
+        }));
+        await assertSucceeds(updateDoc(ref, {
+            snoozedUntil: null, snoozedBy: null, snoozedByName: null, snoozedAt: null,
+            snoozeReason: null, snoozeWakePending: false, updatedAt: '2026-10-21T07:05:00.000Z',
+        }));
+    });
+
+    it('ADR 0033: a worker may not snooze a colleague’s task', async () => {
+        await seed({
+            'tasks/snz-b': { id: 'snz-b', title: 'Snooze B', assignedUserId: OTHER_ID, status: 'approved', teamManagerIds: ['mgr-legit'] },
+        });
+        await assertFails(
+            updateDoc(doc(workerDb(), 'tasks', 'snz-b'), { snoozedUntil: '2026-10-26T05:00:00.000Z', snoozeWakePending: true })
+        );
+    });
+
     // TS-5 (MED): a (non-admin) manager may disable a worker but NOT an admin — otherwise one manager
     // credential could disable every admin, and a disabled admin has no in-app path to re-enable.
     it('TS-5: an unscoped manager cannot disable an admin account', async () => {
@@ -971,12 +1011,12 @@ describeEmulator('audit 2026-07-22 — notification forgery + audit-trail re-poi
             await assertFails(addDoc(collection(db, 'request_notifications'), forged()));
         });
 
-        it('exploit: the other seven server-only types are refused too', async () => {
+        it('exploit: the other eight server-only types are refused too', async () => {
             const db = workerDb();
             for (const type of [
                 'achievement', 'task_priority_escalated', 'task_overdue',
                 'session_auto_closed', 'timer_running_check', 'recurring_reassign',
-                'task_over_estimate',
+                'task_over_estimate', 'task_snooze_ended',
             ]) {
                 await assertFails(addDoc(collection(db, 'request_notifications'), forged({ type })));
             }

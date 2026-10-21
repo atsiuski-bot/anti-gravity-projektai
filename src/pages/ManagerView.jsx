@@ -14,6 +14,8 @@ import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import CompletedTodayDisclosure from '../components/CompletedTodayDisclosure';
+import SnoozedTasksDisclosure from '../components/task/SnoozedTasksDisclosure';
+import { useSnoozeSplit } from '../hooks/useSnoozeSplit';
 import RecurringTasksPanel from '../components/RecurringTasksPanel';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
@@ -125,6 +127,13 @@ export default function ManagerView() {
         searchSuggestions,
         sortBy, setSortBy
     } = useTaskFiltering(tasks);
+    // Snoozed team work (ADR 0033) leaves the list for the "Atidėta" section below it — still
+    // visible to the manager, with who parked it and until when.
+    const { active: teamActiveTasks, snoozed: teamSnoozedTasks } = useSnoozeSplit(sortedTasks);
+    // The personal "Mano darbai" list, recomputed per render as before (its day window reads the
+    // clock), then split the same way.
+    const myVisibleTasks = scopePersonalDayWindow(filterTasksByVisibility(ownTasks));
+    const { active: myActiveTasks, snoozed: mySnoozedTasks } = useSnoozeSplit(sortWorkerTasks(myVisibleTasks));
 
     // Desktop-only priority board toggle. The choice is persisted on the user doc (teamBoardView),
     // so it follows the manager across sessions and devices. Firestore latency-compensates the local
@@ -634,7 +643,7 @@ export default function ManagerView() {
                     />
                 </div>
 
-                {sortedTasks.length === 0 ? (
+                {teamActiveTasks.length === 0 ? (
                     <div className="bg-surface-card rounded-card shadow-sm border border-line p-6">
                         <EmptyState
                             icon={ClipboardList}
@@ -680,7 +689,7 @@ export default function ManagerView() {
                         <ErrorBoundary boundaryName="manager:reorder-cards">
                             <React.Suspense fallback={<Spinner />}>
                                 <SortableTaskCardList
-                                    tasks={sortedTasks}
+                                    tasks={teamActiveTasks}
                                     onEditTask={handleEditTask}
                                     role="manager"
                                     dragEnabled={dragEnabled}
@@ -689,7 +698,7 @@ export default function ManagerView() {
                         </ErrorBoundary>
                     ) : (
                         <div className="space-y-4">
-                            {sortedTasks.map(task => (
+                            {teamActiveTasks.map(task => (
                                 <TaskCard
                                     key={task.id}
                                     task={task}
@@ -703,7 +712,7 @@ export default function ManagerView() {
                     /* Desktop + board toggle on → the four-column drag-and-drop priority board. */
                     <ErrorBoundary boundaryName="manager:priority-board">
                         <React.Suspense fallback={<Spinner />}>
-                            <PriorityBoard tasks={sortedTasks} onEditTask={handleEditTask} />
+                            <PriorityBoard tasks={teamActiveTasks} onEditTask={handleEditTask} />
                         </React.Suspense>
                     </ErrorBoundary>
                 ) : reorderActive ? (
@@ -711,7 +720,7 @@ export default function ManagerView() {
                     <ErrorBoundary boundaryName="manager:reorder-table">
                         <React.Suspense fallback={<Spinner />}>
                             <ReorderableTaskTable
-                                tasks={sortedTasks}
+                                tasks={teamActiveTasks}
                                 onEdit={handleEditTask}
                                 role="manager"
                                 gridControls={teamGridControls}
@@ -721,12 +730,21 @@ export default function ManagerView() {
                     </ErrorBoundary>
                 ) : (
                     <TaskTable
-                        tasks={sortedTasks}
+                        tasks={teamActiveTasks}
                         onEdit={handleEditTask}
                         role="manager"
                         gridControls={teamGridControls}
                     />
                 )}
+                {/* The team's parked work — collapsed, still in reach (who parked it, until when). */}
+                <SnoozedTasksDisclosure
+                    variant={viewMode === 'mobile' ? 'cards' : 'table'}
+                    tasks={teamSnoozedTasks}
+                    onEdit={handleEditTask}
+                    role="manager"
+                    idSuffix="team"
+                    forceOpen={Boolean(searchText.trim())}
+                />
                 </div>
 
                 {/* Sub-tab 3 — Pasikartojančios užduotys: recurring-task management (turn shared
@@ -840,8 +858,9 @@ export default function ManagerView() {
                     // Same split as the worker's Veiklos tab: the list holds only still-active
                     // work, while today's finished tasks / greiti darbai / skambučiai move into the
                     // collapsed "Padaryti darbai" section below it.
-                    const activeMyTasks = scopePersonalDayWindow(filterTasksByVisibility(ownTasks));
-                    const sortedMyTasks = sortWorkerTasks(activeMyTasks);
+                    // Parked (snoozed) own tasks sit in the "Atidėta" section below the list.
+                    const activeMyTasks = myVisibleTasks;
+                    const sortedMyTasks = myActiveTasks;
                     const myCompletedToday = scopeCompletedToday(ownTasks);
 
                     return (
@@ -871,6 +890,13 @@ export default function ManagerView() {
                                     role="worker" // Mimic worker view columns/actions
                                 />
                             )}
+                            <SnoozedTasksDisclosure
+                                variant={viewMode === 'mobile' ? 'cards' : 'table'}
+                                tasks={mySnoozedTasks}
+                                onEdit={handleEditTask}
+                                role="worker"
+                                idSuffix="mine"
+                            />
                             <CompletedTodayDisclosure tasks={myCompletedToday} />
                         </>
                     );

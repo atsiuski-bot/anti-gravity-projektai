@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Calendar, Undo2, CheckCircle2, CheckCheck, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
+import { Clock, Calendar, Undo2, CheckCircle2, CheckCheck, AlignLeft, ListChecks, Paperclip, AlarmClockOff } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -34,6 +34,11 @@ import { isSecondarySessionType, pausedTaskInStack } from '../utils/sessionNesti
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { hapticSuccess } from '../utils/haptics';
+import SnoozeBadge from './task/SnoozeBadge';
+import SnoozeSheet from './task/SnoozeSheet';
+import SwipeToSnooze from './task/SwipeToSnooze';
+import { canSnoozeTask, isTaskSnoozed } from '../utils/taskSnooze';
+import { useSnoozeActions } from '../hooks/useSnoozeActions';
 
 /**
  * DEADLINE_TONE — colour for the relative-deadline chip (icon + text together). The tone comes
@@ -73,6 +78,8 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     const [finishForOtherError, setFinishForOtherError] = useState('');
     const [finishingForOther, setFinishingForOther] = useState(false);
     const [actionError, setActionError] = useState('');
+    const [showSnooze, setShowSnooze] = useState(false);
+    const { unsnooze } = useSnoozeActions();
     // One-shot completion celebration: fires only on a live not-done -> done transition while
     // the card is mounted, so already-finished cards (history) never replay it.
     const [justCompleted, setJustCompleted] = useState(false);
@@ -339,6 +346,11 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     const canFinishForOther = canFinishForAssignee({ task, currentUser, userData, role, userRole });
     const canRevert = canRevertTask({ task, role, userRole });
     const sessionType = task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : null);
+    // Snooze ("Atidėti iki", ADR 0033) is an active-list action only: not on the sign-off / archive
+    // surfaces that hand in their own action set.
+    const canSnooze = surface === 'active' && !signoffOnly && !actionsProp
+        && canSnoozeTask({ task, currentUser, isManager, isRunning });
+    const snoozed = canSnooze && isTaskSnoozed(task);
 
     // Footer actions, data-driven so the SAME list feeds both the visible (adaptive) row and the
     // hidden measuring mirror. Order: revert → approve/confirm → edit → delete, so the
@@ -361,6 +373,10 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
         key: 'finish-for-other', label: 'Užbaigti ir priduoti', compactLabel: 'Užbaigti',
         icon: CheckCheck, variant: 'primary',
         onClick: (e) => { e.stopPropagation(); setFinishForOtherError(''); setConfirmFinishForOther(true); },
+    });
+    if (snoozed) actions.push({
+        key: 'unsnooze', label: 'Grąžinti dabar', compactLabel: 'Grąžinti', icon: AlarmClockOff, variant: 'secondary',
+        onClick: (e) => { e.stopPropagation(); unsnooze(task); },
     });
     // Edit / comment / delete are NOT row actions — they live in the task detail sheet (open on tap),
     // so the footer carries only the lifecycle sign-off actions and fits one line.
@@ -389,12 +405,17 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
         // Same door as the footer's "Užbaigti" — the preview must offer it too, since a coordinator
         // reaching a Meistras's task usually opens it to read the detail before closing it.
         onFinish: canFinishForOther ? () => { setShowDetail(false); setFinishForOtherError(''); setConfirmFinishForOther(true); } : undefined,
+        // The sheet swaps in for the preview (modals never stack).
+        onSnooze: canSnooze ? () => { setShowDetail(false); setShowSnooze(true); } : undefined,
     };
 
     const openDetail = () => setShowDetail(true);
 
     return (
         <>
+            {/* Swipe left = "Atidėti" shortcut (mobile lists). Not on the board, whose cards carry a
+                drag handle, and off whenever this task cannot be snoozed. */}
+            <SwipeToSnooze enabled={canSnooze && !leadingHandle} onSnooze={() => setShowSnooze(true)}>
             <div
                 onClick={openDetail}
                 className={clsx(
@@ -443,6 +464,10 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                         {/* Worker-raised attention flags ("Reikia vadovo" / "Laukiama") — icon + label
                             pills, shown only while a flag is raised. The whole card is tinted to match. */}
                         <TaskFlagBadges task={task} className="mb-2" />
+
+                        {/* Snooze state — "Atidėta iki …" while parked, "Grįžo iš atidėjimo" the day
+                            it comes back. Nothing for a task that was never snoozed. */}
+                        <SnoozeBadge task={task} className="mb-2" />
 
                         {/* Priority first, directly under the title — with any deadline / tag on the
                             same line. */}
@@ -614,6 +639,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                     <TaskActionRow actions={footerActions} className={surface === 'active' ? 'mt-2' : ''} />
                 </div>
             </div>
+            </SwipeToSnooze>
 
             {/* The shared task preview — opens on tap; read-only with inline comment + photo adding.
                 Edit / approve / revert / delete hand back to this card's own dialogs and the form. */}
@@ -632,6 +658,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                 onApprove={detail.onApprove ? (id) => { setShowDetail(false); detail.onApprove(id); } : undefined}
                 onConfirm={detail.onConfirm ? (id) => { setShowDetail(false); detail.onConfirm(id); } : undefined}
                 onFinish={detail.onFinish}
+                onSnooze={detail.onSnooze}
                 onOpenChecklist={() => { setShowDetail(false); setActiveModal('checklist'); }}
                 onOpenTimeAdjustments={isManager ? () => { setShowDetail(false); setActiveModal('timeAdjustments'); } : undefined}
             />
@@ -652,6 +679,8 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                 onClose={() => setActiveModal(null)}
                 task={task}
             />
+
+            {showSnooze && <SnoozeSheet task={task} onClose={() => setShowSnooze(false)} />}
 
             <DeleteConfirmationModal
                 isOpen={showDeleteModal}
@@ -724,5 +753,8 @@ export default React.memo(TaskCard, (prevProps, nextProps) => {
     // Attention flags drive both the badges and the whole-card tint, so a flip must re-render.
     if (!!prev.needsManager !== !!next.needsManager) return false;
     if (!!prev.waiting !== !!next.waiting) return false;
+    // Snooze state drives the badge, the "Grąžinti dabar" action and the swipe.
+    if (prev.snoozedUntil !== next.snoozedUntil) return false;
+    if (prev.snoozeReason !== next.snoozeReason) return false;
     return true;
 });
