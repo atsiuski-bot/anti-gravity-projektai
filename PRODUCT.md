@@ -30,4 +30,4 @@ Do not resemble a decorative SaaS dashboard, a gamified productivity toy, or an 
 
 ## Accessibility & Inclusion
 
-WCAG 2.1 AA is mandatory. User-readable text is at least 12 px, primary information at least 14 px, touch targets are at least 44 by 44 px, focus is visible, normal-text contrast is at least 4.5:1, and color is never the only state signal. Motion respects reduced-motion preferences. Critical status and error messages must remain understandable to workers with limited technical vocabulary and under poor field conditions.
+WCAG 2.2 AA is mandatory. User-readable text is at least 12 px, primary information at least 14 px, touch targets are at least 44 by 44 px, focus is visible, normal-text contrast is at least 4.5:1, and color is never the only state signal. Motion respects reduced-motion preferences. Critical status and error messages must remain understandable to workers with limited technical vocabulary and under poor field conditions.

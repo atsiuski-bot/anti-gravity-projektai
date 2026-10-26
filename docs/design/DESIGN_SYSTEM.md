@@ -49,7 +49,7 @@ hardcoded values as legacy to be migrated, not as precedent.
    [`tokens.md`](./tokens.md). A raw hex or an arbitrary `text-[9px]` in a component is a bug.
 5. **Color is never the only signal.** Because state is encoded in color (§4), every
    stateful surface also carries **text and/or an icon** (WCAG 1.4.1).
-6. **Accessibility is a gate, not a nicety.** WCAG 2.1 **AA is mandatory** (§7). A change
+6. **Accessibility is a gate, not a nicety.** WCAG 2.2 **AA is mandatory** (§7). A change
    that regresses contrast, target size, focus, or text size is not "done".
 
 ---
@@ -173,7 +173,7 @@ viewer / topmost `70`.
 
 ---
 
-## 7. Accessibility — WCAG 2.1 AA (mandatory gate)
+## 7. Accessibility — WCAG 2.2 AA (mandatory gate)
 
 Every UI change is held to these. CI/review should reject regressions.
 

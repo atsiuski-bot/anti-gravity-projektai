@@ -15,7 +15,10 @@ before changing anything.
   code, titles, manifests, or copy.
 - **Design system is binding:** any UI change conforms to
   [`docs/design/DESIGN_SYSTEM.md`](./docs/design/DESIGN_SYSTEM.md) and
-  [`docs/design/tokens.md`](./docs/design/tokens.md). **WCAG 2.1 AA is a mandatory gate**
+  [`docs/design/tokens.md`](./docs/design/tokens.md), together with the shared
+  [work-tools UX standard](./docs/design/work-tools-ux-standard.md) (a copy; the local design
+  documents and the timer/session view win, differences go to the owner as proposed
+  exceptions — see CLAUDE.md → "Shared work-tools UX standard"). **WCAG 2.2 AA is a mandatory gate**
   (≥12 px text, ≥44 px touch targets, ≥4.5:1 contrast, visible focus, color never the sole
   signal).
 - **No secrets in git:** no API keys, tokens, or credentials.
