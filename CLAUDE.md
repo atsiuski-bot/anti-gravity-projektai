@@ -127,7 +127,7 @@ All UI work conforms to [`docs/design/DESIGN_SYSTEM.md`](./docs/design/DESIGN_SY
 
 - **Calm canvas, loud state.** Keep the bold whole-screen session color, but always pair it
   with a text label + icon, and source it from one `SESSION_COLORS` map.
-- **WCAG 2.1 AA is mandatory:** ≥12 px readable text, ≥44 px touch targets, ≥4.5:1 contrast,
+- **WCAG 2.2 AA is mandatory:** ≥12 px readable text, ≥44 px touch targets, ≥4.5:1 contrast,
   visible focus rings, reduced-motion support, accessible names, color never the sole signal.
 - **Tokens, not magic numbers.** No raw hex or arbitrary `text-[9px]` in components.
 - **Canonical components only:** `Button`, `IconButton`, `Card`, `Modal`, `ConfirmDialog`,
@@ -135,6 +135,28 @@ All UI work conforms to [`docs/design/DESIGN_SYSTEM.md`](./docs/design/DESIGN_SY
 - **Dual density:** workers get spacious mobile cards; managers may get denser tables on
   `md+`. On a phone, data is cards — never a horizontally-scrolling table.
 - Use the **§11 checklist** in the design system before declaring a UI change done.
+
+### Shared work-tools UX standard
+
+Gildija is one of the owner's work tools (with the Octopus apps and the Kostiumoteka staff
+system). They share one UX standard — same logic, own mark: the same buttons, words, menu
+place and colour meanings, while each app keeps its name, icon and accent. Its copy is
+[`docs/design/work-tools-ux-standard.md`](./docs/design/work-tools-ux-standard.md); read it
+before any UI, wording or visual change, together with `DESIGN_SYSTEM.md` and `tokens.md`.
+
+- **Gildija is the reference** the other apps move towards, so most of the standard already
+  describes Gildija as it is.
+- **Precedence:** `DESIGN_SYSTEM.md`, `tokens.md` and the protected contracts (the timer and
+  the full-screen session view) win. A difference you meet is recorded as a proposed
+  exception for the owner in the PR description (standard §10), never resolved silently.
+- **It never widens a task.** It governs only what the task itself adds or changes; existing
+  screens keep their words and colours unless the owner's request names them.
+- **Gildija's registered exceptions** (standard §10: the offline banner and timer error
+  wording, the double meaning of „Atšaukti“, the green confirm button) change only together
+  with the training material („Meistro vadovas“ and the video), never on sight. The timer
+  and session view are never touched because of the standard.
+- The standard takes precedence over a design skill's general advice to make every project
+  look different; the copy is edited only by a refresh PR from the canonical version.
 
 ## Quality gate
 
