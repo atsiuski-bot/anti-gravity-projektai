@@ -78,15 +78,19 @@ const draftSecrets = (mod.parseTaskDraft.__endpoint.secretEnvironmentVariables |
 assert.deepStrictEqual(draftSecrets, ['OPENROUTER_API_KEY'], 'parseTaskDraft lost its defineSecret binding');
 const suggestSecrets = (mod.suggestTimeCorrection.__endpoint.secretEnvironmentVariables || []).map((s) => s.key);
 assert.deepStrictEqual(suggestSecrets, ['OPENROUTER_API_KEY'], 'suggestTimeCorrection lost its defineSecret binding');
+// monthlyPulse without its token would refuse every caller (fail closed) — still a broken report.
+const pulseSecrets = (mod.monthlyPulse.__endpoint.secretEnvironmentVariables || []).map((s) => s.key);
+assert.deepStrictEqual(pulseSecrets, ['PULSE_READ_TOKEN'], 'monthlyPulse lost its defineSecret binding');
 
-// SHAPE LEDGER — update these four numbers deliberately when a function is added or removed.
+// SHAPE LEDGER — update these numbers deliberately when a function is added or removed.
 // The counts are not busywork: they are the only thing that catches an export DISAPPEARING (a bad
 // merge, a rename, a module-scope throw swallowed by a refactor). Without them, "every export has
 // an __endpoint" stays trivially true for the survivors while the deploy quietly drops a function.
-const EXPECTED = { total: 26, eventTrigger: 15, callableTrigger: 4, scheduleTrigger: 7 };
+const EXPECTED = { total: 27, eventTrigger: 15, callableTrigger: 4, scheduleTrigger: 7, httpsTrigger: 1 };
 assert.strictEqual(names.length, EXPECTED.total, `expected ${EXPECTED.total} deployable functions, found ${names.length} — if this change was intentional, update the ledger in ${path.basename(__filename)}`);
 assert.strictEqual(counts.eventTrigger, EXPECTED.eventTrigger, `eventTrigger count moved to ${counts.eventTrigger} — update the ledger if intentional`);
 assert.strictEqual(counts.callableTrigger, EXPECTED.callableTrigger, `callableTrigger count moved to ${counts.callableTrigger} — update the ledger if intentional`);
 assert.strictEqual(counts.scheduleTrigger, EXPECTED.scheduleTrigger, `scheduleTrigger count moved to ${counts.scheduleTrigger} — update the ledger if intentional`);
+assert.strictEqual(counts.httpsTrigger, EXPECTED.httpsTrigger, `httpsTrigger count moved to ${counts.httpsTrigger} — update the ledger if intentional`);
 
-console.log(`discovery.test: OK — ${names.length} endpoints (${counts.eventTrigger} event, ${counts.callableTrigger} callable, ${counts.scheduleTrigger} schedule), all gcfv2 in europe-west1`);
+console.log(`discovery.test: OK — ${names.length} endpoints (${counts.eventTrigger} event, ${counts.callableTrigger} callable, ${counts.scheduleTrigger} schedule, ${counts.httpsTrigger} https), all gcfv2 in europe-west1`);

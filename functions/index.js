@@ -16,7 +16,7 @@
  */
 
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require('firebase-functions/v2/firestore');
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
@@ -29,6 +29,7 @@ const { appendSystemDecision } = require('./decisionLog');
 const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption, isReferentialTaskSession, isCorrectedSession, findCounterDrift, claimedTaskRun, classifySessionDisagreements } = require('./integrityScans');
 const { lithuanianDay, currentWorkDay, taskArchivable } = require('./workDay');
 const { HHMM, sanitizeCorrectionSuggestion } = require('./correctionSuggestion');
+const { pulseWindow, checkBearer, parsePulseRequest, buildPulse } = require('./monthlyPulse');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -4023,5 +4024,69 @@ exports.suggestTimeCorrection = onCall(
         }
 
         return sanitizeCorrectionSuggestion(parsed, rows, tasks);
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Monthly workshop pulse — read-only aggregate for the founder's report (ADR 0034)
+// ---------------------------------------------------------------------------
+//
+// The "Dirbtuvių pulsas" report used to read raw rows over the project OWNER's CLI login on the
+// founder's PC. This endpoint answers with the computed numbers only (monthlyPulse.js), so the
+// reader holds one narrow token instead of a Google credential. It is the only HTTPS surface in
+// this file that no Firebase Auth user calls: the bearer token IS the caller's identity, so it is
+// checked before anything else, and the function writes nothing.
+//
+// POST { month: 'YYYY-MM', userIds: [uid, ...] } with `Authorization: Bearer <PULSE_READ_TOKEN>`.
+// The team list stays with the reader (names and uids are kept out of this public repo); the
+// response is keyed by uid and covers only the uids asked for. Rotation = set a new secret version
+// and redeploy this function; the old token stops working with the new revision.
+const PULSE_READ_TOKEN = defineSecret('PULSE_READ_TOKEN');
+
+async function pulseRows(query) {
+    return (await query.get()).docs.map((d) => d.data());
+}
+
+exports.monthlyPulse = onRequest(
+    { secrets: [PULSE_READ_TOKEN], timeoutSeconds: 120 },
+    async (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        if (!checkBearer(req.get('authorization'), PULSE_READ_TOKEN.value())) {
+            res.status(401).json({ error: 'unauthorized' });
+            return;
+        }
+        if (req.method !== 'POST') {
+            res.status(405).json({ error: 'method_not_allowed' });
+            return;
+        }
+        const parsed = parsePulseRequest(req.body);
+        if (!parsed.ok) {
+            res.status(400).json({ error: parsed.error });
+            return;
+        }
+        const win = pulseWindow(parsed.month);
+        try {
+            const perUser = {};
+            // Sequential per person, four indexed reads each — the same scoped queries the old
+            // collector ran, so they ride the composite indexes that already exist.
+            for (const uid of parsed.userIds) {
+                const [sessions, breaks, archived, active] = await Promise.all([
+                    pulseRows(db.collection('work_sessions').where('userId', '==', uid)
+                        .where('date', '>=', win.from).where('date', '<=', win.to)),
+                    pulseRows(db.collection('break_sessions').where('userId', '==', uid)
+                        .where('date', '>=', win.from).where('date', '<=', win.to)),
+                    pulseRows(db.collection('archived_tasks').where('assignedUserId', '==', uid)
+                        .where('archivedAt', '>=', win.archivedFrom)),
+                    pulseRows(db.collection('tasks').where('assignedUserId', '==', uid)),
+                ]);
+                perUser[uid] = { sessions, breaks, tasks: [...archived, ...active] };
+            }
+            const pulse = buildPulse(win, perUser, new Date().toISOString());
+            logger.info('monthlyPulse served', { month: win.target, users: parsed.userIds.length });
+            res.status(200).json(pulse);
+        } catch (err) {
+            logger.error('monthlyPulse failed', { month: win.target, err: err.message });
+            res.status(500).json({ error: 'internal' });
+        }
     }
 );
