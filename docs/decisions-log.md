@@ -50,6 +50,7 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   to the manager as a plain comment). Reason: every call sent typed text plus worker names, day
   rows and task titles to OpenRouter, a processor with no DPA — owner answer to the Octopus
   ecosystem plan's D11 (2026-10-25: switch off if unused; the change needs Audrius's consent).
+  **Audrius consented on 2026-10-27** (relayed by the owner in the D11 session).
   The code and ADR 0015 / 0032 designs are kept; re-enabling = flip both constants + a functions
   deploy, after a DPA (or an EEA-hosted model) is in place. Live effect needs the post-merge
   human-only functions deploy; until then the client hides the entry points and the server still
