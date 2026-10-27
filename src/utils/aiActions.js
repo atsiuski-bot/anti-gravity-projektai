@@ -2,6 +2,19 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 
 /**
+ * Kill switch for both AI entry points (the ✨ AI button in the create form, the "Kita" AI step of
+ * "Pranešti apie laiko klaidą"). Off since 2026-10-27: both send worker/task text to OpenRouter, a
+ * processor with no DPA (Octopus ecosystem plan D11). While false the UI hides them and the
+ * wrappers below refuse without calling the server. MIRROR of AI_CALLABLES_ENABLED in
+ * functions/index.js, which refuses server-side; flip both together.
+ */
+export const AI_CALLABLES_ENABLED = false;
+
+const assertAiEnabled = () => {
+    if (!AI_CALLABLES_ENABLED) throw new Error('AI is switched off.');
+};
+
+/**
  * Parse a manager's free-text into a structured task DRAFT via the server callable (which forwards
  * to OpenRouter / google/gemini-3.1-flash-lite with a server-side key — same pattern as GODSGLOOM).
  * The draft is filled into the create form for the manager to confirm; AI never writes a task.
@@ -14,6 +27,7 @@ import { functions } from '../firebase';
  *   when no time was stated and the caller has no history for the title (history > guess).
  */
 export const parseTaskText = async (text, roster) => {
+    assertAiEnabled();
     const fn = httpsCallable(functions, 'parseTaskDraft');
     const res = await fn({ text, roster });
     return res.data;
@@ -28,6 +42,7 @@ export const parseTaskText = async (text, roster) => {
  * @returns {Promise<{kind:string, rowId:string, taskId:string, start:string, end:string, summary:string}>}
  */
 export const suggestTimeCorrection = async (payload) => {
+    assertAiEnabled();
     const fn = httpsCallable(functions, 'suggestTimeCorrection');
     const res = await fn(payload);
     return res.data;

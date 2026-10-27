@@ -11,7 +11,7 @@ import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { deriveSessionFields, validateSelfReduction, reduceOwnWorkSession } from '../utils/sessionEditActions';
 import { notifyMany } from '../utils/notify';
 import { logError } from '../utils/errorLog';
-import { suggestTimeCorrection } from '../utils/aiActions';
+import { suggestTimeCorrection, AI_CALLABLES_ENABLED } from '../utils/aiActions';
 import {
     CORRECTION_KINDS as K,
     CORRECTION_KIND_LABELS,
@@ -31,7 +31,8 @@ import {
 // choice opens a short form that is already filled from the day's own rows (the gap the timer missed,
 // the row that ran too long), so the common case is two taps. Detail — a comment — is one expander
 // away, never required except for "Kita", where the AI turns the worker's words into the same
-// structured fix and asks "Ar teisingai supratome?" before anything is sent.
+// structured fix and asks "Ar teisingai supratome?" before anything is sent. While the AI is switched
+// off (AI_CALLABLES_ENABLED), "Kita" sends the worker's words to the manager as they are.
 //
 // What each choice DOES is decided in utils/timeCorrectionRequest.js: giving time back applies on
 // the spot (ADR 0023); adding time becomes a request the manager answers with Taip / Ne.
@@ -263,7 +264,10 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
         return { error: 'row' };
     }, [kind, startISO, endISO, startStr, endStr, selectedRow, works, breaks, note]);
 
-    const blockedByManager = check.path === 'request' && !canRequest;
+    // "Kita" asks the AI first only while it is switched on; otherwise its button sends the comment
+    // straight to the manager, so it needs a recipient like any other request.
+    const aiStep = kind === K.OTHER && AI_CALLABLES_ENABLED;
+    const blockedByManager = (check.path === 'request' || (kind === K.OTHER && !aiStep)) && !canRequest;
 
     const sendRequest = async (fields) => {
         await notifyMany(managerIds, buildCorrectionRequest({ day, worker: { uid: worker.uid, name: worker.name }, note, ...fields }));
@@ -414,17 +418,17 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
     } else if (step !== 'pick') {
         const primaryLabel = check.path === 'reduce'
             ? 'Pataisyti dabar'
-            : kind === K.OTHER ? 'Toliau' : 'Siųsti vadovui';
+            : aiStep ? 'Toliau' : 'Siųsti vadovui';
         footer = (
             <div className="flex gap-3">
                 {back}
                 <Button
                     variant="primary"
                     fullWidth
-                    icon={kind === K.OTHER ? Sparkles : check.path === 'reduce' ? Clock : Flag}
+                    icon={aiStep ? Sparkles : check.path === 'reduce' ? Clock : Flag}
                     loading={busy}
                     disabled={!!check.error || blockedByManager}
-                    onClick={() => (kind === K.OTHER ? askAi() : submit())}
+                    onClick={() => (aiStep ? askAi() : submit())}
                 >
                     {primaryLabel}
                 </Button>
@@ -639,10 +643,12 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                 {step === K.OTHER && (
                     <>
                         {noteField}
-                        <p className="flex items-start gap-1.5 text-caption text-ink-muted">
-                            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                            Pabandysime suprasti, ką reikia pataisyti, ir parodysime prieš siunčiant.
-                        </p>
+                        {AI_CALLABLES_ENABLED && (
+                            <p className="flex items-start gap-1.5 text-caption text-ink-muted">
+                                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                Pabandysime suprasti, ką reikia pataisyti, ir parodysime prieš siunčiant.
+                            </p>
+                        )}
                     </>
                 )}
 
