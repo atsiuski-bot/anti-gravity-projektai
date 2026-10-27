@@ -43,6 +43,18 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-10-27** — **Both AI callables switched off (`parseTaskDraft`, `suggestTimeCorrection`)**
+  behind one kill switch, `AI_CALLABLES_ENABLED = false`, mirrored in `functions/index.js` (each
+  callable refuses before reading the key or calling out) and `src/utils/aiActions.js` (the ✨ AI
+  button in the create form and the AI step of "Kita" are hidden; "Kita" sends the worker's words
+  to the manager as a plain comment). Reason: every call sent typed text plus worker names, day
+  rows and task titles to OpenRouter, a processor with no DPA — owner answer to the Octopus
+  ecosystem plan's D11 (2026-10-25: switch off if unused; the change needs Audrius's consent).
+  The code and ADR 0015 / 0032 designs are kept; re-enabling = flip both constants + a functions
+  deploy, after a DPA (or an EEA-hosted model) is in place. Live effect needs the post-merge
+  human-only functions deploy; until then the client hides the entry points and the server still
+  answers.
+
 - **2026-10-16** — **Standing duties ("Savaitiniai darbai") are a watermark checklist, not tasks**
   (`src/utils/duties.js`, `src/components/duties/DutiesPanel.jsx`, new `duties` rules block).
   Founder ask: a checklist of recurring admin duties (e.g. a coordinator's "reviews sent") where

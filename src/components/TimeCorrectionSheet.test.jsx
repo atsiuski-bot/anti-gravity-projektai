@@ -16,7 +16,13 @@ vi.mock('firebase/firestore', () => ({
 }));
 vi.mock('../utils/notify', () => ({ notifyMany: vi.fn(() => Promise.resolve()) }));
 vi.mock('../utils/errorLog', () => ({ logError: vi.fn() }));
-vi.mock('../utils/aiActions', () => ({ suggestTimeCorrection: vi.fn() }));
+// The AI kill switch is read at render time, so a getter lets one file cover both states: off (as
+// shipped, D11) by default, on for the tests that pin the AI flow for when it is switched back on.
+const ai = vi.hoisted(() => ({ enabled: false }));
+vi.mock('../utils/aiActions', () => ({
+    suggestTimeCorrection: vi.fn(),
+    get AI_CALLABLES_ENABLED() { return ai.enabled; },
+}));
 vi.mock('../utils/sessionEditActions', async (importOriginal) => ({
     ...(await importOriginal()),
     reduceOwnWorkSession: vi.fn(() => Promise.resolve({ ok: true })),
@@ -79,6 +85,7 @@ describe('TimeCorrectionSheet', () => {
     afterEach(() => {
         act(() => root?.unmount());
         document.body.innerHTML = '';
+        ai.enabled = false;
     });
 
     it('opens on five choices and nothing to type', async () => {
@@ -180,7 +187,30 @@ describe('TimeCorrectionSheet', () => {
         expect(notifyMany).not.toHaveBeenCalled();
     });
 
+    // D11: with the AI switched off, "Kita" must never reach the callable — the worker's words go to
+    // the manager as a plain comment, and nothing on the screen promises an AI step.
+    it('"Kita" with the AI switched off: no AI call, the comment goes straight to the manager', async () => {
+        await render();
+        await click(byText('Kita'));
+        expect(document.body.textContent).not.toContain('Pabandysime suprasti');
+        expect(byText('Toliau')).toBeUndefined();
+        await setValue(document.body.querySelector('textarea'), 'ryte pamiršau paspausti');
+        await click(byText('Siųsti vadovui'));
+        expect(suggestTimeCorrection).not.toHaveBeenCalled();
+        expect(notifyMany.mock.calls[0][1]).toMatchObject({ correctionKind: 'other', workerNote: 'ryte pamiršau paspausti', aiSuggested: false });
+        expect(document.body.textContent).toContain('Prašymas išsiųstas vadovui');
+    });
+
+    it('"Kita" with the AI switched off and no manager: the comment cannot be sent', async () => {
+        await render({ managerIds: [] });
+        await click(byText('Kita'));
+        await setValue(document.body.querySelector('textarea'), 'kažkas negerai');
+        expect(byText('Siųsti vadovui').disabled).toBe(true);
+        expect(document.body.textContent).toContain('nepriskirtas koordinatorius');
+    });
+
     it('"Kita": the AI proposal is shown for a yes/no, and Taip sends it as a structured request', async () => {
+        ai.enabled = true;
         suggestTimeCorrection.mockResolvedValueOnce({ kind: 'missed_start', rowId: '', taskId: 't1', start: '06:30', end: '08:00', summary: 'Pridėti rytą' });
         await render();
         await click(byText('Kita'));
@@ -199,6 +229,7 @@ describe('TimeCorrectionSheet', () => {
     // "Ne" must send the worker's words ALONE — the proposal already loaded into the form (here an
     // on-the-spot reduction) must never ride along on a refusal.
     it('"Kita": Ne sends only the comment, even when the proposal was a reduction', async () => {
+        ai.enabled = true;
         suggestTimeCorrection.mockResolvedValueOnce({ kind: 'missed_stop', rowId: 'w2', taskId: '', start: '10:30', end: '11:00', summary: '' });
         await render();
         await click(byText('Kita'));
@@ -210,6 +241,7 @@ describe('TimeCorrectionSheet', () => {
     });
 
     it('"Kita": when the AI is unreachable, the comment still goes to the manager', async () => {
+        ai.enabled = true;
         suggestTimeCorrection.mockRejectedValueOnce(new Error('unavailable'));
         await render();
         await click(byText('Kita'));

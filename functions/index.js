@@ -3767,6 +3767,13 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 // gemini-2.5-flash is retired on OpenRouter 2026-10-20. 3.1-flash-lite keeps temperature 0 on
 // every Google route and spends no hidden reasoning tokens against the 300-token budget.
 const PARSE_MODEL = 'google/gemini-3.1-flash-lite';
+// Kill switch for BOTH AI callables (parseTaskDraft, suggestTimeCorrection). Off since 2026-10-27:
+// each call ships typed text plus worker names / day rows / task titles to OpenRouter, a processor
+// with no DPA (Octopus ecosystem plan D11). While false, each callable refuses before reading the
+// key, touching Firestore or calling out — nothing leaves Firebase. The exports stay deployed so a
+// stale client gets a clean refusal, not a "function not found". MIRROR of AI_CALLABLES_ENABLED in
+// src/utils/aiActions.js (which hides the UI entry points); flip both together.
+const AI_CALLABLES_ENABLED = false;
 const MAX_PARSE_INPUT = 2000;
 // MIRROR of ALL_TIMES in src/components/TaskModal.jsx — the canonical estimate chips. A model
 // guess is clamped to this set so it always lands on a real chip; keep both copies in lockstep.
@@ -3802,6 +3809,7 @@ function resolveAssigneeId(name, roster) {
 exports.parseTaskDraft = onCall(
     { secrets: [OPENROUTER_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
     async (request) => {
+        if (!AI_CALLABLES_ENABLED) throw new HttpsError('failed-precondition', 'AI is switched off.');
         const callerUid = request.auth && request.auth.uid;
         // Any ACTIVE signed-in user may request a DRAFT. Workers self-create tasks too, and this
         // callable never writes anything — the assignee is still resolved server-side from the
@@ -3923,6 +3931,7 @@ exports.parseTaskDraft = onCall(
 exports.suggestTimeCorrection = onCall(
     { secrets: [OPENROUTER_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
     async (request) => {
+        if (!AI_CALLABLES_ENABLED) throw new HttpsError('failed-precondition', 'AI is switched off.');
         const callerUid = request.auth && request.auth.uid;
         // Same gate as parseTaskDraft: any ACTIVE user — it spends real money, and it writes nothing.
         await assertActiveCaller(callerUid);

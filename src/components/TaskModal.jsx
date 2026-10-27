@@ -9,7 +9,7 @@ import { formatDisplayName, isManagerRole, isAdminRole } from '../utils/formatte
 import { TASK_TAGS } from '../utils/taskUtils';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate, hideTemplateForUser, unhideTemplateForUser } from '../utils/taskActions';
-import { parseTaskText } from '../utils/aiActions';
+import { parseTaskText, AI_CALLABLES_ENABLED } from '../utils/aiActions';
 import { notify } from '../utils/notify';
 import { logError } from '../utils/errorLog';
 import { assignTask, createTask, humanActor, MODES } from '../domain';
@@ -1677,7 +1677,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         ariaDescribedby={titleInvalid ? FORM_ERROR_ID : undefined}
                                         className="flex-1"
                                     />
-                                    {!task && !editTemplate && (
+                                    {AI_CALLABLES_ENABLED && !task && !editTemplate && (
                                         <Button
                                             type="button"
                                             variant="secondary"
@@ -1697,7 +1697,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         {aiMsg.text}
                                     </p>
                                 )}
-                                {!task && !editTemplate && !aiMsg && (
+                                {AI_CALLABLES_ENABLED && !task && !editTemplate && !aiMsg && (
                                     <p className="mt-1 text-caption text-ink-muted">
                                         Su AI parašykite sakinį, pvz. „rytoj Giedriui 2 val. kostiumų patikra“ — užpildys meistrą, laiką ir terminą.
                                     </p>
