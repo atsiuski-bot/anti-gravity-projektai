@@ -9,6 +9,7 @@ import {
     formatMinutesToTimeString,
     snapToRowEdges,
     planBreakAbsorption,
+    uncoveredSegments,
 } from './timeUtils';
 import { logError } from './errorLog';
 import { notify, notifyMany } from './notify';
@@ -650,6 +651,69 @@ const addBreakEdits = (batch, edits, rows, editor, nowIso, reason) => {
     }
 };
 
+// The overlap branch of creditRequestedSession: credit only what is still missing from
+// [fit.startISO, fit.endISO). Work AND break rows count as covered — work so paid time is never
+// credited twice, breaks so the same minutes never show as both. Every piece is a row on a derived id
+// (worker, piece start) carrying `requestedFromMs`, so a repeat — a double tap, or a second manager
+// answering their own copy — works out the same pieces and rewrites them in place.
+const creditUncoveredPieces = async ({
+    fit, dayRows, days, startMs, startTime, endTime, realTaskId, task, taskTitle,
+    expectedUserId, workerName, reason, editor,
+}) => {
+    let breakRows;
+    try {
+        breakRows = await readBreakRows(expectedUserId, days, editor?.uid);
+    } catch (err) {
+        logError(err, { source: 'readFail:creditRequestedSession:breaks' });
+        return { ok: false, error: err?.code === 'permission-denied' ? 'denied' : 'write' };
+    }
+    const pieces = uncoveredSegments(fit.startISO, fit.endISO, [...dayRows, ...breakRows]);
+    if (!pieces.length) {
+        return { ok: true, alreadyCovered: true, durationMinutes: 0, date: getWorkDayString(fit.endISO) };
+    }
+
+    const nowIso = new Date().toISOString();
+    const editReason = (reason || '').trim() || 'Patvirtintas meistro prašymas: pamiršo paleisti laikmatį';
+    const batch = writeBatch(db);
+    let total = 0;
+    const payloadTaskId = realTaskId || `manual_req_${startMs}`;
+    for (const piece of pieces) {
+        const credit = deriveSessionFields(piece.startISO, piece.endISO);
+        if (!credit.ok) continue;
+        total += credit.durationMinutes;
+        batch.set(doc(db, 'work_sessions', `sess_req_${expectedUserId}_${new Date(piece.startISO).getTime()}`), {
+            taskId: payloadTaskId,
+            taskTitle: (taskTitle || task?.title || '').trim() || 'Rankinė sesija',
+            userId: expectedUserId,
+            userName: workerName || task?.assignedUserName || null,
+            startTime: piece.startISO,
+            endTime: piece.endISO,
+            durationMinutes: credit.durationMinutes,
+            date: credit.date,
+            createdAt: nowIso,
+            isManualSession: true,
+            isCorrectionRequest: true,
+            // The request this piece settles, as the worker asked for it — the part of it that was
+            // already recorded is exactly what is missing between these and the row's own start/end.
+            requestedFromMs: startMs,
+            requestedStartTime: startTime,
+            requestedEndTime: endTime,
+            createdByAdmin: editor?.uid || 'unknown',
+            createdByAdminName: editor?.displayName || editor?.email || 'Nežinomas',
+            editReason,
+        }, { merge: true });
+    }
+    try {
+        await batch.commit();
+        const rec = await reconcileTaskTimerFromSessions(payloadTaskId, expectedUserId);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:creditRequestedSession', taskId: payloadTaskId });
+        return { ok: true, partial: true, durationMinutes: total, date: getWorkDayString(fit.endISO), reconciled };
+    } catch (err) {
+        logError(err, { source: 'writeFail:creditRequestedSession' });
+        return { ok: false, error: 'write' };
+    }
+};
+
 /**
  * Credit a session the worker FORGOT TO START — the manager's "Taip" on a time_correction_request of
  * kind 'missed_start'. The creditRefusedGap shape, generalised to any interval the worker named:
@@ -657,10 +721,13 @@ const addBreakEdits = (batch, edits, rows, editor, nowIso, reason) => {
  *  • OWNERSHIP. A real task must be assigned to the requester (re-read, never trusted from the
  *    notification); no task, or a synthetic one, becomes a session-only row on the requester — the
  *    notification rules already proved the requester is the author, so userId cannot be forged.
- *  • NO DOUBLE CREDIT. The requester's rows on that work day are read and an overlapping interval is
- *    refused ('overlap'): paid time already recorded must never be credited twice. A read the rules
- *    deny (a scoped manager's query) cannot run the check, so it falls through — the worker's form
- *    runs the same check against the same day before sending.
+ *  • NO DOUBLE CREDIT. The requester's rows on that work day are read, and when the interval overlaps
+ *    time already recorded only the UNCOVERED pieces are credited (uncoveredSegments), one row each:
+ *    paid time already recorded is never credited twice, and the manager's "Taip" still settles the
+ *    request instead of failing on it. Break rows count as covered there (break time is not payable,
+ *    and crediting work on top of it would show the same minutes twice). A read the rules deny (a
+ *    scoped manager's query) cannot run the check, so it falls through — the worker's form runs the
+ *    same check against the same day before sending.
  *  • IDEMPOTENT. The row id is derived from (worker, start), so a double tap, or two managers each
  *    answering their own copy of the request, land on ONE row.
  *
@@ -673,10 +740,12 @@ const addBreakEdits = (batch, edits, rows, editor, nowIso, reason) => {
  *    flag a break the interval overlaps is left untouched, as before.
  *
  * @param {Object} args - { taskId, taskTitle, expectedUserId, workerName, startTime, endTime, absorbBreaks, reason, editor }
- * @returns {Promise<{ok:boolean, error?:string, id?:string, durationMinutes?:number, date?:string, reconciled?:boolean, absorbedBreakMinutes?:number}>}
- *   error 'gone' — the task no longer exists; 'owner' — the task is not the requester's;
- *   'overlap' — the interval collides with time already recorded;
- *   'denied' — the breaks to take over could not be read by this caller (nothing was written).
+ * @returns {Promise<{ok:boolean, error?:string, id?:string, durationMinutes?:number, date?:string, reconciled?:boolean, absorbedBreakMinutes?:number, partial?:boolean, alreadyCovered?:boolean}>}
+ *   `partial` — part of the interval was already recorded, so only the rest was credited;
+ *   `alreadyCovered` — all of it was already recorded (e.g. another manager said "Taip" first): nothing
+ *   was written. error 'gone' — the task no longer exists; 'owner' — the task is not the requester's;
+ *   'denied' — the breaks to take over (or to leave alone) could not be read by this caller (nothing
+ *   was written).
  */
 export const creditRequestedSession = async ({
     taskId, taskTitle, expectedUserId, workerName, startTime, endTime, absorbBreaks = false, reason, editor,
@@ -718,6 +787,9 @@ export const creditRequestedSession = async ({
             snap.forEach((d) => {
                 if (d.id === rowId) return;
                 const s = d.data();
+                // A piece an earlier "Taip" on this SAME request already credited: left out, so a repeat
+                // works out the same pieces and rewrites them instead of seeing them as recorded time.
+                if (s.requestedFromMs === startMs) return;
                 if (s.isDeleted || !s.startTime || !s.endTime) return;
                 dayRows.push({ id: d.id, startTime: s.startTime, endTime: s.endTime });
             });
@@ -734,7 +806,10 @@ export const creditRequestedSession = async ({
     const creditStartMs = new Date(fit.startISO).getTime();
     const creditEndMs = new Date(fit.endISO).getTime();
     if (dayRows.some((r) => new Date(r.startTime).getTime() < creditEndMs && new Date(r.endTime).getTime() > creditStartMs)) {
-        return { ok: false, error: 'overlap' };
+        return creditUncoveredPieces({
+            fit, dayRows, days, startMs, startTime, endTime, realTaskId, task, taskTitle,
+            expectedUserId, workerName, reason, editor,
+        });
     }
 
     // Break time the interval covers. Read fail-closed: crediting work on top of a break that could not

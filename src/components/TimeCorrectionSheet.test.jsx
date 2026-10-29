@@ -158,7 +158,7 @@ describe('TimeCorrectionSheet', () => {
         expect(payload.commentText).toContain('sutrumpins pertrauką');
     });
 
-    it('time that overlaps a recorded row is not a dead end: it goes to the manager as a plain request', async () => {
+    it('time that overlaps a recorded row still goes as a structured request the manager can answer "Taip"', async () => {
         await render();
         await click(byText('Pamiršau paleisti laikmatį'));
         const [start] = document.body.querySelectorAll('input[type="time"]');
@@ -167,9 +167,11 @@ describe('TimeCorrectionSheet', () => {
         expect(byText('Siųsti vadovui').disabled).toBe(false);
         await click(byText('Siųsti vadovui'));
         const [, payload] = notifyMany.mock.calls[0];
-        // Information-only: a one-tap "Taip" would double-credit the overlapped minutes.
-        expect(payload).toMatchObject({ correctionKind: 'other' });
-        expect(payload.commentText).toContain('persidengia');
+        // Still missed_start (not free text): "Taip" credits only the part nothing recorded, so the
+        // overlapped minutes are never doubled — and the manager no longer has to fix it by hand.
+        expect(payload).toMatchObject({ correctionKind: 'missed_start', overlapsExisting: true, absorbBreaks: false });
+        expect(payload.requestedStartTime).toBeTruthy();
+        expect(payload.requestedEndTime).toBeTruthy();
     });
 
     it('"Pamiršau sustabdyti" gives time back on the spot — no request', async () => {

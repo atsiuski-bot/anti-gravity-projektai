@@ -796,6 +796,44 @@ export const snapToRowEdges = (startISO, endISO, rows = [], { ignoreId, toleranc
 };
 
 /**
+ * The parts of [startISO, endISO) that NO row covers — what is still missing from a worker's day when
+ * they say "I worked from X to Y" but some of that stretch is already recorded. Crediting only these
+ * pieces can never pay a minute twice, so a manager's one "Taip" can settle an overlapping request
+ * instead of sending them to the editor. Pieces shorter than `minMs` are dropped: a sliver under a
+ * minute is a rounding artefact between whole-minute input and millisecond rows, not missing work.
+ * Pure; returns the pieces in time order (empty when the whole interval is already covered).
+ *
+ * @param {string} startISO
+ * @param {string} endISO
+ * @param {Array<{id?:string,startTime:string,endTime:string,isDeleted?:boolean}>} rows
+ * @returns {Array<{startISO:string,endISO:string}>}
+ */
+export const uncoveredSegments = (startISO, endISO, rows = [], { minMs = SNAP_TOLERANCE_MS } = {}) => {
+    const s = new Date(startISO).getTime();
+    const e = new Date(endISO).getTime();
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return [];
+    const covered = rows
+        .filter((r) => r && !r.isDeleted && r.startTime && r.endTime)
+        .map((r) => [new Date(r.startTime).getTime(), new Date(r.endTime).getTime()])
+        .filter(([rs, re]) => Number.isFinite(rs) && Number.isFinite(re) && rs < e && re > s)
+        .sort((a, b) => a[0] - b[0]);
+    const out = [];
+    let cursor = s;
+    for (const [rs, re] of covered) {
+        if (rs > cursor) out.push([cursor, Math.min(rs, e)]);
+        cursor = Math.max(cursor, re);
+        if (cursor >= e) break;
+    }
+    if (cursor < e) out.push([cursor, e]);
+    return out
+        .filter(([a, b]) => b - a >= minMs)
+        .map(([a, b]) => ({
+            startISO: a === s ? startISO : new Date(a).toISOString(),
+            endISO: b === e ? endISO : new Date(b).toISOString(),
+        }));
+};
+
+/**
  * What crediting [startISO, endISO) as WORK does to the BREAK rows it overlaps. Break time is an
  * allowance, never payable, so (unlike another task's work row) those minutes can simply stop being
  * break once a manager approves. Per overlapped break row:

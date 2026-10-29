@@ -1391,13 +1391,76 @@ describe('creditRequestedSession (Taip on a missed_start correction request)', (
         expect(payload.userId).toBe('u1');
     });
 
-    // Paid time already on record is never credited twice.
-    it('refuses an interval that overlaps a row already recorded that day', async () => {
-        getDocs.mockResolvedValueOnce(rowsOf([
-            { id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' },
-        ]));
-        expect((await creditRequestedSession({ ...base, taskId: null })).error).toBe('overlap');
-        expect(setDoc).not.toHaveBeenCalled();
+    // Paid time already on record is never credited twice — but the request is not refused either: only
+    // the part nobody recorded is credited, so the manager's one "Taip" settles it (Simona 2026-10-28:
+    // a 9-second row inside 15:58–18:01 used to turn the whole request into a manual chore).
+    describe('overlap with recorded time → only the uncovered part is credited', () => {
+        const startMs = new Date(base.startTime).getTime();
+
+        it('credits the missing piece on its own row, in one batch', async () => {
+            getDocs.mockResolvedValueOnce(rowsOf([
+                { id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' },
+            ]));
+            const res = await creditRequestedSession({ ...base, taskId: null });
+            expect(res).toMatchObject({ ok: true, partial: true, durationMinutes: 50 });
+            expect(setDoc).not.toHaveBeenCalled();
+            const batch = writeBatch.mock.results[0].value;
+            expect(batch.commit).toHaveBeenCalledTimes(1);
+            expect(batch.ops).toHaveLength(1);
+            expect(batch.ops[0]).toMatchObject({
+                op: 'set', path: `work_sessions/sess_req_u1_${startMs}`, opts: { merge: true },
+                data: {
+                    userId: 'u1', startTime: base.startTime, endTime: '2026-09-29T06:00:00.000Z',
+                    durationMinutes: 50, isCorrectionRequest: true, requestedFromMs: startMs,
+                    requestedStartTime: base.startTime, requestedEndTime: base.endTime,
+                },
+            });
+        });
+
+        it('counts break rows as covered, so pieces fall either side of a break', async () => {
+            getDocs
+                .mockResolvedValueOnce(rowsOf([{ id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' }]))
+                .mockResolvedValueOnce(rowsOf([{ id: 'brk', startTime: '2026-09-29T05:20:00.000Z', endTime: '2026-09-29T05:30:00.000Z' }]));
+            const res = await creditRequestedSession({ ...base, taskId: null });
+            expect(res).toMatchObject({ ok: true, partial: true, durationMinutes: 40 });
+            const ops = writeBatch.mock.results[0].value.ops;
+            expect(ops.map((o) => [o.data.startTime, o.data.endTime])).toEqual([
+                [base.startTime, '2026-09-29T05:20:00.000Z'],
+                ['2026-09-29T05:30:00.000Z', '2026-09-29T06:00:00.000Z'],
+            ]);
+            expect(ops[1].path).toBe(`work_sessions/sess_req_u1_${new Date('2026-09-29T05:30:00.000Z').getTime()}`);
+        });
+
+        it('a repeat (second manager, double tap) rewrites the same pieces instead of seeing them as recorded', async () => {
+            getDocs.mockResolvedValueOnce(rowsOf([
+                { id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' },
+                { id: `sess_req_u1_${startMs}`, requestedFromMs: startMs, startTime: base.startTime, endTime: '2026-09-29T06:00:00.000Z' },
+            ]));
+            const res = await creditRequestedSession({ ...base, taskId: null });
+            expect(res).toMatchObject({ ok: true, durationMinutes: 50 });
+            expect(writeBatch.mock.results[0].value.ops[0].path).toBe(`work_sessions/sess_req_u1_${startMs}`);
+        });
+
+        it('when everything is already recorded, writes nothing and says so', async () => {
+            getDocs.mockResolvedValueOnce(rowsOf([
+                { id: 'ws-all', startTime: '2026-09-29T05:00:00.000Z', endTime: '2026-09-29T07:00:00.000Z' },
+            ]));
+            const res = await creditRequestedSession({ ...base, taskId: null });
+            expect(res).toMatchObject({ ok: true, alreadyCovered: true, durationMinutes: 0 });
+            expect(writeBatch).not.toHaveBeenCalled();
+            expect(setDoc).not.toHaveBeenCalled();
+        });
+
+        it('fails CLOSED when the breaks cannot be read: nothing is credited', async () => {
+            getDocs
+                .mockResolvedValueOnce(rowsOf([{ id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' }]))
+                .mockRejectedValue(Object.assign(new Error('denied'), { code: 'permission-denied' }));
+            const res = await creditRequestedSession({ ...base, taskId: null });
+            expect(res).toEqual({ ok: false, error: 'denied' });
+            expect(writeBatch).not.toHaveBeenCalled();
+            getDocs.mockReset();
+            getDocs.mockImplementation(() => Promise.resolve({ forEach: () => {} }));
+        });
     });
 
     // The worker's form works in whole minutes, a stored row in milliseconds: "the gap after the row that
@@ -1418,12 +1481,13 @@ describe('creditRequestedSession (Taip on a missed_start correction request)', (
         expect(setDoc.mock.calls[0][0].id).toBe(`sess_req_u1_${new Date(base.startTime).getTime()}`);
     });
 
-    it('still refuses a REAL overlap (more than a minute into a row)', async () => {
+    it('a REAL overlap (more than a minute into a row) credits only the part after that row', async () => {
         getDocs.mockResolvedValueOnce(rowsOf([
             { id: 'ws-prev', startTime: '2026-09-29T04:00:00.000Z', endTime: '2026-09-29T05:12:30.000Z' },
         ]));
-        expect((await creditRequestedSession({ ...base, taskId: null })).error).toBe('overlap');
-        expect(setDoc).not.toHaveBeenCalled();
+        const res = await creditRequestedSession({ ...base, taskId: null });
+        expect(res).toMatchObject({ ok: true, partial: true, durationMinutes: 87.5 });
+        expect(writeBatch.mock.results[0].value.ops[0].data.startTime).toBe('2026-09-29T05:12:30.000Z');
     });
 
     // Break time is not payable, so on "Taip" the break the interval covers stops being break — in the

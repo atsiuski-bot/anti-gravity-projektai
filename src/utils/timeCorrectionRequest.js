@@ -105,7 +105,12 @@ export const describeCorrection = (n) => {
     if (n.correctionKind === CORRECTION_KINDS.MISSED_START) {
         return {
             delta: newMin ? `+${formatMinutesToTimeString(newMin)}` : '',
-            detail: [n.taskTitle || 'Kita veikla', span, n.absorbBreaks ? 'sutrumpins pertrauką' : ''].filter(Boolean).join(', '),
+            detail: [
+                n.taskTitle || 'Kita veikla',
+                span,
+                n.absorbBreaks ? 'sutrumpins pertrauką' : '',
+                n.overlapsExisting ? 'dalis jau įrašyta — bus pridėta tik likusi' : '',
+            ].filter(Boolean).join(', '),
         };
     }
     if (n.correctionKind === CORRECTION_KINDS.WRONG_TIME) {
@@ -137,7 +142,7 @@ const clampNote = (text, max = 500) => String(text || '').replace(/\s+/g, ' ').t
  */
 export const buildCorrectionRequest = ({
     kind, day, worker, taskId, taskTitle, startTime, endTime, sessionRef, breakRef,
-    originalStartTime, originalEndTime, note, aiSuggested = false, absorbBreaks = false,
+    originalStartTime, originalEndTime, note, aiSuggested = false, absorbBreaks = false, overlapsExisting = false,
 }) => {
     const workerName = worker?.name || null;
     const base = {
@@ -152,6 +157,9 @@ export const buildCorrectionRequest = ({
         // The worker saw "the break will be shortened" and sent it anyway: the manager's "Taip" may take
         // the overlapped break time over (creditRequestedSession). Absent/false changes nothing.
         absorbBreaks: !!absorbBreaks,
+        // Part of the interval is already recorded: the manager's "Taip" credits only the rest
+        // (creditRequestedSession), and the card says so. Absent/false changes nothing.
+        overlapsExisting: !!overlapsExisting,
     };
     const { delta, detail } = describeCorrection(base);
     const workerNote = clampNote(note);
@@ -178,6 +186,55 @@ export const buildCorrectionRequest = ({
     };
 };
 
+/** The audit reason a settled request leaves on the row: the worker's own words, else the kind. */
+export const correctionReason = (n) => (n?.workerNote
+    ? `Patvirtintas meistro prašymas: ${n.workerNote}`
+    : `Patvirtintas meistro prašymas: ${CORRECTION_KIND_MANAGER_LABELS[n?.correctionKind] || CORRECTION_KIND_MANAGER_LABELS.other}`);
+
+/**
+ * What the manager reads after "Taip": the result in words, so it is never unclear whether the time
+ * actually changed (the card simply vanishing was read as "nothing happened"). Pure.
+ */
+export const describeApplyOutcome = (n, result = {}) => {
+    const who = `${n?.userName || 'Meistras'}${n?.day ? ` (${n.day})` : ''}`;
+    if (result.alreadyCovered) return `${who}: šis laikas jau buvo įrašytas — nieko pridėti nereikėjo.`;
+    if (n?.correctionKind === CORRECTION_KINDS.WRONG_TIME) {
+        const { detail } = describeCorrection(n);
+        return `Laikas pataisytas: ${who}${detail ? ` · ${detail}` : ''}.`;
+    }
+    const minutes = Number.isFinite(result.durationMinutes) && result.durationMinutes > 0
+        ? result.durationMinutes
+        : intervalMinutes(n?.requestedStartTime, n?.requestedEndTime);
+    const added = minutes ? ` +${formatMinutesToTimeString(minutes)}` : '';
+    return `Laikas pridėtas${added}: ${who}${result.partial ? ' — dalis prašyto laiko jau buvo įrašyta, pridėta tik likusi' : ''}.`;
+};
+
+const SYNTHETIC_TASK_ID = /^(quick_|call_|manual_)/;
+
+/**
+ * How the bell's correction editor opens for a request — already filled with what the worker asked
+ * for, so the manager only checks and saves. Pure. Returns null where the editor cannot express the fix
+ * (a break that was work must stop being break, which only the report's tools do).
+ *   mode 'edit'   — wrong_time: the named row, with the requested start/end proposed;
+ *   mode 'create' — a missed start (or free text): a new row on that day, times pre-filled when known.
+ */
+export const correctionEditorSeed = (n) => {
+    if (!n?.userId || n.correctionKind === CORRECTION_KINDS.BREAK_WAS_WORK) return null;
+    const reason = correctionReason(n);
+    if (n.correctionKind === CORRECTION_KINDS.WRONG_TIME && n.sessionRef) {
+        return { mode: 'edit', sessionId: n.sessionRef, startTime: n.requestedStartTime || null, endTime: n.requestedEndTime || null, reason };
+    }
+    return {
+        mode: 'create',
+        day: n.day || null,
+        startTime: n.requestedStartTime || null,
+        endTime: n.requestedEndTime || null,
+        taskId: n.taskId && !SYNTHETIC_TASK_ID.test(n.taskId) ? n.taskId : null,
+        taskTitle: n.taskTitle || '',
+        reason,
+    };
+};
+
 /**
  * The manager's "Taip". Dispatches on the request's kind to the write that settles it. Every write is
  * an existing, owner-checked admin path — nothing here trusts the notification beyond what those
@@ -185,9 +242,7 @@ export const buildCorrectionRequest = ({
  */
 export const applyTimeCorrectionRequest = async ({ notif, editor }) => {
     if (!isApplicableCorrection(notif)) return { ok: false, error: 'unsupported' };
-    const reason = notif.workerNote
-        ? `Patvirtintas meistro prašymas: ${notif.workerNote}`
-        : `Patvirtintas meistro prašymas: ${CORRECTION_KIND_MANAGER_LABELS[notif.correctionKind]}`;
+    const reason = correctionReason(notif);
     if (notif.correctionKind === CORRECTION_KINDS.MISSED_START) {
         return creditRequestedSession({
             taskId: notif.taskId,

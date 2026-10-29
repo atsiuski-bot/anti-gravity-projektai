@@ -228,10 +228,9 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
             if (!d.ok) return { error: d.error };
             if (!isNotFuture(endISO)) return { error: 'future' };
             // An overlap is not a dead end: the worker may be right (a meeting that ran under another
-            // row's timer). Over ANOTHER WORK ROW it cannot be a one-tap "Taip" — that would double-
-            // credit paid time — so it travels as an information-only request the manager settles by
-            // hand. Over a BREAK only, it can: break time is not payable, so on "Taip" the break simply
-            // stops being break (absorbBreaks) and the manager still gets one tap.
+            // row's timer). Over ANOTHER WORK ROW the manager's "Taip" credits only the part nothing
+            // recorded yet, so paid time is never doubled. Over a BREAK only, the break simply stops
+            // being break on "Taip" (absorbBreaks): break time is not payable.
             if (findOverlap(startISO, endISO, works)) return { minutes: d.durationMinutes, path: 'request', overlap: true };
             const absorbed = planBreakAbsorption(startISO, endISO, breaks).absorbedMinutes;
             return { minutes: d.durationMinutes, path: 'request', absorbBreaks: absorbed > 0, absorbedMinutes: absorbed };
@@ -296,17 +295,13 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                 return;
             }
             if (!canRequest) { setError(ERROR_COPY.noManager); return; }
-            if (k === K.MISSED_START && check.overlap) {
-                const span = `${startStr}–${endStr}`;
-                const what = taskTitleOf(taskId) || 'Kita veikla';
-                await sendRequest({
-                    kind: K.OTHER,
-                    note: `Pamiršo paleisti laikmatį: ${span}, ${what} (persidengia su kitu įrašu). ${note.trim()}`.trim(),
-                });
-            } else if (k === K.MISSED_START) {
+            if (k === K.MISSED_START) {
+                // An overlap still travels as the structured request: the manager's "Taip" credits only
+                // the part nothing recorded (creditRequestedSession), so it never pays a minute twice.
                 await sendRequest({
                     kind: k, taskId: taskId || null, taskTitle: taskTitleOf(taskId), startTime: startISO, endTime: endISO,
-                    aiSuggested: fromProposal, absorbBreaks: !!check.absorbBreaks,
+                    aiSuggested: fromProposal, absorbBreaks: !check.overlap && !!check.absorbBreaks,
+                    overlapsExisting: !!check.overlap,
                 });
             } else if (k === K.WRONG_TIME) {
                 await sendRequest({
@@ -531,7 +526,7 @@ export default function TimeCorrectionSheet({ open, onClose, day, worker, workRo
                     : !canRequest
                       ? 'Laiką pridėti gali tik vadovas.'
                       : check.overlap
-                        ? 'Šis laikas persidengia su kitu darbo įrašu, todėl vadovas sutvarkys jį rankiniu būdu.'
+                        ? 'Dalis šio laiko jau įrašyta (persidengia su kitu įrašu). Vadovui patvirtinus bus pridėta tik neįrašyta dalis.'
                         : check.absorbBreaks
                           ? `Tuo metu pažymėta pertrauka (${formatMinutesToTimeString(Math.round(check.absorbedMinutes))}) — ji bus sutrumpinta. Vadovas gaus prašymą ir atsakys „Taip“ arba „Ne“.`
                           : kind === K.BREAK_WAS_WORK

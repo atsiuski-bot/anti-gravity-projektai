@@ -65,6 +65,11 @@ const ERROR_COPY = {
  * @param {string} [props.taskId] - create mode: attach the new session to THIS task (the task's own
  *   time editor). Omitted from the day report, where the session gets a synthetic id instead.
  * @param {string} [props.defaultTitle] - create mode: the title to seed (the task's own title).
+ * @param {string} [props.defaultStartTime] - an ISO instant to pre-fill the start with (create: the new
+ *   row; edit: a PROPOSED new start instead of the stored one). Used by the bell, which opens this
+ *   editor already filled with what the worker asked for, so the manager only checks and saves.
+ * @param {string} [props.defaultEndTime] - the same, for the end.
+ * @param {string} [props.defaultReason] - the reason to pre-fill (the admin may still change it).
  * @param {number} [props.dayTotalMinutes] - the currently visible total, for the "A → B" preview.
  * @param {{ uid?: string, displayName?: string, email?: string }} props.editor - the acting admin.
  * @param {() => void} [props.onSaved] - called after a successful write.
@@ -78,6 +83,9 @@ export default function SessionEditModal({
     defaultDate = null,
     taskId = null,
     defaultTitle = '',
+    defaultStartTime = null,
+    defaultEndTime = null,
+    defaultReason = '',
     dayTotalMinutes = null,
     editor,
     onSaved,
@@ -107,21 +115,23 @@ export default function SessionEditModal({
         setError(null);
         setStaleNotice(false);
         setConfirmingDelete(false);
-        setReason('');
+        setReason(defaultReason || '');
         if (isCreate) {
             const seed = defaultDate || getLithuanianDateString();
-            setStartDate(seed);
-            setEndDate(seed);
-            setStartTimeStr('');
-            setEndTimeStr('');
+            setStartDate(defaultStartTime ? getLithuanianDateString(defaultStartTime) : seed);
+            setEndDate(defaultEndTime ? getLithuanianDateString(defaultEndTime) : seed);
+            setStartTimeStr(toTimeInput(defaultStartTime));
+            setEndTimeStr(toTimeInput(defaultEndTime));
             setTitle(defaultTitle || '');
         } else if (session) {
-            setStartDate(getLithuanianDateString(session.startTime));
-            setEndDate(getLithuanianDateString(session.endTime));
-            setStartTimeStr(toTimeInput(session.startTime));
-            setEndTimeStr(toTimeInput(session.endTime));
+            const start = defaultStartTime || session.startTime;
+            const end = defaultEndTime || session.endTime;
+            setStartDate(getLithuanianDateString(start));
+            setEndDate(getLithuanianDateString(end));
+            setStartTimeStr(toTimeInput(start));
+            setEndTimeStr(toTimeInput(end));
         }
-    }, [open, isCreate, session, defaultDate, defaultTitle]);
+    }, [open, isCreate, session, defaultDate, defaultTitle, defaultStartTime, defaultEndTime, defaultReason]);
 
     // Recompute the derived fields (duration, day bucket) from the typed wall-clock pair.
     const { startISO, endISO, derived, complete } = useMemo(() => {

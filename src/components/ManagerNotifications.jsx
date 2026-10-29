@@ -23,7 +23,8 @@ import { useRovingFocus } from '../hooks/useRovingFocus';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId, formatMinutesToTimeString } from '../utils/timeUtils';
 import { applyRequestedSessionEnd, creditRefusedGap } from '../utils/sessionEditActions';
-import { applyTimeCorrectionRequest, isApplicableCorrection, describeCorrection, CORRECTION_KINDS, CORRECTION_KIND_MANAGER_LABELS } from '../utils/timeCorrectionRequest';
+import { applyTimeCorrectionRequest, isApplicableCorrection, describeCorrection, describeApplyOutcome, correctionEditorSeed, CORRECTION_KINDS, CORRECTION_KIND_MANAGER_LABELS } from '../utils/timeCorrectionRequest';
+import SessionEditModal from './SessionEditModal';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -194,6 +195,8 @@ export default function ManagerNotifications({ onClose }) {
     const [applyingTime, setApplyingTime] = useState(null); // notif.id of an in-flight one-tap time correction
     const [settlingGap, setSettlingGap] = useState(null); // notif.id of an in-flight refused-gap decision
     const [settlingCorrection, setSettlingCorrection] = useState(null); // notif.id of an in-flight Taip/Ne on a time_correction_request
+    // The bell's own correction editor: { notif, seed, session? } while open (correctionEditorSeed).
+    const [correctionEditor, setCorrectionEditor] = useState(null);
 
 
     // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
@@ -732,10 +735,16 @@ export default function ManagerNotifications({ onClose }) {
         setSettlingCorrection(notif.id);
         clearActionFeedback();
         const { delta, detail } = describeCorrection(notif);
-        const summary = [notif.day, detail, delta].filter(Boolean).join(' · ');
+        let summary = [notif.day, detail, delta].filter(Boolean).join(' · ');
 
+        let result = null;
         if (approve) {
-            const result = await applyTimeCorrectionRequest({ notif, editor: currentUser });
+            result = await applyTimeCorrectionRequest({ notif, editor: currentUser });
+            // Only the unrecorded part was credited: tell the worker what was ADDED, not what they asked.
+            if (result.ok && result.partial) {
+                summary = [notif.day, notif.taskTitle, `pridėta neįrašyta dalis +${formatMinutesToTimeString(result.durationMinutes)}`]
+                    .filter(Boolean).join(' · ');
+            }
             if (!result.ok) {
                 setSettlingCorrection(null);
                 if (result.error === 'gone') {
@@ -743,23 +752,22 @@ export default function ManagerNotifications({ onClose }) {
                     await handleDismissTask(notif.id);
                 } else if (result.error === 'owner') {
                     setActionError('Prašymas nurodo ne šio meistro įrašą — patikrinkite veiklos ataskaitoje.');
-                } else if (result.error === 'overlap') {
-                    setActionError('Šis laikas persidengia su jau įrašytu — pataisykite veiklos ataskaitoje.');
-                } else if (result.error === 'stale') {
-                    setActionError('Pauzė nuo prašymo pasikeitė — patikrinkite veiklos ataskaitoje.');
-                } else if (result.error === 'denied') {
-                    setActionError('Šio meistro pertraukų matyti negalite — pataisykite veiklos ataskaitoje.');
                 } else {
-                    setActionError('Nepavyko pritaikyti pataisymo. Pataisykite veiklos ataskaitoje.');
+                    // Anything else (a break changed since, a read this manager may not make, a failed
+                    // write) is not the end of the request: open the editor already filled with it, so
+                    // the manager checks and saves instead of hunting for the row in the report.
+                    setActionError('Nepavyko pritaikyti automatiškai — patikrinkite pasiūlytą pataisymą ir išsaugokite.');
+                    await openCorrectionEditor(notif);
                 }
                 return;
             }
-            if (result.reconciled === false) {
-                setActionNotice('Laikas pataisytas, bet užduoties suvestinė gali būti pasenusi.');
-            }
         }
         setSettlingCorrection(null);
-        if (!approve || notif.correctionKind !== CORRECTION_KINDS.WRONG_TIME) {
+        // The answer reaches the worker — except where they were already told: a wrong_time "Taip"
+        // through editWorkSession's session_edited notice, and an "already recorded" repeat (another
+        // manager answered their own copy of the same request first).
+        const alreadyTold = approve && (notif.correctionKind === CORRECTION_KINDS.WRONG_TIME || result?.alreadyCovered);
+        if (!alreadyTold) {
             await notify({
                 recipientId: notif.userId,
                 type: 'time_correction_settled',
@@ -770,6 +778,62 @@ export default function ManagerNotifications({ onClose }) {
                 actorName: currentUser.displayName || currentUser.email,
             });
         }
+        // Say what happened. The card simply vanishing was read as "nothing changed".
+        if (approve) {
+            const outcome = describeApplyOutcome(notif, result);
+            setActionNotice(result?.reconciled === false
+                ? `${outcome} Užduoties suvestinė gali būti pasenusi.`
+                : outcome);
+        } else {
+            setActionNotice(`Prašymas atmestas — ${notif.userName || 'meistras'} informuotas.`);
+        }
+        await handleDismissTask(notif.id);
+    };
+
+    // "Keisti" / "Taisyti" on a time_correction_request: open the session editor RIGHT HERE, already
+    // filled with what the worker asked for (correctionEditorSeed). Where the editor cannot express
+    // the fix (a break that was work), or the named row is gone or not the requester's, fall back to
+    // the worker's day in the report.
+    const openCorrectionEditor = async (notif) => {
+        const seed = correctionEditorSeed(notif);
+        if (!seed) { openWorkerReport(notif); return; }
+        if (seed.mode === 'edit') {
+            try {
+                const snap = await getDoc(doc(db, 'work_sessions', seed.sessionId));
+                const row = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+                // The row comes from a worker-authored notification and the save carries the
+                // manager's authority — it must be the requester's own, live row.
+                if (!row || row.isDeleted || row.userId !== notif.userId) { openWorkerReport(notif); return; }
+                setCorrectionEditor({ notif, seed, session: row });
+            } catch (err) {
+                console.error('Error reading the requested session:', err);
+                openWorkerReport(notif);
+            }
+            return;
+        }
+        setCorrectionEditor({ notif, seed });
+    };
+
+    // The editor saved: the request is settled. A new row tells the worker here (createWorkSession
+    // sends nothing); an edited row already told them through editWorkSession's session_edited notice.
+    const handleCorrectionEditorSaved = async () => {
+        const opened = correctionEditor;
+        setCorrectionEditor(null);
+        if (!opened) return;
+        const { notif, seed } = opened;
+        clearActionFeedback();
+        if (seed.mode !== 'edit') {
+            await notify({
+                recipientId: notif.userId,
+                type: 'time_correction_settled',
+                approved: true,
+                day: notif.day || null,
+                summary: [notif.day, 'laikas pataisytas vadovo'].filter(Boolean).join(' · '),
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
+            });
+        }
+        setActionNotice(`Išsaugota: ${notif.userName || 'meistro'} laikas pataisytas, meistras informuotas.`);
         await handleDismissTask(notif.id);
     };
 
@@ -1721,10 +1785,12 @@ export default function ManagerNotifications({ onClose }) {
                     // Worker → manager ACTION: "Pranešti apie laiko klaidą". The card leads with the fix
                     // itself (net change + what/when), then the worker's own words. An applicable kind
                     // is answered in one tap — Taip writes through the owner-checked admin path, Ne
-                    // writes nothing — and both answers reach the worker. The info-only kinds (a break
-                    // that was work, free text the AI could not structure) keep the manual route.
+                    // writes nothing — and both answers reach the worker. "Keisti" (and "Taisyti" on the
+                    // info-only kinds, e.g. free text) opens the session editor here, already filled with
+                    // what the worker asked for; saving it settles the request.
                     if (notif.type === 'time_correction_request') {
                         const applicable = isApplicableCorrection(notif);
+                        const editable = !!correctionEditorSeed(notif);
                         const { delta, detail } = describeCorrection(notif);
                         return (
                             <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -1748,9 +1814,13 @@ export default function ManagerNotifications({ onClose }) {
                                                 </div>
                                             )}
                                             {notif.workerNote && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.workerNote}&quot;</p>}
-                                            {!applicable && (
+                                            {!readOnly && (
                                                 <p className="mt-2 text-xs">
-                                                    {'Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“.'}
+                                                    {applicable
+                                                        ? '„Taip“ pataiso laiką iš karto. „Keisti“ atidaro pataisymą redaguoti.'
+                                                        : editable
+                                                          ? 'Automatiškai pritaikyti negalima — spauskite „Taisyti“ ir įveskite laiką.'
+                                                          : 'Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“.'}
                                                 </p>
                                             )}
                                         </div>
@@ -1781,11 +1851,15 @@ export default function ManagerNotifications({ onClose }) {
                                                         disabled: !!settlingCorrection,
                                                         onClick: () => handleSettleCorrection(notif, false),
                                                     },
-                                                    { key: 'open', label: 'Keisti ataskaitoje', compactLabel: 'Keisti', icon: Edit, variant: 'secondary', onClick: () => openWorkerReport(notif) },
+                                                    { key: 'open', label: editable ? 'Keisti' : 'Keisti ataskaitoje', compactLabel: 'Keisti', icon: Edit, variant: 'secondary', disabled: !!settlingCorrection, onClick: () => openCorrectionEditor(notif) },
                                                 ]
+                                                // Info-only: there is nothing to apply in one tap, so the
+                                                // primary action is the pre-filled editor. A plain
+                                                // "Supratau" used to sit here and was read as approval —
+                                                // the card vanished and the time was never added.
                                                 : [
-                                                    { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
-                                                    { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => openWorkerReport(notif) },
+                                                    { key: 'fix', label: 'Taisyti', compactLabel: 'Taisyti', icon: Edit, variant: 'primary', disabled: !!settlingCorrection, onClick: () => openCorrectionEditor(notif) },
+                                                    { key: 'reject', label: 'Ne', compactLabel: 'Ne', icon: Ban, variant: 'secondary', disabled: !!settlingCorrection, onClick: () => handleSettleCorrection(notif, false) },
                                                 ]}
                                         />
                                     )}
@@ -2045,6 +2119,23 @@ export default function ManagerNotifications({ onClose }) {
                 </p>
             )}
               </>
+            )}
+            {correctionEditor && (
+                <SessionEditModal
+                    open
+                    onClose={() => setCorrectionEditor(null)}
+                    mode={correctionEditor.seed.mode}
+                    session={correctionEditor.session || null}
+                    targetUser={{ id: correctionEditor.notif.userId, name: correctionEditor.notif.userName }}
+                    defaultDate={correctionEditor.seed.day}
+                    taskId={correctionEditor.seed.taskId || null}
+                    defaultTitle={correctionEditor.seed.taskTitle || ''}
+                    defaultStartTime={correctionEditor.seed.startTime}
+                    defaultEndTime={correctionEditor.seed.endTime}
+                    defaultReason={correctionEditor.seed.reason}
+                    editor={currentUser}
+                    onSaved={handleCorrectionEditorSaved}
+                />
             )}
             <DeleteConfirmationModal
                 isOpen={!!deleteModalData}

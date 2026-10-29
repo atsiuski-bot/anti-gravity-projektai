@@ -22,6 +22,7 @@ import {
     dropUncreditedSessionRows,
     snapToRowEdges,
     planBreakAbsorption,
+    uncoveredSegments,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -793,6 +794,38 @@ describe('isCreditableUntrackedGap — may this unobserved interval be auto-cred
 
 // The correction form works in whole minutes, stored rows in milliseconds — so the form's "15:44" lands
 // 34 s inside a row that ended 15:44:34. Real cases: Povilas 2026-10-08 15:44–16:59, Simona 11:40–12:10.
+describe('uncoveredSegments (what is still missing from a claimed interval)', () => {
+    // Simona 2026-10-28: "15:58–18:01" against a recovered row ending 15:58:49 and a 9-second row.
+    const gapRow = { id: 'gap', startTime: '2026-10-28T12:51:43.435Z', endTime: '2026-10-28T13:58:49.764Z' };
+    const tiny = { id: 'tiny', startTime: '2026-10-28T13:58:49.764Z', endTime: '2026-10-28T13:58:58.960Z' };
+    const after = { id: 'after', startTime: '2026-10-28T16:01:27.320Z', endTime: '2026-10-28T16:05:27.786Z' };
+
+    it('returns the one stretch nobody recorded, flush to the rows around it', () => {
+        expect(uncoveredSegments('2026-10-28T13:58:00.000Z', '2026-10-28T16:01:00.000Z', [gapRow, tiny, after]))
+            .toEqual([{ startISO: '2026-10-28T13:58:58.960Z', endISO: '2026-10-28T16:01:00.000Z' }]);
+    });
+
+    it('returns several pieces when recorded rows sit inside the interval, in time order', () => {
+        const mid = { id: 'mid', startTime: '2026-10-28T10:20:00.000Z', endTime: '2026-10-28T10:40:00.000Z' };
+        expect(uncoveredSegments('2026-10-28T10:00:00.000Z', '2026-10-28T11:00:00.000Z', [mid])).toEqual([
+            { startISO: '2026-10-28T10:00:00.000Z', endISO: '2026-10-28T10:20:00.000Z' },
+            { startISO: '2026-10-28T10:40:00.000Z', endISO: '2026-10-28T11:00:00.000Z' },
+        ]);
+    });
+
+    it('drops slivers under a minute and ignores deleted rows', () => {
+        const almost = { id: 'a', startTime: '2026-10-28T10:00:30.000Z', endTime: '2026-10-28T11:00:00.000Z' };
+        const deleted = { id: 'd', isDeleted: true, startTime: '2026-10-28T10:00:00.000Z', endTime: '2026-10-28T11:00:00.000Z' };
+        expect(uncoveredSegments('2026-10-28T10:00:00.000Z', '2026-10-28T11:00:00.000Z', [almost, deleted])).toEqual([]);
+    });
+
+    it('is the whole interval when nothing overlaps, and empty for a backwards one', () => {
+        expect(uncoveredSegments('2026-10-28T10:00:00.000Z', '2026-10-28T11:00:00.000Z', [after]))
+            .toEqual([{ startISO: '2026-10-28T10:00:00.000Z', endISO: '2026-10-28T11:00:00.000Z' }]);
+        expect(uncoveredSegments('2026-10-28T11:00:00.000Z', '2026-10-28T10:00:00.000Z', [])).toEqual([]);
+    });
+});
+
 describe('snapToRowEdges (whole-minute edges against millisecond rows)', () => {
     const prev = { id: 'prev', startTime: '2026-10-08T11:28:36.589Z', endTime: '2026-10-08T12:44:34.664Z' };
     const next = { id: 'next', startTime: '2026-10-08T13:59:07.577Z', endTime: '2026-10-08T14:03:50.890Z' };

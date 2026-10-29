@@ -18,6 +18,8 @@ import {
     buildCorrectionRequest,
     isApplicableCorrection,
     applyTimeCorrectionRequest,
+    describeApplyOutcome,
+    correctionEditorSeed,
     isNotFuture,
 } from './timeCorrectionRequest';
 
@@ -182,5 +184,68 @@ describe('isNotFuture', () => {
         const now = new Date('2026-09-29T10:00:00Z');
         expect(isNotFuture('2026-09-29T10:00:30Z', now)).toBe(true);
         expect(isNotFuture('2026-09-29T10:05:00Z', now)).toBe(false);
+    });
+});
+
+describe('describeApplyOutcome (what the manager reads after "Taip")', () => {
+    const missed = {
+        correctionKind: K.MISSED_START, userName: 'Simona A.', day: '2026-10-28',
+        requestedStartTime: '2026-10-28T13:58:00.000Z', requestedEndTime: '2026-10-28T16:01:00.000Z',
+    };
+
+    it('names the person, the day and the minutes actually added', () => {
+        expect(describeApplyOutcome(missed, { ok: true, durationMinutes: 123 }))
+            .toBe('Laikas pridėtas +2h 3m: Simona A. (2026-10-28).');
+    });
+
+    it('says when only the unrecorded part was added', () => {
+        expect(describeApplyOutcome(missed, { ok: true, partial: true, durationMinutes: 49 }))
+            .toBe('Laikas pridėtas +49m: Simona A. (2026-10-28) — dalis prašyto laiko jau buvo įrašyta, pridėta tik likusi.');
+    });
+
+    it('says when nothing needed adding (another manager was first)', () => {
+        expect(describeApplyOutcome(missed, { ok: true, alreadyCovered: true, durationMinutes: 0 }))
+            .toBe('Simona A. (2026-10-28): šis laikas jau buvo įrašytas — nieko pridėti nereikėjo.');
+    });
+
+    it('describes a moved row as a correction, not an addition', () => {
+        const wrong = {
+            correctionKind: K.WRONG_TIME, userName: 'Jonas', day: '2026-10-01', taskTitle: 'Stogas',
+            originalStartTime: '2026-10-01T06:00:00.000Z', originalEndTime: '2026-10-01T07:00:00.000Z',
+            requestedStartTime: '2026-10-01T06:00:00.000Z', requestedEndTime: '2026-10-01T08:00:00.000Z',
+        };
+        expect(describeApplyOutcome(wrong, { ok: true })).toMatch(/^Laikas pataisytas: Jonas \(2026-10-01\) · Stogas, /);
+    });
+});
+
+describe('correctionEditorSeed (the editor the bell opens, already filled)', () => {
+    it('a missed start opens a NEW row on that day with the requested times and the real task', () => {
+        expect(correctionEditorSeed({
+            userId: 'u1', correctionKind: K.MISSED_START, day: '2026-10-28', taskId: 'task1', taskTitle: 'Kostiumai',
+            requestedStartTime: 'S', requestedEndTime: 'E', workerNote: 'klientai',
+        })).toEqual({
+            mode: 'create', day: '2026-10-28', startTime: 'S', endTime: 'E', taskId: 'task1', taskTitle: 'Kostiumai',
+            reason: 'Patvirtintas meistro prašymas: klientai',
+        });
+    });
+
+    it('never attaches a new row to a synthetic quick/call/manual id', () => {
+        expect(correctionEditorSeed({ userId: 'u1', correctionKind: K.MISSED_START, taskId: 'quick_123' }).taskId).toBeNull();
+    });
+
+    it('a wrong time opens the NAMED row with the requested times proposed', () => {
+        expect(correctionEditorSeed({
+            userId: 'u1', correctionKind: K.WRONG_TIME, sessionRef: 'ws1', requestedStartTime: 'S', requestedEndTime: 'E',
+        })).toMatchObject({ mode: 'edit', sessionId: 'ws1', startTime: 'S', endTime: 'E' });
+    });
+
+    it('free text opens an empty new row on that day', () => {
+        expect(correctionEditorSeed({ userId: 'u1', correctionKind: K.OTHER, day: '2026-10-06' }))
+            .toMatchObject({ mode: 'create', day: '2026-10-06', startTime: null, endTime: null });
+    });
+
+    it('a break that was work has no editor form (only the report can end a break)', () => {
+        expect(correctionEditorSeed({ userId: 'u1', correctionKind: K.BREAK_WAS_WORK })).toBeNull();
+        expect(correctionEditorSeed({ correctionKind: K.MISSED_START })).toBeNull();
     });
 });
