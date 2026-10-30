@@ -654,8 +654,8 @@ const addBreakEdits = (batch, edits, rows, editor, nowIso, reason) => {
 // The overlap branch of creditRequestedSession: credit only what is still missing from
 // [fit.startISO, fit.endISO). Work AND break rows count as covered — work so paid time is never
 // credited twice, breaks so the same minutes never show as both. Every piece is a row on a derived id
-// (worker, piece start) carrying `requestedFromMs`, so a repeat — a double tap, or a second manager
-// answering their own copy — works out the same pieces and rewrites them in place.
+// (worker, piece start) carrying `requestedFromMs`, by which a repeat — a double tap, or a second
+// manager answering their own copy — is recognised as already settled before anything is written.
 const creditUncoveredPieces = async ({
     fit, dayRows, days, startMs, startTime, endTime, realTaskId, task, taskTitle,
     expectedUserId, workerName, reason, editor,
@@ -777,6 +777,7 @@ export const creditRequestedSession = async ({
     // (the worker's whole-minute 15:44 against a row that ended 15:44:34) is snapped flush instead of
     // refused as an overlap — the manager's one tap must not fail on a rounding artefact.
     const dayRows = [];
+    let alreadyCredited = false;
     try {
         for (const day of days) {
             const snap = await getDocs(query(
@@ -785,11 +786,13 @@ export const creditRequestedSession = async ({
                 where('date', '==', day)
             ));
             snap.forEach((d) => {
-                if (d.id === rowId) return;
                 const s = d.data();
-                // A piece an earlier "Taip" on this SAME request already credited: left out, so a repeat
-                // works out the same pieces and rewrites them instead of seeing them as recorded time.
-                if (s.requestedFromMs === startMs) return;
+                // A row an earlier "Taip" on this SAME request already wrote (the whole interval on the
+                // derived id, or a piece of it carrying requestedFromMs): the request is settled.
+                if (d.id === rowId || s.requestedFromMs === startMs) {
+                    if (!s.isDeleted) alreadyCredited = true;
+                    return;
+                }
                 if (s.isDeleted || !s.startTime || !s.endTime) return;
                 dayRows.push({ id: d.id, startTime: s.startTime, endTime: s.endTime });
             });
@@ -800,6 +803,10 @@ export const creditRequestedSession = async ({
             return { ok: false, error: 'write' };
         }
     }
+    // Every manager gets their own copy of a request, so a second "Taip" is normal. Writing again would
+    // change nothing, but reporting it as a fresh credit sent the worker the same notice three times
+    // (Simona 2026-10-12/22/29) — so a settled request says so and writes nothing.
+    if (alreadyCredited) return { ok: true, alreadyCovered: true, durationMinutes: 0, date: derived.date };
     const fit = snapToRowEdges(startTime, endTime, dayRows);
     const credit = fit.snapped ? deriveSessionFields(fit.startISO, fit.endISO) : derived;
     if (!credit.ok) return { ok: false, error: credit.error };
@@ -1251,7 +1258,9 @@ export const reclassifyBreakAsWork = async ({
         if (snap.exists()) brk = snap.data();
         else {
             const done = await getDoc(doc(db, 'work_sessions', `sess_req_${expectedUserId}_${new Date(startTime).getTime()}`));
-            return done.exists() && !done.data()?.isDeleted ? { ok: true } : { ok: false, error: 'gone' };
+            // Already settled (another manager answered their own copy first): say so, so the worker is
+            // not told a second time.
+            return done.exists() && !done.data()?.isDeleted ? { ok: true, alreadyCovered: true } : { ok: false, error: 'gone' };
         }
     } catch (err) {
         logError(err, { source: 'readFail:reclassifyBreakAsWork', breakId });

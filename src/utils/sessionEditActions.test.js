@@ -1431,14 +1431,16 @@ describe('creditRequestedSession (Taip on a missed_start correction request)', (
             expect(ops[1].path).toBe(`work_sessions/sess_req_u1_${new Date('2026-09-29T05:30:00.000Z').getTime()}`);
         });
 
-        it('a repeat (second manager, double tap) rewrites the same pieces instead of seeing them as recorded', async () => {
+        it('a repeat (second manager, double tap) is recognised as settled: nothing written, no second notice', async () => {
             getDocs.mockResolvedValueOnce(rowsOf([
                 { id: 'ws-x', startTime: '2026-09-29T06:00:00.000Z', endTime: '2026-09-29T09:00:00.000Z' },
-                { id: `sess_req_u1_${startMs}`, requestedFromMs: startMs, startTime: base.startTime, endTime: '2026-09-29T06:00:00.000Z' },
+                { id: `sess_req_u1_${new Date('2026-09-29T05:30:00.000Z').getTime()}`, requestedFromMs: startMs,
+                    startTime: '2026-09-29T05:30:00.000Z', endTime: '2026-09-29T06:00:00.000Z' },
             ]));
             const res = await creditRequestedSession({ ...base, taskId: null });
-            expect(res).toMatchObject({ ok: true, durationMinutes: 50 });
-            expect(writeBatch.mock.results[0].value.ops[0].path).toBe(`work_sessions/sess_req_u1_${startMs}`);
+            expect(res).toMatchObject({ ok: true, alreadyCovered: true, durationMinutes: 0 });
+            expect(writeBatch).not.toHaveBeenCalled();
+            expect(setDoc).not.toHaveBeenCalled();
         });
 
         it('when everything is already recorded, writes nothing and says so', async () => {
@@ -1557,13 +1559,29 @@ describe('creditRequestedSession (Taip on a missed_start correction request)', (
         });
     });
 
-    it('ignores deleted rows and its OWN earlier write when checking overlap (idempotent retry)', async () => {
+    // Every manager gets their own copy; the second "Taip" used to re-credit and re-notify the worker
+    // (Simona got the same notice three times for 2026-10-12, -22 and -29).
+    it('its OWN earlier write means the request is already settled: ok, nothing written', async () => {
         const ownId = `sess_req_u1_${new Date(base.startTime).getTime()}`;
         getDocs.mockResolvedValueOnce(rowsOf([
             { id: ownId, startTime: base.startTime, endTime: base.endTime },
             { id: 'ws-del', isDeleted: true, startTime: base.startTime, endTime: base.endTime },
         ]));
-        expect((await creditRequestedSession({ ...base, taskId: null })).ok).toBe(true);
+        const res = await creditRequestedSession({ ...base, taskId: null });
+        expect(res).toMatchObject({ ok: true, alreadyCovered: true, durationMinutes: 0 });
+        expect(setDoc).not.toHaveBeenCalled();
+    });
+
+    it('ignores deleted rows (a soft-deleted earlier credit does not count as settled)', async () => {
+        const ownId = `sess_req_u1_${new Date(base.startTime).getTime()}`;
+        getDocs.mockResolvedValueOnce(rowsOf([
+            { id: ownId, isDeleted: true, startTime: base.startTime, endTime: base.endTime },
+            { id: 'ws-del', isDeleted: true, startTime: base.startTime, endTime: base.endTime },
+        ]));
+        const res = await creditRequestedSession({ ...base, taskId: null });
+        expect(res.ok).toBe(true);
+        expect(res.alreadyCovered).toBeUndefined();
+        expect(setDoc).toHaveBeenCalledTimes(1);
     });
 
     it('rejects an impossible interval before any write', async () => {
@@ -1690,7 +1708,7 @@ describe('reclassifyBreakAsWork (manager "Taip" on a break_was_work request)', (
 
     it('a break that is already gone is settled only if the work row exists', async () => {
         getDoc.mockResolvedValueOnce(snapOf(null)).mockResolvedValueOnce(snapOf({ isDeleted: false }));
-        expect(await reclassifyBreakAsWork(args)).toEqual({ ok: true });
+        expect(await reclassifyBreakAsWork(args)).toEqual({ ok: true, alreadyCovered: true });
         getDoc.mockResolvedValueOnce(snapOf(null)).mockResolvedValueOnce(snapOf(null));
         expect(await reclassifyBreakAsWork(args)).toEqual({ ok: false, error: 'gone' });
         expect(deleteDoc).not.toHaveBeenCalled();
